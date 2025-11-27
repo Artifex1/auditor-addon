@@ -1,10 +1,12 @@
 {
-  "name": "mcp-server-example",
+  "name": "mcp-auditor",
   "version": "1.0.0",
   "mcpServers": {
     "nodeServer": {
       "command": "node",
-      "args": ["${extensionPath}${/}dist${/}example.js"],
+      "args": [
+        "${extensionPath}${/}dist${/}example.js"
+      ],
       "cwd": "${extensionPath}"
     }
   }

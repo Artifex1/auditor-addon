@@ -2,6 +2,8 @@ import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import fsPromises from "fs/promises";
+import os from "os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,8 +23,12 @@ export interface AstGrepMatch {
 }
 
 export interface AstGrepOptions {
-    pattern: string;
-    language: string;
+    // Standard pattern mode
+    pattern?: string;
+    language?: string;
+    // Inline rules YAML (passed directly to ast-grep via --inline-rules)
+    inlineRule?: string;
+    // Source code to search
     code: string;
 }
 
@@ -30,7 +36,7 @@ export interface AstGrepOptions {
  * Execute ast-grep CLI and return matches
  */
 export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> {
-    const { pattern, language, code } = options;
+    const { pattern, language, inlineRule, code } = options;
 
     // Path to ast-grep binary in node_modules
     const astGrepBin = path.join(
@@ -46,14 +52,19 @@ export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> 
         );
     }
 
+    let args: string[] = [];
+    let tempDir: string | null = null;
+    let rulePath: string | null = null;
+
+    if (inlineRule) {
+        args = ["scan", "--inline-rules", inlineRule, "--stdin", "--json=stream"];
+    } else if (pattern && language) {
+        args = ["run", "--pattern", pattern, "--lang", language, "--stdin", "--json=stream"];
+    } else {
+        throw new Error("astGrep requires either inlineRules or pattern+language");
+    }
+
     return new Promise((resolve, reject) => {
-        const args = [
-            "run",
-            "--pattern", pattern,
-            "--lang", language,
-            "--stdin",
-            "--json=stream"
-        ];
 
         const proc = spawn(astGrepBin, args, {
             stdio: ["pipe", "pipe", "pipe"]
@@ -71,6 +82,14 @@ export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> 
         });
 
         proc.on("close", (code) => {
+            if (rulePath) {
+                // Cleanup temp rule file/dir
+                void fsPromises.rm(rulePath, { force: true }).catch(() => {});
+                if (tempDir) {
+                    void fsPromises.rm(tempDir, { force: true, recursive: true }).catch(() => {});
+                }
+            }
+
             if (code !== 0) {
                 console.error("ast-grep stderr:", stderr);
                 console.error("ast-grep stdout:", stdout);

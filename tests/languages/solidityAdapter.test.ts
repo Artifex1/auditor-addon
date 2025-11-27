@@ -78,4 +78,23 @@ describe('SolidityAdapter', () => {
         expect(entrypoints[0].location.line).toBeGreaterThan(0);
         expect(entrypoints[0].location.column).toBeGreaterThanOrEqual(0);
     });
+
+    it('should detect contract name inside abstract contracts', async () => {
+        const code = fs.readFileSync(
+            path.join(__dirname, '../fixtures/solidity/AbstractContract.sol'),
+            'utf-8'
+        );
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'AbstractContract.sol', content: code }
+        ]);
+
+        const pendingBalance = entrypoints.find(e => e.name === 'pendingBalance');
+        expect(pendingBalance).toBeDefined();
+        expect(pendingBalance?.contract).toBe('BaseVault');
+
+        const deposit = entrypoints.find(e => e.name === 'deposit');
+        expect(deposit).toBeDefined();
+        expect(deposit?.contract).toBe('DerivedVault');
+    });
 });

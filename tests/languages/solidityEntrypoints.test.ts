@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe('SolidityAdapter', () => {
+describe('SolidityAdapter - Entrypoint Extraction', () => {
     const adapter = new SolidityAdapter();
 
     it('should extract public and external functions', async () => {
@@ -96,5 +96,28 @@ describe('SolidityAdapter', () => {
         const deposit = entrypoints.find(e => e.name === 'deposit');
         expect(deposit).toBeDefined();
         expect(deposit?.contract).toBe('DerivedVault');
+    });
+
+    it('should extract fallback and receive functions as entrypoints', async () => {
+        const code = `
+            contract Test {
+                fallback() external payable {}
+                receive() external payable {}
+            }
+        `;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        const functionNames = entrypoints.map(e => e.name);
+        expect(functionNames).toContain('fallback');
+        expect(functionNames).toContain('receive');
+
+        const fallbackFunc = entrypoints.find(e => e.name === 'fallback');
+        expect(fallbackFunc?.visibility).toBe('external');
+
+        const receiveFunc = entrypoints.find(e => e.name === 'receive');
+        expect(receiveFunc?.visibility).toBe('external');
     });
 });

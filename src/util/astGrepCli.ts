@@ -26,8 +26,8 @@ export interface AstGrepOptions {
     // Standard pattern mode
     pattern?: string;
     language?: string;
-    // Inline rules YAML (passed directly to ast-grep via --inline-rules)
-    inlineRule?: string;
+    // Inline rule (passed to ast-grep via --rule)
+    rule?: object;
     // Source code to search
     code: string;
 }
@@ -36,7 +36,7 @@ export interface AstGrepOptions {
  * Execute ast-grep CLI and return matches
  */
 export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> {
-    const { pattern, language, inlineRule, code } = options;
+    const { pattern, language, rule, code } = options;
 
     // Path to ast-grep binary in node_modules
     const astGrepBin = path.join(
@@ -56,8 +56,15 @@ export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> 
     let tempDir: string | null = null;
     let rulePath: string | null = null;
 
-    if (inlineRule) {
-        args = ["scan", "--inline-rules", inlineRule, "--stdin", "--json=stream"];
+    if (rule) {
+        // Create temp file for rule
+        tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "ast-grep-"));
+        rulePath = path.join(tempDir, "rule.json");
+
+        const ruleContent = JSON.stringify(rule, null, 2);
+        await fsPromises.writeFile(rulePath, ruleContent);
+
+        args = ["scan", "--rule", rulePath, "--stdin", "--json=stream"];
     } else if (pattern && language) {
         args = ["run", "--pattern", pattern, "--lang", language, "--stdin", "--json=stream"];
     } else {
@@ -84,9 +91,9 @@ export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> 
         proc.on("close", (code) => {
             if (rulePath) {
                 // Cleanup temp rule file/dir
-                void fsPromises.rm(rulePath, { force: true }).catch(() => {});
+                void fsPromises.rm(rulePath, { force: true }).catch(() => { });
                 if (tempDir) {
-                    void fsPromises.rm(tempDir, { force: true, recursive: true }).catch(() => {});
+                    void fsPromises.rm(tempDir, { force: true, recursive: true }).catch(() => { });
                 }
             }
 

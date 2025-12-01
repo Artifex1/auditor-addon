@@ -1,4 +1,4 @@
-import { SupportedLanguage, Entrypoint, FunctionInsights, FileContent } from "./types.js";
+import { SupportedLanguage, Entrypoint, FunctionInsights, FileContent, CallGraph } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import path from "path";
 
@@ -8,6 +8,7 @@ export interface LanguageAdapter {
     languageId: SupportedLanguage;
     extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]>;
     extractFunctionInsights(files: FileContent[], selector: any): Promise<FunctionInsights>;
+    generateCallGraph(files: FileContent[]): Promise<CallGraph>;
 }
 
 export class Engine {

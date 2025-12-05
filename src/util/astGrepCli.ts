@@ -38,17 +38,28 @@ export interface AstGrepOptions {
 export async function astGrep(options: AstGrepOptions): Promise<AstGrepMatch[]> {
     const { pattern, language, rule, code } = options;
 
-    // Path to ast-grep binary in node_modules
-    const astGrepBin = path.join(
-        __dirname,
-        "../../node_modules/.bin/ast-grep"
-    );
+    // Determine platform-specific binary name
+    const platform = process.platform;
+    const arch = process.arch;
+
+    // In production (bundled), we expect binaries like: ast-grep-darwin-arm64
+    const bundledBinaryName = `ast-grep-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
+    const bundledBinary = path.join(__dirname, "../bin", bundledBinaryName);
+
+    // Fallback to node_modules for development/testing
+    // This path is relative to src/util/astGrepCli.ts -> ../../node_modules
+    const nodeModulesBinary = path.join(__dirname, "../../node_modules/.bin/ast-grep");
+
+    // Use bundled binary if it exists, otherwise fall back to node_modules
+    const astGrepBin = fs.existsSync(bundledBinary) ? bundledBinary : nodeModulesBinary;
 
     // Check if binary exists
     if (!fs.existsSync(astGrepBin)) {
         throw new Error(
-            `ast-grep binary not found at ${astGrepBin}. ` +
-            `If using pnpm, you may need to run: cd node_modules/@ast-grep/cli && npm run postinstall`
+            `ast-grep binary not found. Tried:\n` +
+            `  - ${bundledBinary} (bundled)\n` +
+            `  - ${nodeModulesBinary} (node_modules)\n` +
+            `Run 'npm install' to install dependencies or 'npm run prepare' to bundle the binary.`
         );
     }
 

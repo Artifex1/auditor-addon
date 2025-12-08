@@ -1,3 +1,4 @@
+import { createRequire } from 'module';const require = createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -10,6 +11,9 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -34,10 +38,20 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// node_modules/.pnpm/tsup@8.5.1_postcss@8.5.6_typescript@5.4.5/node_modules/tsup/assets/esm_shims.js
+import path from "path";
+import { fileURLToPath } from "url";
+var init_esm_shims = __esm({
+  "node_modules/.pnpm/tsup@8.5.1_postcss@8.5.6_typescript@5.4.5/node_modules/tsup/assets/esm_shims.js"() {
+    "use strict";
+  }
+});
+
 // node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
     var _CodeOrName = class {
@@ -192,6 +206,7 @@ var require_code = __commonJS({
 var require_scope = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
     var code_1 = require_code();
@@ -337,6 +352,7 @@ var require_scope = __commonJS({
 var require_codegen = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
     var code_1 = require_code();
@@ -1057,6 +1073,7 @@ var require_codegen = __commonJS({
 var require_util = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
     var codegen_1 = require_codegen();
@@ -1224,6 +1241,7 @@ var require_util = __commonJS({
 var require_names = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var names = {
@@ -1263,6 +1281,7 @@ var require_names = __commonJS({
 var require_errors = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
     var codegen_1 = require_codegen();
@@ -1385,6 +1404,7 @@ var require_errors = __commonJS({
 var require_boolSchema = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
     var errors_1 = require_errors();
@@ -1436,6 +1456,7 @@ var require_boolSchema = __commonJS({
 var require_rules = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
     var _jsonTypes = ["string", "number", "integer", "boolean", "null", "object", "array"];
@@ -1467,6 +1488,7 @@ var require_rules = __commonJS({
 var require_applicability = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
     function schemaHasRulesForType({ schema, self }, type) {
@@ -1490,6 +1512,7 @@ var require_applicability = __commonJS({
 var require_dataType = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
     var rules_1 = require_rules();
@@ -1674,6 +1697,7 @@ var require_dataType = __commonJS({
 var require_defaults = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
     var codegen_1 = require_codegen();
@@ -1711,6 +1735,7 @@ var require_defaults = __commonJS({
 var require_code2 = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
     var codegen_1 = require_codegen();
@@ -1844,6 +1869,7 @@ var require_code2 = __commonJS({
 var require_keyword = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
     var codegen_1 = require_codegen();
@@ -1962,6 +1988,7 @@ var require_keyword = __commonJS({
 var require_subschema = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
     var codegen_1 = require_codegen();
@@ -2045,6 +2072,7 @@ var require_subschema = __commonJS({
 var require_fast_deep_equal = __commonJS({
   "node_modules/.pnpm/fast-deep-equal@3.1.3/node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = function equal(a, b) {
       if (a === b) return true;
       if (a && b && typeof a == "object" && typeof b == "object") {
@@ -2080,6 +2108,7 @@ var require_fast_deep_equal = __commonJS({
 var require_json_schema_traverse = __commonJS({
   "node_modules/.pnpm/json-schema-traverse@1.0.0/node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
         cb = opts;
@@ -2168,6 +2197,7 @@ var require_json_schema_traverse = __commonJS({
 var require_resolve = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
     var util_1 = require_util();
@@ -2324,6 +2354,7 @@ var require_resolve = __commonJS({
 var require_validate = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
     var boolSchema_1 = require_boolSchema();
@@ -2832,6 +2863,7 @@ var require_validate = __commonJS({
 var require_validation_error = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
       constructor(errors) {
@@ -2848,6 +2880,7 @@ var require_validation_error = __commonJS({
 var require_ref_error = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
     var MissingRefError = class extends Error {
@@ -2865,6 +2898,7 @@ var require_ref_error = __commonJS({
 var require_compile = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
     var codegen_1 = require_codegen();
@@ -3108,6 +3142,7 @@ var require_data = __commonJS({
 var require_utils = __commonJS({
   "node_modules/.pnpm/fast-uri@3.1.0/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
     function stringArrayToHexStripped(input) {
@@ -3227,8 +3262,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path4) {
-      let input = path4;
+    function removeDotSegments(path5) {
+      let input = path5;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3365,6 +3400,7 @@ var require_utils = __commonJS({
 var require_schemes = __commonJS({
   "node_modules/.pnpm/fast-uri@3.1.0/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var { isUUID } = require_utils();
     var URN_REG = /([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-.:;=@]|%[\da-f]{2})+)/iu;
     var supportedSchemeNames = (
@@ -3427,8 +3463,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path4, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
+        const [path5, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path5 && path5 !== "/" ? path5 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -3575,6 +3611,7 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "node_modules/.pnpm/fast-uri@3.1.0/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     function normalize(uri, options) {
@@ -3830,6 +3867,7 @@ var require_fast_uri = __commonJS({
 var require_uri = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
     uri.code = 'require("ajv/dist/runtime/uri").default';
@@ -3841,6 +3879,7 @@ var require_uri = __commonJS({
 var require_core = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/core.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
     var validate_1 = require_validate();
@@ -4452,6 +4491,7 @@ var require_core = __commonJS({
 var require_id = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var def = {
       keyword: "id",
@@ -4467,6 +4507,7 @@ var require_id = __commonJS({
 var require_ref = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
     var ref_error_1 = require_ref_error();
@@ -4589,6 +4630,7 @@ var require_ref = __commonJS({
 var require_core2 = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
     var ref_1 = require_ref();
@@ -4610,6 +4652,7 @@ var require_core2 = __commonJS({
 var require_limitNumber = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var ops = codegen_1.operators;
@@ -4642,6 +4685,7 @@ var require_limitNumber = __commonJS({
 var require_multipleOf = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var error = {
@@ -4670,6 +4714,7 @@ var require_multipleOf = __commonJS({
 var require_ucs2length = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str) {
       const len = str.length;
@@ -4696,6 +4741,7 @@ var require_ucs2length = __commonJS({
 var require_limitLength = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -4728,6 +4774,7 @@ var require_limitLength = __commonJS({
 var require_pattern = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
     var codegen_1 = require_codegen();
@@ -4756,6 +4803,7 @@ var require_pattern = __commonJS({
 var require_limitProperties = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var error = {
@@ -4785,6 +4833,7 @@ var require_limitProperties = __commonJS({
 var require_required = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
     var codegen_1 = require_codegen();
@@ -4867,6 +4916,7 @@ var require_required = __commonJS({
 var require_limitItems = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var error = {
@@ -4896,6 +4946,7 @@ var require_limitItems = __commonJS({
 var require_equal = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
     equal.code = 'require("ajv/dist/runtime/equal").default';
@@ -4907,6 +4958,7 @@ var require_equal = __commonJS({
 var require_uniqueItems = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
     var codegen_1 = require_codegen();
@@ -4974,6 +5026,7 @@ var require_uniqueItems = __commonJS({
 var require_const = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5003,6 +5056,7 @@ var require_const = __commonJS({
 var require_enum = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5052,6 +5106,7 @@ var require_enum = __commonJS({
 var require_validation = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
     var multipleOf_1 = require_multipleOf();
@@ -5090,6 +5145,7 @@ var require_validation = __commonJS({
 var require_additionalItems = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
     var codegen_1 = require_codegen();
@@ -5143,6 +5199,7 @@ var require_additionalItems = __commonJS({
 var require_items = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
     var codegen_1 = require_codegen();
@@ -5200,6 +5257,7 @@ var require_items = __commonJS({
 var require_prefixItems = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
     var def = {
@@ -5217,6 +5275,7 @@ var require_prefixItems = __commonJS({
 var require_items2020 = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5252,6 +5311,7 @@ var require_items2020 = __commonJS({
 var require_contains = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5346,6 +5406,7 @@ var require_contains = __commonJS({
 var require_dependencies = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
     var codegen_1 = require_codegen();
@@ -5440,6 +5501,7 @@ var require_dependencies = __commonJS({
 var require_propertyNames = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5483,6 +5545,7 @@ var require_propertyNames = __commonJS({
 var require_additionalProperties = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
     var codegen_1 = require_codegen();
@@ -5589,6 +5652,7 @@ var require_additionalProperties = __commonJS({
 var require_properties = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
     var code_1 = require_code2();
@@ -5647,6 +5711,7 @@ var require_properties = __commonJS({
 var require_patternProperties = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
     var codegen_1 = require_codegen();
@@ -5721,6 +5786,7 @@ var require_patternProperties = __commonJS({
 var require_not = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
     var def = {
@@ -5752,6 +5818,7 @@ var require_not = __commonJS({
 var require_anyOf = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
     var def = {
@@ -5769,6 +5836,7 @@ var require_anyOf = __commonJS({
 var require_oneOf = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5827,6 +5895,7 @@ var require_oneOf = __commonJS({
 var require_allOf = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
     var def = {
@@ -5854,6 +5923,7 @@ var require_allOf = __commonJS({
 var require_if = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
@@ -5923,6 +5993,7 @@ var require_if = __commonJS({
 var require_thenElse = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
     var def = {
@@ -5941,6 +6012,7 @@ var require_thenElse = __commonJS({
 var require_applicator = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
     var prefixItems_1 = require_prefixItems();
@@ -5989,6 +6061,7 @@ var require_applicator = __commonJS({
 var require_format = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var error = {
@@ -6079,6 +6152,7 @@ var require_format = __commonJS({
 var require_format2 = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
     var format = [format_1.default];
@@ -6090,6 +6164,7 @@ var require_format2 = __commonJS({
 var require_metadata = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
     exports.metadataVocabulary = [
@@ -6113,6 +6188,7 @@ var require_metadata = __commonJS({
 var require_draft7 = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
     var validation_1 = require_validation();
@@ -6135,6 +6211,7 @@ var require_draft7 = __commonJS({
 var require_types = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
     var DiscrError;
@@ -6149,6 +6226,7 @@ var require_types = __commonJS({
 var require_discriminator = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var types_1 = require_types();
@@ -6411,6 +6489,7 @@ var require_json_schema_draft_07 = __commonJS({
 var require_ajv = __commonJS({
   "node_modules/.pnpm/ajv@8.17.1/node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
     var core_1 = require_core();
@@ -6481,6 +6560,7 @@ var require_ajv = __commonJS({
 var require_formats = __commonJS({
   "node_modules/.pnpm/ajv-formats@3.0.1_ajv@8.17.1/node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
     function fmtDef(validate, compare) {
@@ -6684,6 +6764,7 @@ var require_formats = __commonJS({
 var require_limit = __commonJS({
   "node_modules/.pnpm/ajv-formats@3.0.1_ajv@8.17.1/node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
     var ajv_1 = require_ajv();
@@ -6756,6 +6837,7 @@ var require_limit = __commonJS({
 var require_dist = __commonJS({
   "node_modules/.pnpm/ajv-formats@3.0.1_ajv@8.17.1/node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
     var limit_1 = require_limit();
@@ -6798,6 +6880,7 @@ var require_dist = __commonJS({
 var require_array = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/array.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.splitWhen = exports.flatten = void 0;
     function flatten(items) {
@@ -6825,6 +6908,7 @@ var require_array = __commonJS({
 var require_errno = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/errno.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isEnoentCodeError = void 0;
     function isEnoentCodeError(error) {
@@ -6838,6 +6922,7 @@ var require_errno = __commonJS({
 var require_fs = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/fs.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createDirentFromStats = void 0;
     var DirentFromStats = class {
@@ -6863,10 +6948,11 @@ var require_fs = __commonJS({
 var require_path = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/path.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.convertPosixPathToPattern = exports.convertWindowsPathToPattern = exports.convertPathToPattern = exports.escapePosixPath = exports.escapeWindowsPath = exports.escape = exports.removeLeadingDotSegment = exports.makeAbsolute = exports.unixify = void 0;
     var os2 = __require("os");
-    var path4 = __require("path");
+    var path5 = __require("path");
     var IS_WINDOWS_PLATFORM = os2.platform() === "win32";
     var LEADING_DOT_SEGMENT_CHARACTERS_COUNT = 2;
     var POSIX_UNESCAPED_GLOB_SYMBOLS_RE = /(\\?)([()*?[\]{|}]|^!|[!+@](?=\()|\\(?![!()*+?@[\]{|}]))/g;
@@ -6878,7 +6964,7 @@ var require_path = __commonJS({
     }
     exports.unixify = unixify;
     function makeAbsolute(cwd, filepath) {
-      return path4.resolve(cwd, filepath);
+      return path5.resolve(cwd, filepath);
     }
     exports.makeAbsolute = makeAbsolute;
     function removeLeadingDotSegment(entry) {
@@ -6916,6 +7002,7 @@ var require_path = __commonJS({
 var require_is_extglob = __commonJS({
   "node_modules/.pnpm/is-extglob@2.1.1/node_modules/is-extglob/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = function isExtglob(str) {
       if (typeof str !== "string" || str === "") {
         return false;
@@ -6934,6 +7021,7 @@ var require_is_extglob = __commonJS({
 var require_is_glob = __commonJS({
   "node_modules/.pnpm/is-glob@4.0.3/node_modules/is-glob/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var isExtglob = require_is_extglob();
     var chars = { "{": "}", "(": ")", "[": "]" };
     var strictCheck = function(str) {
@@ -7066,6 +7154,7 @@ var require_is_glob = __commonJS({
 var require_glob_parent = __commonJS({
   "node_modules/.pnpm/glob-parent@5.1.2/node_modules/glob-parent/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var isGlob = require_is_glob();
     var pathPosixDirname = __require("path").posix.dirname;
     var isWin32 = __require("os").platform() === "win32";
@@ -7095,6 +7184,7 @@ var require_glob_parent = __commonJS({
 var require_utils2 = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/utils.js"(exports) {
     "use strict";
+    init_esm_shims();
     exports.isInteger = (num) => {
       if (typeof num === "number") {
         return Number.isInteger(num);
@@ -7177,6 +7267,7 @@ var require_utils2 = __commonJS({
 var require_stringify = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/stringify.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var utils = require_utils2();
     module.exports = (ast, options = {}) => {
       const stringify = (node, parent = {}) => {
@@ -7208,6 +7299,7 @@ var require_stringify = __commonJS({
 var require_is_number = __commonJS({
   "node_modules/.pnpm/is-number@7.0.0/node_modules/is-number/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = function(num) {
       if (typeof num === "number") {
         return num - num === 0;
@@ -7224,6 +7316,7 @@ var require_is_number = __commonJS({
 var require_to_regex_range = __commonJS({
   "node_modules/.pnpm/to-regex-range@5.0.1/node_modules/to-regex-range/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var isNumber = require_is_number();
     var toRegexRange = (min, max, options) => {
       if (isNumber(min) === false) {
@@ -7435,6 +7528,7 @@ var require_to_regex_range = __commonJS({
 var require_fill_range = __commonJS({
   "node_modules/.pnpm/fill-range@7.1.1/node_modules/fill-range/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var util2 = __require("util");
     var toRegexRange = require_to_regex_range();
     var isObject2 = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
@@ -7629,6 +7723,7 @@ var require_fill_range = __commonJS({
 var require_compile2 = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/compile.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var fill = require_fill_range();
     var utils = require_utils2();
     var compile = (ast, options = {}) => {
@@ -7681,6 +7776,7 @@ var require_compile2 = __commonJS({
 var require_expand = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/expand.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var fill = require_fill_range();
     var stringify = require_stringify();
     var utils = require_utils2();
@@ -7775,6 +7871,7 @@ var require_expand = __commonJS({
 var require_constants = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/constants.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = {
       MAX_LENGTH: 1e4,
       // Digits
@@ -7876,6 +7973,7 @@ var require_constants = __commonJS({
 var require_parse = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/lib/parse.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var stringify = require_stringify();
     var {
       MAX_LENGTH,
@@ -8114,6 +8212,7 @@ var require_parse = __commonJS({
 var require_braces = __commonJS({
   "node_modules/.pnpm/braces@3.0.3/node_modules/braces/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var stringify = require_stringify();
     var compile = require_compile2();
     var expand = require_expand();
@@ -8177,7 +8276,8 @@ var require_braces = __commonJS({
 var require_constants2 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/constants.js"(exports, module) {
     "use strict";
-    var path4 = __require("path");
+    init_esm_shims();
+    var path5 = __require("path");
     var WIN_SLASH = "\\\\/";
     var WIN_NO_SLASH = `[^${WIN_SLASH}]`;
     var DOT_LITERAL = "\\.";
@@ -8347,7 +8447,7 @@ var require_constants2 = __commonJS({
       /* | */
       CHAR_ZERO_WIDTH_NOBREAK_SPACE: 65279,
       /* \uFEFF */
-      SEP: path4.sep,
+      SEP: path5.sep,
       /**
        * Create EXTGLOB_CHARS
        */
@@ -8374,7 +8474,8 @@ var require_constants2 = __commonJS({
 var require_utils3 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/utils.js"(exports) {
     "use strict";
-    var path4 = __require("path");
+    init_esm_shims();
+    var path5 = __require("path");
     var win32 = process.platform === "win32";
     var {
       REGEX_BACKSLASH,
@@ -8403,7 +8504,7 @@ var require_utils3 = __commonJS({
       if (options && typeof options.windows === "boolean") {
         return options.windows;
       }
-      return win32 === true || path4.sep === "\\";
+      return win32 === true || path5.sep === "\\";
     };
     exports.escapeLast = (input, char, lastIdx) => {
       const idx = input.lastIndexOf(char, lastIdx);
@@ -8435,6 +8536,7 @@ var require_utils3 = __commonJS({
 var require_scan = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/scan.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var utils = require_utils3();
     var {
       CHAR_ASTERISK,
@@ -8765,6 +8867,7 @@ var require_scan = __commonJS({
 var require_parse2 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/parse.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var constants = require_constants2();
     var utils = require_utils3();
     var {
@@ -9538,7 +9641,8 @@ var require_parse2 = __commonJS({
 var require_picomatch = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/picomatch.js"(exports, module) {
     "use strict";
-    var path4 = __require("path");
+    init_esm_shims();
+    var path5 = __require("path");
     var scan = require_scan();
     var parse3 = require_parse2();
     var utils = require_utils3();
@@ -9623,7 +9727,7 @@ var require_picomatch = __commonJS({
     };
     picomatch.matchBase = (input, glob, options, posix = utils.isWindows(options)) => {
       const regex = glob instanceof RegExp ? glob : picomatch.makeRe(glob, options);
-      return regex.test(path4.basename(input));
+      return regex.test(path5.basename(input));
     };
     picomatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
     picomatch.parse = (pattern, options) => {
@@ -9679,6 +9783,7 @@ var require_picomatch = __commonJS({
 var require_picomatch2 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = require_picomatch();
   }
 });
@@ -9687,6 +9792,7 @@ var require_picomatch2 = __commonJS({
 var require_micromatch = __commonJS({
   "node_modules/.pnpm/micromatch@4.0.8/node_modules/micromatch/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var util2 = __require("util");
     var braces = require_braces();
     var picomatch = require_picomatch2();
@@ -9848,9 +9954,10 @@ var require_micromatch = __commonJS({
 var require_pattern2 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/pattern.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isAbsolute = exports.partitionAbsoluteAndRelative = exports.removeDuplicateSlashes = exports.matchAny = exports.convertPatternsToRe = exports.makeRe = exports.getPatternParts = exports.expandBraceExpansion = exports.expandPatternsWithBraceExpansion = exports.isAffectDepthOfReadingPattern = exports.endsWithSlashGlobStar = exports.hasGlobStar = exports.getBaseDirectory = exports.isPatternRelatedToParentDirectory = exports.getPatternsOutsideCurrentDirectory = exports.getPatternsInsideCurrentDirectory = exports.getPositivePatterns = exports.getNegativePatterns = exports.isPositivePattern = exports.isNegativePattern = exports.convertToNegativePattern = exports.convertToPositivePattern = exports.isDynamicPattern = exports.isStaticPattern = void 0;
-    var path4 = __require("path");
+    var path5 = __require("path");
     var globParent = require_glob_parent();
     var micromatch = require_micromatch();
     var GLOBSTAR = "**";
@@ -9945,7 +10052,7 @@ var require_pattern2 = __commonJS({
     }
     exports.endsWithSlashGlobStar = endsWithSlashGlobStar;
     function isAffectDepthOfReadingPattern(pattern) {
-      const basename = path4.basename(pattern);
+      const basename = path5.basename(pattern);
       return endsWithSlashGlobStar(pattern) || isStaticPattern(basename);
     }
     exports.isAffectDepthOfReadingPattern = isAffectDepthOfReadingPattern;
@@ -10003,7 +10110,7 @@ var require_pattern2 = __commonJS({
     }
     exports.partitionAbsoluteAndRelative = partitionAbsoluteAndRelative;
     function isAbsolute(pattern) {
-      return path4.isAbsolute(pattern);
+      return path5.isAbsolute(pattern);
     }
     exports.isAbsolute = isAbsolute;
   }
@@ -10013,6 +10120,7 @@ var require_pattern2 = __commonJS({
 var require_merge2 = __commonJS({
   "node_modules/.pnpm/merge2@1.4.1/node_modules/merge2/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var Stream = __require("stream");
     var PassThrough = Stream.PassThrough;
     var slice = Array.prototype.slice;
@@ -10132,6 +10240,7 @@ var require_merge2 = __commonJS({
 var require_stream = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/stream.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.merge = void 0;
     var merge2 = require_merge2();
@@ -10155,6 +10264,7 @@ var require_stream = __commonJS({
 var require_string = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/string.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isEmpty = exports.isString = void 0;
     function isString(input) {
@@ -10172,6 +10282,7 @@ var require_string = __commonJS({
 var require_utils4 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/utils/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.string = exports.stream = exports.pattern = exports.path = exports.fs = exports.errno = exports.array = void 0;
     var array2 = require_array();
@@ -10180,8 +10291,8 @@ var require_utils4 = __commonJS({
     exports.errno = errno;
     var fs3 = require_fs();
     exports.fs = fs3;
-    var path4 = require_path();
-    exports.path = path4;
+    var path5 = require_path();
+    exports.path = path5;
     var pattern = require_pattern2();
     exports.pattern = pattern;
     var stream = require_stream();
@@ -10195,6 +10306,7 @@ var require_utils4 = __commonJS({
 var require_tasks = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/managers/tasks.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.convertPatternGroupToTask = exports.convertPatternGroupsToTasks = exports.groupPatternsByBaseDirectory = exports.getNegativePatternsAsPositive = exports.getPositivePatterns = exports.convertPatternsToTasks = exports.generate = void 0;
     var utils = require_utils4();
@@ -10291,10 +10403,11 @@ var require_tasks = __commonJS({
 var require_async = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.stat@2.0.5/node_modules/@nodelib/fs.stat/out/providers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.read = void 0;
-    function read(path4, settings, callback) {
-      settings.fs.lstat(path4, (lstatError, lstat) => {
+    function read(path5, settings, callback) {
+      settings.fs.lstat(path5, (lstatError, lstat) => {
         if (lstatError !== null) {
           callFailureCallback(callback, lstatError);
           return;
@@ -10303,7 +10416,7 @@ var require_async = __commonJS({
           callSuccessCallback(callback, lstat);
           return;
         }
-        settings.fs.stat(path4, (statError, stat) => {
+        settings.fs.stat(path5, (statError, stat) => {
           if (statError !== null) {
             if (settings.throwErrorOnBrokenSymbolicLink) {
               callFailureCallback(callback, statError);
@@ -10333,15 +10446,16 @@ var require_async = __commonJS({
 var require_sync = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.stat@2.0.5/node_modules/@nodelib/fs.stat/out/providers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.read = void 0;
-    function read(path4, settings) {
-      const lstat = settings.fs.lstatSync(path4);
+    function read(path5, settings) {
+      const lstat = settings.fs.lstatSync(path5);
       if (!lstat.isSymbolicLink() || !settings.followSymbolicLink) {
         return lstat;
       }
       try {
-        const stat = settings.fs.statSync(path4);
+        const stat = settings.fs.statSync(path5);
         if (settings.markSymbolicLink) {
           stat.isSymbolicLink = () => true;
         }
@@ -10361,6 +10475,7 @@ var require_sync = __commonJS({
 var require_fs2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.stat@2.0.5/node_modules/@nodelib/fs.stat/out/adapters/fs.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
     var fs3 = __require("fs");
@@ -10384,6 +10499,7 @@ var require_fs2 = __commonJS({
 var require_settings = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.stat@2.0.5/node_modules/@nodelib/fs.stat/out/settings.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var fs3 = require_fs2();
     var Settings = class {
@@ -10406,23 +10522,24 @@ var require_settings = __commonJS({
 var require_out = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.stat@2.0.5/node_modules/@nodelib/fs.stat/out/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.statSync = exports.stat = exports.Settings = void 0;
     var async = require_async();
     var sync = require_sync();
     var settings_1 = require_settings();
     exports.Settings = settings_1.default;
-    function stat(path4, optionsOrSettingsOrCallback, callback) {
+    function stat(path5, optionsOrSettingsOrCallback, callback) {
       if (typeof optionsOrSettingsOrCallback === "function") {
-        async.read(path4, getSettings(), optionsOrSettingsOrCallback);
+        async.read(path5, getSettings(), optionsOrSettingsOrCallback);
         return;
       }
-      async.read(path4, getSettings(optionsOrSettingsOrCallback), callback);
+      async.read(path5, getSettings(optionsOrSettingsOrCallback), callback);
     }
     exports.stat = stat;
-    function statSync(path4, optionsOrSettings) {
+    function statSync(path5, optionsOrSettings) {
       const settings = getSettings(optionsOrSettings);
-      return sync.read(path4, settings);
+      return sync.read(path5, settings);
     }
     exports.statSync = statSync;
     function getSettings(settingsOrOptions = {}) {
@@ -10438,6 +10555,7 @@ var require_out = __commonJS({
 var require_queue_microtask = __commonJS({
   "node_modules/.pnpm/queue-microtask@1.2.3/node_modules/queue-microtask/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var promise;
     module.exports = typeof queueMicrotask === "function" ? queueMicrotask.bind(typeof window !== "undefined" ? window : global) : (cb) => (promise || (promise = Promise.resolve())).then(cb).catch((err) => setTimeout(() => {
       throw err;
@@ -10449,6 +10567,7 @@ var require_queue_microtask = __commonJS({
 var require_run_parallel = __commonJS({
   "node_modules/.pnpm/run-parallel@1.2.0/node_modules/run-parallel/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     module.exports = runParallel;
     var queueMicrotask2 = require_queue_microtask();
     function runParallel(tasks, cb) {
@@ -10500,6 +10619,7 @@ var require_run_parallel = __commonJS({
 var require_constants3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/constants.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.IS_SUPPORT_READDIR_WITH_FILE_TYPES = void 0;
     var NODE_PROCESS_VERSION_PARTS = process.versions.node.split(".");
@@ -10520,6 +10640,7 @@ var require_constants3 = __commonJS({
 var require_fs3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/utils/fs.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createDirentFromStats = void 0;
     var DirentFromStats = class {
@@ -10545,6 +10666,7 @@ var require_fs3 = __commonJS({
 var require_utils5 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/utils/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.fs = void 0;
     var fs3 = require_fs3();
@@ -10556,6 +10678,7 @@ var require_utils5 = __commonJS({
 var require_common = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/providers/common.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.joinPathSegments = void 0;
     function joinPathSegments(a, b, separator) {
@@ -10572,6 +10695,7 @@ var require_common = __commonJS({
 var require_async2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/providers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.readdir = exports.readdirWithFileTypes = exports.read = void 0;
     var fsStat = require_out();
@@ -10640,16 +10764,16 @@ var require_async2 = __commonJS({
           return;
         }
         const tasks = names.map((name) => {
-          const path4 = common.joinPathSegments(directory, name, settings.pathSegmentSeparator);
+          const path5 = common.joinPathSegments(directory, name, settings.pathSegmentSeparator);
           return (done) => {
-            fsStat.stat(path4, settings.fsStatSettings, (error, stats) => {
+            fsStat.stat(path5, settings.fsStatSettings, (error, stats) => {
               if (error !== null) {
                 done(error);
                 return;
               }
               const entry = {
                 name,
-                path: path4,
+                path: path5,
                 dirent: utils.fs.createDirentFromStats(name, stats)
               };
               if (settings.stats) {
@@ -10682,6 +10806,7 @@ var require_async2 = __commonJS({
 var require_sync2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/providers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.readdir = exports.readdirWithFileTypes = exports.read = void 0;
     var fsStat = require_out();
@@ -10741,6 +10866,7 @@ var require_sync2 = __commonJS({
 var require_fs4 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/adapters/fs.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
     var fs3 = __require("fs");
@@ -10766,8 +10892,9 @@ var require_fs4 = __commonJS({
 var require_settings2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/settings.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path4 = __require("path");
+    var path5 = __require("path");
     var fsStat = require_out();
     var fs3 = require_fs4();
     var Settings = class {
@@ -10775,7 +10902,7 @@ var require_settings2 = __commonJS({
         this._options = _options;
         this.followSymbolicLinks = this._getValue(this._options.followSymbolicLinks, false);
         this.fs = fs3.createFileSystemAdapter(this._options.fs);
-        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path4.sep);
+        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path5.sep);
         this.stats = this._getValue(this._options.stats, false);
         this.throwErrorOnBrokenSymbolicLink = this._getValue(this._options.throwErrorOnBrokenSymbolicLink, true);
         this.fsStatSettings = new fsStat.Settings({
@@ -10796,23 +10923,24 @@ var require_settings2 = __commonJS({
 var require_out2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.scandir@2.1.5/node_modules/@nodelib/fs.scandir/out/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Settings = exports.scandirSync = exports.scandir = void 0;
     var async = require_async2();
     var sync = require_sync2();
     var settings_1 = require_settings2();
     exports.Settings = settings_1.default;
-    function scandir(path4, optionsOrSettingsOrCallback, callback) {
+    function scandir(path5, optionsOrSettingsOrCallback, callback) {
       if (typeof optionsOrSettingsOrCallback === "function") {
-        async.read(path4, getSettings(), optionsOrSettingsOrCallback);
+        async.read(path5, getSettings(), optionsOrSettingsOrCallback);
         return;
       }
-      async.read(path4, getSettings(optionsOrSettingsOrCallback), callback);
+      async.read(path5, getSettings(optionsOrSettingsOrCallback), callback);
     }
     exports.scandir = scandir;
-    function scandirSync(path4, optionsOrSettings) {
+    function scandirSync(path5, optionsOrSettings) {
       const settings = getSettings(optionsOrSettings);
-      return sync.read(path4, settings);
+      return sync.read(path5, settings);
     }
     exports.scandirSync = scandirSync;
     function getSettings(settingsOrOptions = {}) {
@@ -10828,6 +10956,7 @@ var require_out2 = __commonJS({
 var require_reusify = __commonJS({
   "node_modules/.pnpm/reusify@1.1.0/node_modules/reusify/reusify.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     function reusify(Constructor) {
       var head = new Constructor();
       var tail = head;
@@ -10859,6 +10988,7 @@ var require_reusify = __commonJS({
 var require_queue = __commonJS({
   "node_modules/.pnpm/fastq@1.19.1/node_modules/fastq/queue.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var reusify = require_reusify();
     function fastqueue(context, worker, _concurrency) {
       if (typeof context === "function") {
@@ -11120,6 +11250,7 @@ var require_queue = __commonJS({
 var require_common2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/readers/common.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.joinPathSegments = exports.replacePathSegmentSeparator = exports.isAppliedFilter = exports.isFatalError = void 0;
     function isFatalError(settings, error) {
@@ -11154,6 +11285,7 @@ var require_common2 = __commonJS({
 var require_reader = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/readers/reader.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var common = require_common2();
     var Reader = class {
@@ -11171,6 +11303,7 @@ var require_reader = __commonJS({
 var require_async3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/readers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var events_1 = __require("events");
     var fsScandir = require_out2();
@@ -11274,6 +11407,7 @@ var require_async3 = __commonJS({
 var require_async4 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/providers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var async_1 = require_async3();
     var AsyncProvider = class {
@@ -11310,6 +11444,7 @@ var require_async4 = __commonJS({
 var require_stream2 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/providers/stream.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var stream_1 = __require("stream");
     var async_1 = require_async3();
@@ -11351,6 +11486,7 @@ var require_stream2 = __commonJS({
 var require_sync3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/readers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var fsScandir = require_out2();
     var common = require_common2();
@@ -11415,6 +11551,7 @@ var require_sync3 = __commonJS({
 var require_sync4 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/providers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var sync_1 = require_sync3();
     var SyncProvider = class {
@@ -11435,8 +11572,9 @@ var require_sync4 = __commonJS({
 var require_settings3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/settings.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path4 = __require("path");
+    var path5 = __require("path");
     var fsScandir = require_out2();
     var Settings = class {
       constructor(_options = {}) {
@@ -11446,7 +11584,7 @@ var require_settings3 = __commonJS({
         this.deepFilter = this._getValue(this._options.deepFilter, null);
         this.entryFilter = this._getValue(this._options.entryFilter, null);
         this.errorFilter = this._getValue(this._options.errorFilter, null);
-        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path4.sep);
+        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path5.sep);
         this.fsScandirSettings = new fsScandir.Settings({
           followSymbolicLinks: this._options.followSymbolicLinks,
           fs: this._options.fs,
@@ -11467,6 +11605,7 @@ var require_settings3 = __commonJS({
 var require_out3 = __commonJS({
   "node_modules/.pnpm/@nodelib+fs.walk@1.2.8/node_modules/@nodelib/fs.walk/out/index.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Settings = exports.walkStream = exports.walkSync = exports.walk = void 0;
     var async_1 = require_async4();
@@ -11507,8 +11646,9 @@ var require_out3 = __commonJS({
 var require_reader2 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/readers/reader.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path4 = __require("path");
+    var path5 = __require("path");
     var fsStat = require_out();
     var utils = require_utils4();
     var Reader = class {
@@ -11521,7 +11661,7 @@ var require_reader2 = __commonJS({
         });
       }
       _getFullEntryPath(filepath) {
-        return path4.resolve(this._settings.cwd, filepath);
+        return path5.resolve(this._settings.cwd, filepath);
       }
       _makeEntry(stats, pattern) {
         const entry = {
@@ -11546,6 +11686,7 @@ var require_reader2 = __commonJS({
 var require_stream3 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/readers/stream.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var stream_1 = __require("stream");
     var fsStat = require_out();
@@ -11603,6 +11744,7 @@ var require_stream3 = __commonJS({
 var require_async5 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/readers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var fsWalk = require_out3();
     var reader_1 = require_reader2();
@@ -11642,6 +11784,7 @@ var require_async5 = __commonJS({
 var require_matcher = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/matchers/matcher.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils = require_utils4();
     var Matcher = class {
@@ -11693,6 +11836,7 @@ var require_matcher = __commonJS({
 var require_partial = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/matchers/partial.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var matcher_1 = require_matcher();
     var PartialMatcher = class extends matcher_1.default {
@@ -11730,6 +11874,7 @@ var require_partial = __commonJS({
 var require_deep = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/filters/deep.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils = require_utils4();
     var partial_1 = require_partial();
@@ -11795,6 +11940,7 @@ var require_deep = __commonJS({
 var require_entry = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/filters/entry.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils = require_utils4();
     var EntryFilter = class {
@@ -11883,6 +12029,7 @@ var require_entry = __commonJS({
 var require_error = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/filters/error.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils = require_utils4();
     var ErrorFilter = class {
@@ -11904,6 +12051,7 @@ var require_error = __commonJS({
 var require_entry2 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/transformers/entry.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils = require_utils4();
     var EntryTransformer = class {
@@ -11936,8 +12084,9 @@ var require_entry2 = __commonJS({
 var require_provider = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/provider.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path4 = __require("path");
+    var path5 = __require("path");
     var deep_1 = require_deep();
     var entry_1 = require_entry();
     var error_1 = require_error();
@@ -11951,7 +12100,7 @@ var require_provider = __commonJS({
         this.entryTransformer = new entry_2.default(this._settings);
       }
       _getRootDirectory(task) {
-        return path4.resolve(this._settings.cwd, task.base);
+        return path5.resolve(this._settings.cwd, task.base);
       }
       _getReaderOptions(task) {
         const basePath = task.base === "." ? "" : task.base;
@@ -11990,6 +12139,7 @@ var require_provider = __commonJS({
 var require_async6 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/async.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var async_1 = require_async5();
     var provider_1 = require_provider();
@@ -12019,6 +12169,7 @@ var require_async6 = __commonJS({
 var require_stream4 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/stream.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var stream_1 = __require("stream");
     var stream_2 = require_stream3();
@@ -12053,6 +12204,7 @@ var require_stream4 = __commonJS({
 var require_sync5 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/readers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var fsStat = require_out();
     var fsWalk = require_out3();
@@ -12101,6 +12253,7 @@ var require_sync5 = __commonJS({
 var require_sync6 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/providers/sync.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     var sync_1 = require_sync5();
     var provider_1 = require_provider();
@@ -12130,6 +12283,7 @@ var require_sync6 = __commonJS({
 var require_settings4 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/settings.js"(exports) {
     "use strict";
+    init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_FILE_SYSTEM_ADAPTER = void 0;
     var fs3 = __require("fs");
@@ -12190,6 +12344,7 @@ var require_settings4 = __commonJS({
 var require_out4 = __commonJS({
   "node_modules/.pnpm/fast-glob@3.3.3/node_modules/fast-glob/out/index.js"(exports, module) {
     "use strict";
+    init_esm_shims();
     var taskManager = require_tasks();
     var async_1 = require_async6();
     var stream_1 = require_stream4();
@@ -12286,6 +12441,21 @@ var require_out4 = __commonJS({
     module.exports = FastGlob;
   }
 });
+
+// src/mcp/server.ts
+init_esm_shims();
+
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+init_esm_shims();
+
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+init_esm_shims();
+
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+init_esm_shims();
+
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+init_esm_shims();
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -12398,8 +12568,19 @@ __export(external_exports, {
   util: () => util,
   void: () => voidType
 });
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/errors.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/locales/en.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/ZodError.js
+init_esm_shims();
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
+init_esm_shims();
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -12764,9 +12945,10 @@ function getErrorMap() {
 }
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
+init_esm_shims();
 var makeIssue = (params) => {
-  const { data, path: path4, errorMaps, issueData } = params;
-  const fullPath = [...path4, ...issueData.path || []];
+  const { data, path: path5, errorMaps, issueData } = params;
+  const fullPath = [...path5, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -12873,7 +13055,11 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/errorUtil.js
+init_esm_shims();
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
@@ -12882,11 +13068,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path4, key) {
+  constructor(parent, value, path5, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path4;
+    this._path = path5;
     this._key = key;
   }
   get path() {
@@ -16328,7 +16514,14 @@ var coerce = {
 };
 var NEVER = INVALID;
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/mini/external.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/index.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/core.js
+init_esm_shims();
 var NEVER2 = Object.freeze({
   status: "aborted"
 });
@@ -16387,6 +16580,12 @@ function config(newConfig) {
   return globalConfig;
 }
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/parse.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/errors.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
@@ -16440,6 +16639,7 @@ __export(util_exports, {
   stringifyPrimitive: () => stringifyPrimitive,
   unwrapMessage: () => unwrapMessage
 });
+init_esm_shims();
 function assertEqual(val) {
   return val;
 }
@@ -16523,10 +16723,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -16846,11 +17046,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -17035,7 +17235,14 @@ var _safeParseAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeParseAsync = /* @__PURE__ */ _safeParseAsync($ZodRealError);
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/schemas.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/checks.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/regexes.js
+init_esm_shims();
 var cuid = /^[cC][^\s-]{8,}$/;
 var cuid2 = /^[0-9a-z]+$/;
 var ulid = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
@@ -17478,6 +17685,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
 });
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/doc.js
+init_esm_shims();
 var Doc = class {
   constructor(args = []) {
     this.content = [];
@@ -17514,6 +17722,7 @@ var Doc = class {
 };
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/versions.js
+init_esm_shims();
 var version = {
   major: 4,
   minor: 0,
@@ -18742,6 +18951,7 @@ function handleRefineResult(result, payload, input, inst) {
 }
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/registries.js
+init_esm_shims();
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new Map();
@@ -18790,6 +19000,7 @@ function registry() {
 var globalRegistry = /* @__PURE__ */ registry();
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/api.js
+init_esm_shims();
 function _string(Class2, params) {
   return new Class2({
     type: "string",
@@ -19223,6 +19434,7 @@ function _refine(Class2, fn, _params) {
 }
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/to-json-schema.js
+init_esm_shims();
 var JSONSchemaGenerator = class {
   constructor(params) {
     this.counter = 0;
@@ -19989,7 +20201,11 @@ function isTransforming(_schema, _ctx) {
   throw new Error(`Unknown schema type: ${def.type}`);
 }
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/mini/parse.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/mini/schemas.js
+init_esm_shims();
 var ZodMiniType = /* @__PURE__ */ $constructor("ZodMiniType", (inst, def) => {
   if (!inst._zod)
     throw new Error("Uninitialized schema in ZodMiniType.");
@@ -20189,7 +20405,17 @@ function getLiteralValue(schema) {
   return void 0;
 }
 
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/schemas.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/checks.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/iso.js
+init_esm_shims();
 var ZodISODateTime = /* @__PURE__ */ $constructor("ZodISODateTime", (inst, def) => {
   $ZodISODateTime.init(inst, def);
   ZodStringFormat.init(inst, def);
@@ -20219,7 +20445,11 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/parse.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/errors.js
+init_esm_shims();
 var initializer2 = (inst, issues) => {
   $ZodError.init(inst, issues);
   inst.name = "ZodError";
@@ -22079,7 +22309,14 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/index.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/Options.js
+init_esm_shims();
 var ignoreOverride = /* @__PURE__ */ Symbol("Let zodToJsonSchema decide on which parser to use");
 var defaultOptions = {
   name: void 0,
@@ -22114,6 +22351,7 @@ var getDefaultOptions = (options) => typeof options === "string" ? {
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/Refs.js
+init_esm_shims();
 var getRefs = (options) => {
   const _options = getDefaultOptions(options);
   const currentPath = _options.name !== void 0 ? [..._options.basePath, _options.definitionPath, _options.name] : _options.basePath;
@@ -22135,6 +22373,7 @@ var getRefs = (options) => {
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+init_esm_shims();
 function addErrorMessage(res, key, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
@@ -22151,6 +22390,7 @@ function setResponseValueAndErrors(res, key, value, errorMessage, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+init_esm_shims();
 var getRelativePath = (pathA, pathB) => {
   let i = 0;
   for (; i < pathA.length && i < pathB.length; i++) {
@@ -22160,7 +22400,14 @@ var getRelativePath = (pathA, pathB) => {
   return [(pathA.length - i).toString(), ...pathB.slice(i)].join("/");
 };
 
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parseDef.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/selectParser.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+init_esm_shims();
 function parseAnyDef(refs) {
   if (refs.target !== "openAi") {
     return {};
@@ -22177,6 +22424,7 @@ function parseAnyDef(refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+init_esm_shims();
 function parseArrayDef(def, refs) {
   const res = {
     type: "array"
@@ -22201,6 +22449,7 @@ function parseArrayDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+init_esm_shims();
 function parseBigintDef(def, refs) {
   const res = {
     type: "integer",
@@ -22247,6 +22496,7 @@ function parseBigintDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+init_esm_shims();
 function parseBooleanDef() {
   return {
     type: "boolean"
@@ -22254,16 +22504,19 @@ function parseBooleanDef() {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+init_esm_shims();
 function parseBrandedDef(_def, refs) {
   return parseDef(_def.type._def, refs);
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+init_esm_shims();
 var parseCatchDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+init_esm_shims();
 function parseDateDef(def, refs, overrideDateStrategy) {
   const strategy = overrideDateStrategy ?? refs.dateStrategy;
   if (Array.isArray(strategy)) {
@@ -22323,6 +22576,7 @@ var integerDateParser = (def, refs) => {
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+init_esm_shims();
 function parseDefaultDef(_def, refs) {
   return {
     ...parseDef(_def.innerType._def, refs),
@@ -22331,11 +22585,13 @@ function parseDefaultDef(_def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+init_esm_shims();
 function parseEffectsDef(_def, refs) {
   return refs.effectStrategy === "input" ? parseDef(_def.schema._def, refs) : parseAnyDef(refs);
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+init_esm_shims();
 function parseEnumDef(def) {
   return {
     type: "string",
@@ -22344,6 +22600,7 @@ function parseEnumDef(def) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+init_esm_shims();
 var isJsonSchema7AllOfType = (type) => {
   if ("type" in type && type.type === "string")
     return false;
@@ -22386,6 +22643,7 @@ function parseIntersectionDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+init_esm_shims();
 function parseLiteralDef(def, refs) {
   const parsedType = typeof def.value;
   if (parsedType !== "bigint" && parsedType !== "number" && parsedType !== "boolean" && parsedType !== "string") {
@@ -22405,7 +22663,14 @@ function parseLiteralDef(def, refs) {
   };
 }
 
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+init_esm_shims();
+
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+init_esm_shims();
 var emojiRegex2 = void 0;
 var zodPatterns = {
   /**
@@ -22808,6 +23073,7 @@ function parseMapDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+init_esm_shims();
 function parseNativeEnumDef(def) {
   const object3 = def.values;
   const actualKeys = Object.keys(def.values).filter((key) => {
@@ -22822,6 +23088,7 @@ function parseNativeEnumDef(def) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+init_esm_shims();
 function parseNeverDef(refs) {
   return refs.target === "openAi" ? void 0 : {
     not: parseAnyDef({
@@ -22832,6 +23099,7 @@ function parseNeverDef(refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+init_esm_shims();
 function parseNullDef(refs) {
   return refs.target === "openApi3" ? {
     enum: ["null"],
@@ -22841,7 +23109,11 @@ function parseNullDef(refs) {
   };
 }
 
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+init_esm_shims();
 var primitiveMappings = {
   ZodString: "string",
   ZodNumber: "number",
@@ -22942,6 +23214,7 @@ function parseNullableDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+init_esm_shims();
 function parseNumberDef(def, refs) {
   const res = {
     type: "number"
@@ -22991,6 +23264,7 @@ function parseNumberDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+init_esm_shims();
 function parseObjectDef(def, refs) {
   const forceOptionalIntoNullable = refs.target === "openAi";
   const result = {
@@ -23061,6 +23335,7 @@ function safeIsOptional(schema) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+init_esm_shims();
 var parseOptionalDef = (def, refs) => {
   if (refs.currentPath.toString() === refs.propertyPath?.toString()) {
     return parseDef(def.innerType._def, refs);
@@ -23080,6 +23355,7 @@ var parseOptionalDef = (def, refs) => {
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+init_esm_shims();
 var parsePipelineDef = (def, refs) => {
   if (refs.pipeStrategy === "input") {
     return parseDef(def.in._def, refs);
@@ -23100,11 +23376,13 @@ var parsePipelineDef = (def, refs) => {
 };
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+init_esm_shims();
 function parsePromiseDef(def, refs) {
   return parseDef(def.type._def, refs);
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+init_esm_shims();
 function parseSetDef(def, refs) {
   const items = parseDef(def.valueType._def, {
     ...refs,
@@ -23125,6 +23403,7 @@ function parseSetDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+init_esm_shims();
 function parseTupleDef(def, refs) {
   if (def.rest) {
     return {
@@ -23153,6 +23432,7 @@ function parseTupleDef(def, refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+init_esm_shims();
 function parseUndefinedDef(refs) {
   return {
     not: parseAnyDef(refs)
@@ -23160,11 +23440,13 @@ function parseUndefinedDef(refs) {
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+init_esm_shims();
 function parseUnknownDef(refs) {
   return parseAnyDef(refs);
 }
 
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+init_esm_shims();
 var parseReadonlyDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
@@ -23301,7 +23583,11 @@ var addMeta = (def, refs, jsonSchema) => {
   return jsonSchema;
 };
 
+// node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/parseTypes.js
+init_esm_shims();
+
 // node_modules/.pnpm/zod-to-json-schema@3.25.0_zod@3.25.76/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+init_esm_shims();
 var zodToJsonSchema = (schema, options) => {
   const refs = getRefs(options);
   let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name2, schema2]) => ({
@@ -23807,6 +24093,7 @@ function mergeCapabilities(base, additional) {
 }
 
 // node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+init_esm_shims();
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -24176,6 +24463,7 @@ var Server = class extends Protocol {
 };
 
 // node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+init_esm_shims();
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -24189,7 +24477,11 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
+init_esm_shims();
+
 // node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+init_esm_shims();
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
   const warnings = [];
@@ -24904,9 +25196,11 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+init_esm_shims();
 import process2 from "process";
 
 // node_modules/.pnpm/@modelcontextprotocol+sdk@1.23.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+init_esm_shims();
 var ReadBuffer = class {
   append(chunk) {
     this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
@@ -24998,10 +25292,17 @@ var StdioServerTransport = class {
   }
 };
 
+// src/engine/index.ts
+init_esm_shims();
+
+// src/engine/types.ts
+init_esm_shims();
+
 // src/engine/fileUtils.ts
+init_esm_shims();
 var import_fast_glob = __toESM(require_out4(), 1);
 import fs from "fs/promises";
-import path from "path";
+import path2 from "path";
 async function resolveFiles(patterns, rootDir = process.cwd()) {
   const entries = await (0, import_fast_glob.default)(patterns, {
     cwd: rootDir,
@@ -25015,7 +25316,7 @@ async function readFiles(paths, rootDir = process.cwd()) {
   for (const p of paths) {
     try {
       const content = await fs.readFile(p, "utf-8");
-      const relativePath = path.relative(rootDir, p);
+      const relativePath = path2.relative(rootDir, p);
       results.push({ path: relativePath, content });
     } catch (error) {
       console.error(`Failed to read file ${p}:`, error);
@@ -25025,24 +25326,31 @@ async function readFiles(paths, rootDir = process.cwd()) {
 }
 
 // src/engine/index.ts
-import path3 from "path";
+import path4 from "path";
+
+// src/languages/cppAdapter.ts
+init_esm_shims();
+
+// src/languages/baseAdapter.ts
+init_esm_shims();
 
 // src/util/astGrepCli.ts
+init_esm_shims();
 import { spawn } from "child_process";
-import path2 from "path";
-import { fileURLToPath } from "url";
+import path3 from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
 import fs2 from "fs";
 import fsPromises from "fs/promises";
 import os from "os";
-var __filename = fileURLToPath(import.meta.url);
-var __dirname = path2.dirname(__filename);
+var __filename2 = fileURLToPath2(import.meta.url);
+var __dirname2 = path3.dirname(__filename2);
 async function astGrep(options) {
   const { pattern, language, rule, code } = options;
   const platform = process.platform;
   const arch = process.arch;
   const bundledBinaryName = `ast-grep-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
-  const bundledBinary = path2.join(__dirname, "../bin", bundledBinaryName);
-  const nodeModulesBinary = path2.join(__dirname, "../../node_modules/.bin/ast-grep");
+  const bundledBinary = path3.join(__dirname2, "../bin", bundledBinaryName);
+  const nodeModulesBinary = path3.join(__dirname2, "../../node_modules/.bin/ast-grep");
   const astGrepBin = fs2.existsSync(bundledBinary) ? bundledBinary : nodeModulesBinary;
   if (!fs2.existsSync(astGrepBin)) {
     throw new Error(
@@ -25056,8 +25364,8 @@ Run 'npm install' to install dependencies or 'npm run prepare' to bundle the bin
   let tempDir = null;
   let rulePath = null;
   if (rule) {
-    tempDir = await fsPromises.mkdtemp(path2.join(os.tmpdir(), "ast-grep-"));
-    rulePath = path2.join(tempDir, "rule.json");
+    tempDir = await fsPromises.mkdtemp(path3.join(os.tmpdir(), "ast-grep-"));
+    rulePath = path3.join(tempDir, "rule.json");
     const ruleContent = JSON.stringify(rule, null, 2);
     await fsPromises.writeFile(rulePath, ruleContent);
     args = ["scan", "--rule", rulePath, "--stdin", "--json=stream"];
@@ -25331,6 +25639,7 @@ var CppAdapter = class extends BaseAdapter {
 };
 
 // src/languages/javaAdapter.ts
+init_esm_shims();
 var JavaAdapter = class extends BaseAdapter {
   constructor() {
     super({
@@ -25386,6 +25695,7 @@ var JavaAdapter = class extends BaseAdapter {
 };
 
 // src/languages/goAdapter.ts
+init_esm_shims();
 var GoAdapter = class extends BaseAdapter {
   constructor() {
     super({
@@ -25446,6 +25756,7 @@ var GoAdapter = class extends BaseAdapter {
 };
 
 // src/languages/rustAdapter.ts
+init_esm_shims();
 var RustAdapter = class extends BaseAdapter {
   constructor() {
     super({
@@ -25519,7 +25830,7 @@ var Engine = class {
     return this.adapters.get(languageId);
   }
   detectLanguage(filePath) {
-    const ext = path3.extname(filePath).toLowerCase();
+    const ext = path4.extname(filePath).toLowerCase();
     switch (ext) {
       case ".sol":
         return "solidity" /* Solidity */;
@@ -25615,6 +25926,7 @@ var Engine = class {
 };
 
 // src/languages/solidityAdapter.ts
+init_esm_shims();
 var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   constructor() {
     super({
@@ -25993,7 +26305,14 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   }
 };
 
+// src/mcp/tools/entrypoints.ts
+init_esm_shims();
+
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/index.js
+init_esm_shims();
+
 // node_modules/.pnpm/@toon-format+toon@2.0.0/node_modules/@toon-format/toon/dist/index.mjs
+init_esm_shims();
 var LIST_ITEM_MARKER = "-";
 var LIST_ITEM_PREFIX = "- ";
 var COMMA = ",";
@@ -26387,6 +26706,7 @@ function createEntrypointsHandler(engine2) {
 }
 
 // src/mcp/tools/peek.ts
+init_esm_shims();
 var peekSchema = {
   description: "Extract function signatures from files to understand their purpose",
   inputSchema: {
@@ -26415,6 +26735,7 @@ function createPeekHandler(engine2) {
 }
 
 // src/mcp/tools/metrics.ts
+init_esm_shims();
 var metricsSchema = {
   description: "Calculate code metrics and estimation for files",
   inputSchema: {
@@ -26456,6 +26777,7 @@ function createMetricsHandler(engine2) {
 }
 
 // src/mcp/tools/callgraph.ts
+init_esm_shims();
 var callGraphSchema = {
   description: "Generate a call graph for the specified files",
   inputSchema: {

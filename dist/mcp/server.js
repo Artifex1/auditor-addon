@@ -25448,7 +25448,7 @@ var BaseAdapter = class {
     this.config = config2;
   }
   cleanSignature(raw) {
-    return raw.replace(/\s+/g, " ").trim();
+    return raw.replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/\s*,\s*/g, ", ").trim();
   }
   async extractEntrypoints(files) {
     return [];
@@ -26299,36 +26299,66 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         const functions = await astGrep({ rule: regularFunctionRule, code: container.text });
         const fallbackReceives = await astGrep({ rule: fallbackReceiveRule, code: container.text });
         for (const fn of functions) {
-          this.indexSymbol(this.createFunctionNode(fn, file.path, kind, contractName, container.range.start.line));
+          this.indexSymbol(await this.createFunctionNode(fn, file.path, kind, contractName, container.range.start.line));
         }
         for (const fn of fallbackReceives) {
           const text = fn.text.trim();
           const name = text.includes("receive") ? "receive" : "fallback";
           const mockFn = { ...fn, metaVariables: { single: { NAME: { text: name } }, multi: { PARAMS: [], MODIFIERS: [{ text: "external" }] } } };
-          this.indexSymbol(this.createFunctionNode(mockFn, file.path, kind, contractName, container.range.start.line));
+          this.indexSymbol(await this.createFunctionNode(mockFn, file.path, kind, contractName, container.range.start.line));
         }
       }
       const freeFunctions = await astGrep({ rule: freeFunctionRule, code: file.content });
       for (const fn of freeFunctions) {
-        this.indexSymbol(this.createFunctionNode(fn, file.path));
+        this.indexSymbol(await this.createFunctionNode(fn, file.path));
       }
     }
   }
-  createFunctionNode(fn, file, containerKind, contract, baseLineOffset = 0) {
+  async createFunctionNode(fn, file, containerKind, contract, baseLineOffset = 0) {
     const fnName = fn.metaVariables?.single?.NAME?.text;
     let params = fn.metaVariables?.multi?.PARAMS?.map((p) => p.text).join("") || "";
     if (!params && fn.text) {
-      const openParen = fn.text.indexOf("(");
-      const closeParen = fn.text.indexOf(")");
-      if (openParen !== -1 && closeParen !== -1 && closeParen > openParen) {
-        params = fn.text.substring(openParen + 1, closeParen);
+      try {
+        const snippet = `contract C { ${fn.text} }`;
+        const paramMatches = await astGrep({
+          code: snippet,
+          language: "solidity" /* Solidity */,
+          rule: {
+            id: "parameter",
+            language: "solidity" /* Solidity */,
+            rule: {
+              kind: "parameter",
+              inside: {
+                kind: "function_definition"
+              },
+              not: {
+                any: [
+                  { inside: { kind: "catch_clause" } },
+                  // Exclude catch parameters
+                  { inside: { kind: "return_type_definition" } },
+                  // Exclude return params
+                  { inside: { kind: "try_statement" } },
+                  // Exclude try params (returns)
+                  // Crucial: Exclude parameters that are inside OTHER parameters (e.g. function type args)
+                  // We only want the top-level parameters of THIS function definition
+                  { inside: { kind: "parameter" } }
+                ]
+              }
+            }
+          }
+        });
+        if (paramMatches.length > 0) {
+          params = paramMatches.map((p) => p.text).join(", ");
+        }
+      } catch (e) {
+        console.warn(`Failed to extract parameters for ${fnName} in ${file}`, e);
       }
     }
     const modifiers = fn.metaVariables?.multi?.MODIFIERS?.map((m) => m.text) ?? [];
     const visibility = modifiers.find(
       (m) => ["external", "public", "internal", "private"].includes(m)
     );
-    const signature = `${fnName}(${params})`;
+    const signature = this.cleanSignature(`${fnName}(${params})`);
     const id = contract ? `${contract}.${signature}` : signature;
     const finalVisibility = visibility ?? (containerKind === "interface" ? "external" : "internal");
     return {

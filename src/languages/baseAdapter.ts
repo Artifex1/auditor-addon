@@ -30,7 +30,11 @@ export abstract class BaseAdapter implements LanguageAdapter {
     }
 
     protected cleanSignature(raw: string): string {
-        return raw.replace(/\s+/g, ' ').trim();
+        return raw.replace(/\s+/g, ' ')
+            .replace(/\(\s+/g, '(')
+            .replace(/\s+\)/g, ')')
+            .replace(/\s*,\s*/g, ', ')
+            .trim();
     }
 
     async extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]> {

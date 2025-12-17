@@ -119,4 +119,94 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
         const receiveFunc = entrypoints.find(e => e.name === 'receive');
         expect(receiveFunc?.visibility).toBe('external');
     });
+    it('should normalize function signatures with extra whitespace', async () => {
+        const code = `contract Test {
+            function foo(
+                uint256 a,
+                uint256 b
+            ) public {}
+        }`;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        expect(entrypoints[0].id).toBe('Test.foo(uint256 a, uint256 b)');
+    });
+
+    it('should extract complex function type parameters correctly', async () => {
+        const code = `
+            contract Test {
+                function execute(function(uint256) external returns (uint256) callback) public {}
+            }
+        `;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        const execute = entrypoints.find(e => e.name === 'execute');
+        expect(execute).toBeDefined();
+        expect(execute?.id).toContain('function(uint256) external returns (uint256) callback');
+    });
+
+    it('should extract multiple parameters correctly using fallback', async () => {
+        const code = `
+            contract Test {
+                function complex(
+                    uint256 a, 
+                    function(uint256) external returns (uint256) cb
+                ) public {}
+            }
+        `;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        const complex = entrypoints.find(e => e.name === 'complex');
+        expect(complex).toBeDefined();
+        expect(complex?.id).toBe('Test.complex(uint256 a, function(uint256) external returns (uint256) cb)');
+    });
+
+    it('should exclude parameters from nested try-catch blocks', async () => {
+        const code = `
+            contract Test {
+                function execute(uint256 input) public {
+                    try this.something() returns (uint256 val) {
+                        // success
+                    } catch (bytes memory reason) {
+                        // fail
+                    }
+                }
+            }
+        `;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        const execute = entrypoints.find(e => e.name === 'execute');
+        expect(execute).toBeDefined();
+        expect(execute?.id).toBe('Test.execute(uint256 input)');
+    });
+
+    it('should exclude parameters from nested function definitions', async () => {
+        const code = `
+            contract Test {
+                function execute(
+                    uint256 id, 
+                    function(uint256 nestedParam) external callback
+                ) public {}
+            }
+        `;
+
+        const entrypoints = await adapter.extractEntrypoints([
+            { path: 'Test.sol', content: code }
+        ]);
+
+        const execute = entrypoints.find(e => e.name === 'execute');
+        expect(execute).toBeDefined();
+        expect(execute?.id).toBe('Test.execute(uint256 id, function(uint256 nestedParam) external callback)');
+    });
 });

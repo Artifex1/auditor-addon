@@ -470,7 +470,7 @@ export class SolidityAdapter extends BaseAdapter {
                 const fallbackReceives = await astGrep({ rule: fallbackReceiveRule, code: container.text });
 
                 for (const fn of functions) {
-                    this.indexSymbol(this.createFunctionNode(fn, file.path, kind, contractName, container.range.start.line));
+                    this.indexSymbol(await this.createFunctionNode(fn, file.path, kind, contractName, container.range.start.line));
                 }
 
                 for (const fn of fallbackReceives) {
@@ -478,29 +478,59 @@ export class SolidityAdapter extends BaseAdapter {
                     const name = text.includes('receive') ? 'receive' : 'fallback';
                     // Mock a match object for the helper
                     const mockFn = { ...fn, metaVariables: { single: { NAME: { text: name } }, multi: { PARAMS: [], MODIFIERS: [{ text: 'external' }] } } };
-                    this.indexSymbol(this.createFunctionNode(mockFn, file.path, kind, contractName, container.range.start.line));
+                    this.indexSymbol(await this.createFunctionNode(mockFn, file.path, kind, contractName, container.range.start.line));
                 }
             }
 
             // 3. Find free functions
             const freeFunctions = await astGrep({ rule: freeFunctionRule, code: file.content });
             for (const fn of freeFunctions) {
-                this.indexSymbol(this.createFunctionNode(fn, file.path));
+                this.indexSymbol(await this.createFunctionNode(fn, file.path));
             }
         }
     }
 
-    private createFunctionNode(fn: any, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string, baseLineOffset: number = 0): GraphNode {
+    private async createFunctionNode(fn: any, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string, baseLineOffset: number = 0): Promise<GraphNode> {
         const fnName = fn.metaVariables?.single?.NAME?.text!;
         let params = fn.metaVariables?.multi?.PARAMS?.map((p: { text: string }) => p.text).join('') || '';
 
-        // Fallback: If ast-grep failed to capture params (common with some rules), extract from text
+        // Fallback: If ast-grep failed to capture params via pattern (common with complex types), extract via structural search
         if (!params && fn.text) {
-            const openParen = fn.text.indexOf('(');
-            const closeParen = fn.text.indexOf(')');
+            try {
+                // We wrap in a contract to ensure valid parsing structure for the snippet
+                // If it's already a method inside a contract, this mock contract wrapper is safe standard practice for snippet parsing
+                const snippet = `contract C { ${fn.text} }`;
+                const paramMatches = await astGrep({
+                    code: snippet,
+                    language: SupportedLanguage.Solidity,
+                    rule: {
+                        id: "parameter",
+                        language: SupportedLanguage.Solidity,
+                        rule: {
+                            kind: "parameter",
+                            inside: {
+                                kind: "function_definition"
+                            },
+                            not: {
+                                any: [
+                                    { inside: { kind: "catch_clause" } },          // Exclude catch parameters
+                                    { inside: { kind: "return_type_definition" } }, // Exclude return params
+                                    { inside: { kind: "try_statement" } }, // Exclude try params (returns)
+                                    // Crucial: Exclude parameters that are inside OTHER parameters (e.g. function type args)
+                                    // We only want the top-level parameters of THIS function definition
+                                    { inside: { kind: "parameter" } }
+                                ]
+                            }
+                        }
+                    }
+                });
 
-            if (openParen !== -1 && closeParen !== -1 && closeParen > openParen) {
-                params = fn.text.substring(openParen + 1, closeParen);
+                if (paramMatches.length > 0) {
+                    params = paramMatches.map(p => p.text).join(', ');
+                }
+            } catch (e) {
+                // If sub-search fails, we leave params empty
+                console.warn(`Failed to extract parameters for ${fnName} in ${file}`, e);
             }
         }
 
@@ -510,7 +540,7 @@ export class SolidityAdapter extends BaseAdapter {
                 ['external', 'public', 'internal', 'private'].includes(m)
         );
 
-        const signature = `${fnName}(${params})`;
+        const signature = this.cleanSignature(`${fnName}(${params})`);
         const id = contract ? `${contract}.${signature}` : signature;
 
         // Default visibility for interface functions is external if not specified

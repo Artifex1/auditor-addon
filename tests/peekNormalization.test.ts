@@ -58,6 +58,6 @@ describe('BaseAdapter - extractSignatures', () => {
         // Note: The current implementation slices up to '{'.
         // "void  foo(\n    int a,\n    int b\n)"
         // Normalization should turn this into single spaces.
-        expect(signatures['test.cpp'][0]).toBe('void foo( int a, int b )');
+        expect(signatures['test.cpp'][0]).toBe('void foo(int a, int b)');
     });
 });

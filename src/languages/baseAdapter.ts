@@ -2,25 +2,50 @@ import { LanguageAdapter, Entrypoint, FileContent, SupportedLanguage, CallGraph,
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Parser, Language, Node } from "web-tree-sitter";
 
+/**
+ * Configuration for a language adapter.
+ * Defines the tree-sitter queries and estimation constants for a specific language.
+ */
 export interface AdapterConfig {
+    /** The language identifier */
     languageId: SupportedLanguage;
+
+    /** Tree-sitter queries for extracting code constructs */
     queries: {
-        comments: string; // Tree-sitter query for matching comments
-        functions: string; // Tree-sitter query for matching function/method definitions
-        branching: string; // Tree-sitter query for matching branching statements
-        normalization?: string; // Optional: Tree-sitter query for multi-line constructs to normalize
+        /** Query for matching comments (e.g., line comments, block comments) */
+        comments: string;
+        /** Query for matching function/method definitions */
+        functions: string;
+        /** Query for matching branching statements (if, for, while, etc.) */
+        branching: string;
+        /** Optional query for multi-line constructs to normalize in NLoC calculation */
+        normalization?: string;
     };
+
+    /** Constants for code estimation and complexity analysis */
     constants: {
-        baseRateNlocPerDay: number; // How many NLoC a reviewer covers in one day (8h baseline)
-        complexityMidpoint: number; // Normalized CC (per 100 NLoC) where complexity impact is neutral
-        complexitySteepness: number; // How quickly complexity ramps toward its caps
-        complexityBenefitCap: number; // Max factor reduction from low complexity (e.g., 0.25 => -25%)
-        complexityPenaltyCap: number; // Max factor increase from high complexity (e.g., 0.50 => +50%)
-        commentFullBenefitDensity: number; // Comment density (%) where documentation benefit is near its cap
-        commentBenefitCap: number; // Max factor reduction from strong documentation (e.g., 0.30 => -30%)
+        /** How many normalized lines of code (NLoC) a reviewer can cover in one day (8h baseline) */
+        baseRateNlocPerDay: number;
+        /** Normalized cyclomatic complexity (per 100 NLoC) where complexity impact is neutral */
+        complexityMidpoint: number;
+        /** How quickly complexity penalties/benefits ramp toward their caps (higher = gentler slope) */
+        complexitySteepness: number;
+        /** Maximum factor reduction from low complexity (e.g., 0.25 => -25% time) */
+        complexityBenefitCap: number;
+        /** Maximum factor increase from high complexity (e.g., 0.75 => +75% time) */
+        complexityPenaltyCap: number;
+        /** Comment density (%) where documentation benefit approaches its cap */
+        commentFullBenefitDensity: number;
+        /** Maximum factor reduction from strong documentation (e.g., 0.35 => -35% time) */
+        commentBenefitCap: number;
     };
 }
 
+/**
+ * Base adapter providing common functionality for all language adapters.
+ * Implements signature extraction and metrics calculation using tree-sitter.
+ * Language-specific adapters should extend this class and override methods as needed.
+ */
 export abstract class BaseAdapter implements LanguageAdapter {
     languageId: SupportedLanguage;
     protected config: AdapterConfig;
@@ -30,6 +55,13 @@ export abstract class BaseAdapter implements LanguageAdapter {
         this.config = config;
     }
 
+    /**
+     * Normalizes a function signature by cleaning up whitespace.
+     * Converts multi-line signatures to single line with consistent spacing.
+     * 
+     * @param raw - Raw signature string
+     * @returns Cleaned signature string
+     */
     protected cleanSignature(raw: string): string {
         return raw.replace(/\s+/g, ' ')
             .replace(/\(\s+/g, '(')
@@ -38,14 +70,35 @@ export abstract class BaseAdapter implements LanguageAdapter {
             .trim();
     }
 
+    /**
+     * Extracts entrypoints (public/external functions) from source files.
+     * Default implementation returns empty array - override in language-specific adapters.
+     * 
+     * @param files - Array of source files to analyze
+     * @returns Array of entrypoints
+     */
     async extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]> {
         return [];
     }
 
+    /**
+     * Generates a call graph for the source files.
+     * Default implementation returns empty graph - override in language-specific adapters.
+     * 
+     * @param files - Array of source files to analyze
+     * @returns Call graph with nodes and edges
+     */
     async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
         return { nodes: [], edges: [] };
     }
 
+    /**
+     * Extracts function signatures from source files.
+     * Returns signatures without function bodies, truncated to 80 characters.
+     * 
+     * @param files - Array of source files to analyze
+     * @returns Map of file paths to arrays of function signatures
+     */
     async extractSignatures(files: FileContent[]): Promise<Record<string, string[]>> {
         const signaturesByFile: Record<string, string[]> = {};
         const service = TreeSitterService.getInstance();
@@ -64,9 +117,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
                 for (const capture of captures) {
                     if (capture.name === 'function') {
                         const node = capture.node;
-                        // For signatures, we often want the text up to the body
-                        // In tree-sitter, we usually have separate nodes for name, params, etc.
-                        // But to stay close to the original logic, we'll try to find a 'body' child or use the node text
+                        // Extract signature text up to the function body
                         const bodyNode = node.childForFieldName('body') || node.children.find(c => c.type.includes('body') || c.type === 'block');
 
                         let rawSignature = '';
@@ -89,12 +140,20 @@ export abstract class BaseAdapter implements LanguageAdapter {
                     signaturesByFile[file.path] = signatures;
                 }
             } catch (e) {
-                console.error(`Error extracting signatures for ${file.path}:`, e);
+                const errorMessage = e instanceof Error ? e.message : String(e);
+                console.error(`Error extracting signatures for ${file.path}: ${errorMessage}`);
             }
         }
         return signaturesByFile;
     }
 
+    /**
+     * Calculates code metrics for source files.
+     * Computes NLoC, complexity, comment density, and estimated review time.
+     * 
+     * @param files - Array of source files to analyze
+     * @returns Array of file metrics
+     */
     async calculateMetrics(files: FileContent[]): Promise<FileMetrics[]> {
         const results: FileMetrics[] = [];
         const {
@@ -121,157 +180,246 @@ export abstract class BaseAdapter implements LanguageAdapter {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
-            // 1. Comments
-            const commentLinesSet = new Set<number>();
-            let onlyCommentLinesCount = 0;
+            // 1. Calculate comment metrics
+            const { linesWithComments, onlyCommentLinesCount } = this.calculateCommentMetrics(
+                commentQuery,
+                tree.rootNode,
+                lines
+            );
 
-            const commentCaptures = commentQuery.captures(tree.rootNode);
-            for (const capture of commentCaptures) {
-                for (let i = capture.node.startPosition.row; i <= capture.node.endPosition.row; i++) {
-                    commentLinesSet.add(i);
-                }
-            }
+            // 2. Calculate cognitive complexity
+            const cognitiveComplexity = this.calculateCognitiveComplexity(branchQuery, tree.rootNode);
 
-            const linesWithComments = commentLinesSet.size;
-
-            for (const lineIdx of commentLinesSet) {
-                if (lineIdx >= lines.length) continue;
-                const lineContent = lines[lineIdx].trim();
-                // Simple heuristic for "only comment" lines (consistent with original)
-                if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
-                    onlyCommentLinesCount++;
-                }
-            }
-
-            // 2. Complexity
-            const branchCaptures = branchQuery.captures(tree.rootNode);
-            let cc = 0;
-
-            // Nested branches calculation (consistent with original logic)
-            const branches = branchCaptures.map(c => c.node);
-            for (const branch of branches) {
-                let nestingLevel = 0;
-                for (const other of branches) {
-                    if (branch === other) continue;
-
-                    const isInside = (
-                        other.startIndex <= branch.startIndex &&
-                        other.endIndex >= branch.endIndex &&
-                        (
-                            other.startIndex < branch.startIndex ||
-                            other.endIndex > branch.endIndex
-                        )
-                    );
-
-                    if (isInside) {
-                        nestingLevel++;
-                    }
-                }
-                cc += (1 + nestingLevel);
-            }
-
-            // 3. NLoC Calculation with Normalization
-            let blankLines = 0;
-            for (const line of lines) {
-                if (line.trim() === '') {
-                    blankLines++;
-                }
-            }
-
-            let normalizationAdjustment = 0;
-            if (normQuery) {
-                const normCaptures = normQuery.captures(tree.rootNode);
-                const allConstructs = normCaptures.map(c => ({ node: c.node, name: c.name }));
-
-                // Filter constructs to prevent double-counting multi-line adjustments.
-                // A construct is "nested" if it's inside another construct that also normalizes its extent.
-                const topLevelConstructs = allConstructs.filter(construct => {
-                    const isNested = allConstructs.some(other => {
-                        if (construct === other) return false;
-
-                        // Functions/methods only normalize their signatures, not their bodies.
-                        // Therefore, a construct inside a function body is NOT "nested" in a way
-                        // that would cause double-counting of normalization adjustments.
-                        const isOtherFunction = other.name.includes('function') ||
-                            other.name.includes('method') ||
-                            other.node.type.includes('function') ||
-                            other.node.type.includes('method');
-
-                        if (isOtherFunction) {
-                            const bodyNode = other.node.childForFieldName('body') ||
-                                other.node.children.find(c => c.type.includes('body') || c.type === 'block');
-                            if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
-                                return false;
-                            }
-                        }
-
-                        return other.node.startIndex <= construct.node.startIndex &&
-                            other.node.endIndex >= construct.node.endIndex &&
-                            (other.node.startIndex < construct.node.startIndex ||
-                                other.node.endIndex > construct.node.endIndex);
-                    });
-                    return !isNested;
-                });
-
-                for (const construct of topLevelConstructs) {
-                    let startLine = construct.node.startPosition.row;
-                    let endLine = construct.node.endPosition.row;
-
-                    // Special handling for functions/methods: only count signature lines
-                    // Check capture name OR node type for robustness across languages
-                    const isFunction = construct.name.includes('function') ||
-                        construct.name.includes('method') ||
-                        construct.node.type.includes('function') ||
-                        construct.node.type.includes('method');
-
-                    if (isFunction) {
-                        const bodyNode = construct.node.childForFieldName('body') ||
-                            construct.node.children.find(c => c.type.includes('body') || c.type === 'block');
-                        if (bodyNode) {
-                            endLine = bodyNode.startPosition.row - 1;
-                        }
-                    }
-
-                    const linesSpanned = endLine - startLine + 1;
-                    if (linesSpanned > 1) {
-                        normalizationAdjustment += (linesSpanned - 1);
-                    }
-                }
-            }
+            // 3. Calculate NLoC with normalization
+            const blankLines = lines.filter(line => line.trim() === '').length;
+            const normalizationAdjustment = normQuery
+                ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode, file.content)
+                : 0;
 
             const nloc = Math.max(0, totalLines - blankLines - onlyCommentLinesCount - normalizationAdjustment);
             const commentDensity = nloc > 0 ? parseFloat(((linesWithComments / nloc) * 100).toFixed(2)) : 0;
-            const normalizedCC = nloc > 0 ? (cc / nloc) * 100 : 0;
+            const normalizedComplexity = nloc > 0 ? (cognitiveComplexity / nloc) * 100 : 0;
 
-            // 4. Estimation
-            const baseHours = (nloc / baseRateNlocPerDay) * 8;
-
-            // Complexity effect: centered around midpoint, capped by separate benefit/penalty caps
-            const ccDelta = normalizedCC - complexityMidpoint;
-            const ccShape = Math.tanh(ccDelta / complexitySteepness); // ~[-1, 1]
-            const ccAdjustment = ccShape >= 0
-                ? ccShape * complexityPenaltyCap
-                : ccShape * complexityBenefitCap;
-
-            // Comment effect: smooth ramp up to full benefit density (tanh-based, 0 benefit at 0%)
-            const cdProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity); // 0..>
-            const cdShape = Math.tanh(cdProgress * 2.646); // ~0 at 0%, ~0.99 at fullBenefitDensity
-            const cdAdjustment = cdShape * commentBenefitCap;
-
-            let factor = 1.0 + ccAdjustment - cdAdjustment;
-            factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
-
-            const estimatedHours = parseFloat((baseHours * factor).toFixed(2));
+            // 4. Calculate estimated hours
+            const estimatedHours = this.calculateEstimation(
+                nloc,
+                normalizedComplexity,
+                commentDensity,
+                baseRateNlocPerDay,
+                complexityMidpoint,
+                complexitySteepness,
+                complexityBenefitCap,
+                complexityPenaltyCap,
+                commentFullBenefitDensity,
+                commentBenefitCap
+            );
 
             results.push({
                 file: file.path,
                 nloc,
                 linesWithComments,
                 commentDensity,
-                cognitiveComplexity: cc,
+                cognitiveComplexity,
                 estimatedHours
             });
         }
         return results;
+    }
+
+    /**
+     * Calculates comment-related metrics for a file.
+     * 
+     * @param commentQuery - Tree-sitter query for matching comments
+     * @param rootNode - Root node of the syntax tree
+     * @param lines - Array of file lines
+     * @returns Object with linesWithComments and onlyCommentLinesCount
+     */
+    private calculateCommentMetrics(
+        commentQuery: Query,
+        rootNode: Node,
+        lines: string[]
+    ): { linesWithComments: number; onlyCommentLinesCount: number } {
+        const commentLinesSet = new Set<number>();
+        let onlyCommentLinesCount = 0;
+
+        const commentCaptures = commentQuery.captures(rootNode);
+        for (const capture of commentCaptures) {
+            for (let i = capture.node.startPosition.row; i <= capture.node.endPosition.row; i++) {
+                commentLinesSet.add(i);
+            }
+        }
+
+        const linesWithComments = commentLinesSet.size;
+
+        for (const lineIdx of commentLinesSet) {
+            if (lineIdx >= lines.length) continue;
+            const lineContent = lines[lineIdx].trim();
+            // Simple heuristic for "only comment" lines
+            if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
+                onlyCommentLinesCount++;
+            }
+        }
+
+        return { linesWithComments, onlyCommentLinesCount };
+    }
+
+    /**
+     * Calculates cognitive complexity based on branching statements and nesting.
+     * Nested branches contribute more to complexity.
+     * 
+     * @param branchQuery - Tree-sitter query for matching branching statements
+     * @param rootNode - Root node of the syntax tree
+     * @returns Cognitive complexity score
+     */
+    private calculateCognitiveComplexity(branchQuery: Query, rootNode: Node): number {
+        const branchCaptures = branchQuery.captures(rootNode);
+        let cognitiveComplexity = 0;
+
+        const branches = branchCaptures.map(c => c.node);
+        for (const branch of branches) {
+            let nestingLevel = 0;
+            for (const other of branches) {
+                if (branch === other) continue;
+
+                const isInside = (
+                    other.startIndex <= branch.startIndex &&
+                    other.endIndex >= branch.endIndex &&
+                    (
+                        other.startIndex < branch.startIndex ||
+                        other.endIndex > branch.endIndex
+                    )
+                );
+
+                if (isInside) {
+                    nestingLevel++;
+                }
+            }
+            cognitiveComplexity += (1 + nestingLevel);
+        }
+
+        return cognitiveComplexity;
+    }
+
+    /**
+     * Calculates the normalization adjustment for NLoC.
+     * Multi-line constructs (like function signatures) are normalized to single lines.
+     * 
+     * @param normQuery - Tree-sitter query for normalization constructs
+     * @param rootNode - Root node of the syntax tree
+     * @param fileContent - Full file content
+     * @returns Number of lines to subtract from total
+     */
+    private calculateNormalizationAdjustment(
+        normQuery: Query,
+        rootNode: Node,
+        fileContent: string
+    ): number {
+        const normCaptures = normQuery.captures(rootNode);
+        const allConstructs = normCaptures.map(c => ({ node: c.node, name: c.name }));
+
+        // Filter constructs to prevent double-counting multi-line adjustments.
+        // A construct is "nested" if it's inside another construct that also normalizes its extent.
+        const topLevelConstructs = allConstructs.filter(construct => {
+            const isNested = allConstructs.some(other => {
+                if (construct === other) return false;
+
+                // Functions/methods only normalize their signatures, not their bodies.
+                // Therefore, a construct inside a function body is NOT "nested" in a way
+                // that would cause double-counting of normalization adjustments.
+                const isOtherFunction = other.name.includes('function') ||
+                    other.name.includes('method') ||
+                    other.node.type.includes('function') ||
+                    other.node.type.includes('method');
+
+                if (isOtherFunction) {
+                    const bodyNode = other.node.childForFieldName('body') ||
+                        other.node.children.find(c => c.type.includes('body') || c.type === 'block');
+                    if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
+                        return false;
+                    }
+                }
+
+                return other.node.startIndex <= construct.node.startIndex &&
+                    other.node.endIndex >= construct.node.endIndex &&
+                    (other.node.startIndex < construct.node.startIndex ||
+                        other.node.endIndex > construct.node.endIndex);
+            });
+            return !isNested;
+        });
+
+        let normalizationAdjustment = 0;
+        for (const construct of topLevelConstructs) {
+            let startLine = construct.node.startPosition.row;
+            let endLine = construct.node.endPosition.row;
+
+            // Special handling for functions/methods: only count signature lines
+            const isFunction = construct.name.includes('function') ||
+                construct.name.includes('method') ||
+                construct.node.type.includes('function') ||
+                construct.node.type.includes('method');
+
+            if (isFunction) {
+                const bodyNode = construct.node.childForFieldName('body') ||
+                    construct.node.children.find(c => c.type.includes('body') || c.type === 'block');
+                if (bodyNode) {
+                    endLine = bodyNode.startPosition.row - 1;
+                }
+            }
+
+            const linesSpanned = endLine - startLine + 1;
+            if (linesSpanned > 1) {
+                normalizationAdjustment += (linesSpanned - 1);
+            }
+        }
+
+        return normalizationAdjustment;
+    }
+
+    /**
+     * Calculates estimated review time based on NLoC, complexity, and documentation.
+     * Uses a tanh-based formula to apply complexity penalties and documentation benefits.
+     * 
+     * @param nloc - Normalized lines of code
+     * @param normalizedComplexity - Complexity per 100 NLoC
+     * @param commentDensity - Percentage of lines with comments
+     * @param baseRateNlocPerDay - Base review rate
+     * @param complexityMidpoint - Neutral complexity level
+     * @param complexitySteepness - How quickly complexity impacts time
+     * @param complexityBenefitCap - Max benefit from low complexity
+     * @param complexityPenaltyCap - Max penalty from high complexity
+     * @param commentFullBenefitDensity - Comment density for full benefit
+     * @param commentBenefitCap - Max benefit from documentation
+     * @returns Estimated hours
+     */
+    private calculateEstimation(
+        nloc: number,
+        normalizedComplexity: number,
+        commentDensity: number,
+        baseRateNlocPerDay: number,
+        complexityMidpoint: number,
+        complexitySteepness: number,
+        complexityBenefitCap: number,
+        complexityPenaltyCap: number,
+        commentFullBenefitDensity: number,
+        commentBenefitCap: number
+    ): number {
+        const baseHours = (nloc / baseRateNlocPerDay) * 8;
+
+        // Complexity effect: centered around midpoint, capped by separate benefit/penalty caps
+        const complexityDelta = normalizedComplexity - complexityMidpoint;
+        const complexityShape = Math.tanh(complexityDelta / complexitySteepness); // ~[-1, 1]
+        const complexityAdjustment = complexityShape >= 0
+            ? complexityShape * complexityPenaltyCap
+            : complexityShape * complexityBenefitCap;
+
+        // Comment effect: smooth ramp up to full benefit density (tanh-based, 0 benefit at 0%)
+        const commentDensityProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
+        const commentShape = Math.tanh(commentDensityProgress * 2.646); // ~0 at 0%, ~0.99 at fullBenefitDensity
+        const commentAdjustment = commentShape * commentBenefitCap;
+
+        let factor = 1.0 + complexityAdjustment - commentAdjustment;
+        factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
+
+        return parseFloat((baseHours * factor).toFixed(2));
     }
 }

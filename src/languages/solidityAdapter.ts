@@ -3,6 +3,13 @@ import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
+/**
+ * Represents the type of function call being analyzed.
+ * - Simple: Direct function call (e.g., `foo()`)
+ * - Member: Member access call (e.g., `obj.foo()`)
+ * - This: Explicit this call (e.g., `this.foo()`)
+ * - Super: Parent contract call (e.g., `super.foo()`)
+ */
 enum CallType {
     Simple,
     Member,
@@ -10,7 +17,44 @@ enum CallType {
     Super
 }
 
+type Visibility = 'public' | 'external' | 'internal' | 'private';
+
+/**
+ * Language adapter for Solidity smart contracts.
+ * Handles entrypoint extraction, call graph generation, and metrics calculation.
+ */
 export class SolidityAdapter extends BaseAdapter {
+    // Tree-sitter query strings
+    private static readonly QUERIES = {
+        CONTAINERS: `
+            [(contract_declaration) (interface_declaration) (library_declaration)] @container
+        `,
+        INHERITANCE: `
+            (inheritance_specifier ancestor: (user_defined_type (identifier) @parent))
+        `,
+        USING_FOR: `
+            (using_directive (type_alias (identifier) @lib))
+        `,
+        FUNCTIONS: `
+            [(function_definition) (fallback_receive_definition)] @function
+        `,
+        SUPER_CALL: `
+            (call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))
+        `,
+        THIS_CALL: `
+            (call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "this") property: (identifier) @FUNC)))
+        `,
+        MEMBER_CALL: `
+            (call_expression function: (expression (member_expression object: (_) @RECV property: (identifier) @FUNC)))
+        `,
+        SIMPLE_CALL: `
+            (call_expression function: (expression (identifier) @FUNC))
+        `,
+        ASSEMBLY_CALL: `
+            (yul_function_call function: (yul_identifier) @FUNC)
+        `
+    } as const;
+
     constructor() {
         super({
             languageId: SupportedLanguage.Solidity,
@@ -65,6 +109,13 @@ export class SolidityAdapter extends BaseAdapter {
 
     private static readonly BUILTIN_FUNCTIONS = new Set(['require', 'assert', 'revert', 'emit']);
 
+    /**
+     * Extracts all public and external functions from Solidity files.
+     * These represent the attack surface of the smart contracts.
+     * 
+     * @param files - Array of Solidity source files to analyze
+     * @returns Array of entrypoints with their signatures and metadata
+     */
     async extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]> {
         this.resetState();
         await this.buildSymbolTable(files);
@@ -81,6 +132,14 @@ export class SolidityAdapter extends BaseAdapter {
             }));
     }
 
+    /**
+     * Generates a complete call graph for Solidity contracts.
+     * Includes nodes for all functions and edges representing function calls.
+     * Handles inheritance, super calls, library usage, and assembly calls.
+     * 
+     * @param files - Array of Solidity source files to analyze
+     * @returns Call graph with nodes and edges
+     */
     async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
         this.resetState();
         const edges: GraphEdge[] = [];
@@ -97,6 +156,10 @@ export class SolidityAdapter extends BaseAdapter {
         return { nodes, edges };
     }
 
+    /**
+     * Resets all internal state (symbol table, inheritance graph, etc.).
+     * Called at the start of each analysis operation.
+     */
     private resetState() {
         this.symbolTable.clear();
         this.inheritanceGraph.clear();
@@ -105,6 +168,11 @@ export class SolidityAdapter extends BaseAdapter {
         this.symbolsByLabel.clear();
     }
 
+    /**
+     * Indexes a symbol in the symbol table and optimization indices.
+     * 
+     * @param node - GraphNode to index
+     */
     private indexSymbol(node: GraphNode) {
         this.symbolTable.set(node.id, node);
 
@@ -128,9 +196,7 @@ export class SolidityAdapter extends BaseAdapter {
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);
 
-        const functionQuery = new Query(lang, `
-            [(function_definition) (fallback_receive_definition)] @function
-        `);
+        const functionQuery = new Query(lang, SolidityAdapter.QUERIES.FUNCTIONS);
 
         for (const file of files) {
             const tree = parser.parse(file.content);
@@ -138,41 +204,46 @@ export class SolidityAdapter extends BaseAdapter {
 
             const captures = functionQuery.captures(tree.rootNode);
             for (const capture of captures) {
-                const fnNode = capture.node;
+                const functionNode = capture.node;
 
                 // Find the corresponding GraphNode in our symbol table
-                // We use the same ID generation logic as in buildSymbolTable/createFunctionNode
-                // But wait, it's easier to just use the range to find the symbol.
-                const symbol = this.findSymbolAtNode(fnNode, file.path);
+                const symbol = this.findSymbolAtNode(functionNode, file.path);
                 if (!symbol) continue;
 
                 // Rule 1: Super calls
-                await this.processCallType(fnNode, symbol, edges, {
+                await this.processCallType(functionNode, symbol, edges, {
                     callType: CallType.Super
                 });
 
                 // Rule 2: Member calls
-                await this.processCallType(fnNode, symbol, edges, {
+                await this.processCallType(functionNode, symbol, edges, {
                     callType: CallType.Member,
                     extractMember: true
                 });
 
                 // Rule 3: This calls
-                await this.processCallType(fnNode, symbol, edges, {
+                await this.processCallType(functionNode, symbol, edges, {
                     callType: CallType.This
                 });
 
                 // Rule 4: Simple calls
-                await this.processCallType(fnNode, symbol, edges, {
+                await this.processCallType(functionNode, symbol, edges, {
                     callType: CallType.Simple
                 });
 
                 // Rule 5: Assembly calls
-                await this.processAssemblyCalls(fnNode, symbol, edges);
+                await this.processAssemblyCalls(functionNode, symbol, edges);
             }
         }
     }
 
+    /**
+     * Finds a GraphNode in the symbol table matching a tree-sitter node's position.
+     * 
+     * @param node - Tree-sitter node to locate
+     * @param filePath - File path containing the node
+     * @returns Matching GraphNode or undefined
+     */
     private findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
         const line = node.startPosition.row + 1;
         const col = node.startPosition.column;
@@ -184,11 +255,19 @@ export class SolidityAdapter extends BaseAdapter {
         );
     }
 
+    /**
+     * Processes function calls of a specific type within a function node.
+     * 
+     * @param functionNode - The tree-sitter node representing the function
+     * @param symbol - The GraphNode representing this function in the symbol table
+     * @param edges - Array to collect discovered call edges
+     * @param callConfig - Configuration specifying the call type and options
+     */
     private async processCallType(
-        tsNode: Node,
+        functionNode: Node,
         symbol: GraphNode,
         edges: GraphEdge[],
-        config: {
+        callConfig: {
             callType: CallType;
             extractMember?: boolean;
         }
@@ -196,36 +275,45 @@ export class SolidityAdapter extends BaseAdapter {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
 
-        const querySource = config.callType === CallType.Super
-            ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))'
-            : config.callType === CallType.This
-                ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "this") property: (identifier) @FUNC)))'
-                : config.callType === CallType.Member
-                    ? '(call_expression function: (expression (member_expression object: (_) @RECV property: (identifier) @FUNC)))'
-                    : '(call_expression function: (expression (identifier) @FUNC))';
-
+        const querySource = this.getQueryForCallType(callConfig.callType);
         const query = new Query(lang, querySource);
-        const matches = query.matches(tsNode);
+        const matches = query.matches(functionNode);
 
         for (const match of matches) {
-            const funcCapture = match.captures.find(c => c.name === 'FUNC');
-            if (!funcCapture) continue;
+            const functionCapture = match.captures.find(c => c.name === 'FUNC');
+            if (!functionCapture) continue;
 
-            const funcName = funcCapture.node.text;
+            const funcName = functionCapture.node.text;
             let memberName: string | undefined;
 
-            if (config.extractMember) {
+            if (callConfig.extractMember) {
                 const recvCapture = match.captures.find(c => c.name === 'RECV');
                 memberName = recvCapture?.node.text;
             }
 
-            if (this.shouldSkipCall(funcName, memberName, config.callType)) continue;
+            if (this.shouldSkipCall(funcName, memberName, callConfig.callType)) continue;
 
-            const calleeNode = this.resolveCallNode(config.callType, funcName, memberName, symbol);
+            const calleeNode = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
             if (calleeNode) {
-                const kind = this.determineEdgeKind(config.callType, calleeNode);
+                const kind = this.determineEdgeKind(callConfig.callType, calleeNode);
                 edges.push({ from: symbol.id, to: calleeNode.id, kind });
             }
+        }
+    }
+
+    /**
+     * Returns the appropriate tree-sitter query string for a given call type.
+     */
+    private getQueryForCallType(callType: CallType): string {
+        switch (callType) {
+            case CallType.Super:
+                return SolidityAdapter.QUERIES.SUPER_CALL;
+            case CallType.This:
+                return SolidityAdapter.QUERIES.THIS_CALL;
+            case CallType.Member:
+                return SolidityAdapter.QUERIES.MEMBER_CALL;
+            case CallType.Simple:
+                return SolidityAdapter.QUERIES.SIMPLE_CALL;
         }
     }
 
@@ -244,12 +332,12 @@ export class SolidityAdapter extends BaseAdapter {
         return 'external';
     }
 
-    private async processAssemblyCalls(tsNode: Node, symbol: GraphNode, edges: GraphEdge[]) {
+    private async processAssemblyCalls(functionNode: Node, symbol: GraphNode, edges: GraphEdge[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
 
-        const query = new Query(lang, '(yul_function_call function: (yul_identifier) @FUNC)');
-        const captures = query.captures(tsNode);
+        const query = new Query(lang, SolidityAdapter.QUERIES.ASSEMBLY_CALL);
+        const captures = query.captures(functionNode);
 
         for (const capture of captures) {
             const callName = capture.node.text;
@@ -342,32 +430,27 @@ export class SolidityAdapter extends BaseAdapter {
         return undefined;
     }
 
+    /**
+     * Builds the complete symbol table for all contracts, interfaces, and libraries.
+     * Also populates inheritance and using-for mappings.
+     * 
+     * @param files - Array of Solidity source files to analyze
+     */
     private async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);
 
-        const containerQuery = new Query(lang, `
-            [(contract_declaration) (interface_declaration) (library_declaration)] @container
-        `);
-
-        const inheritanceQuery = new Query(lang, `
-            (inheritance_specifier ancestor: (user_defined_type (identifier) @parent))
-        `);
-
-        const usingQuery = new Query(lang, `
-            (using_directive (type_alias (identifier) @lib))
-        `);
-
-        const functionQuery = new Query(lang, `
-            [(function_definition) (fallback_receive_definition)] @function
-        `);
+        const containerQuery = new Query(lang, SolidityAdapter.QUERIES.CONTAINERS);
+        const inheritanceQuery = new Query(lang, SolidityAdapter.QUERIES.INHERITANCE);
+        const usingQuery = new Query(lang, SolidityAdapter.QUERIES.USING_FOR);
+        const functionQuery = new Query(lang, SolidityAdapter.QUERIES.FUNCTIONS);
 
         for (const file of files) {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
-            // 1. Find all containers
+            // 1. Find all containers (contracts, interfaces, libraries)
             const containerCaptures = containerQuery.captures(tree.rootNode);
 
             for (const capture of containerCaptures) {
@@ -387,7 +470,7 @@ export class SolidityAdapter extends BaseAdapter {
                     this.inheritanceGraph.set(contractName, parentsText);
                 }
 
-                // Track using-for
+                // Track using-for directives
                 const usingCaptures = usingQuery.captures(containerNode);
                 const libs = usingCaptures
                     .filter(c => c.name === 'lib')
@@ -416,10 +499,20 @@ export class SolidityAdapter extends BaseAdapter {
         }
     }
 
+    /**
+     * Creates a GraphNode from a tree-sitter function node.
+     * Handles regular functions, fallback, and receive functions.
+     * 
+     * @param node - Tree-sitter node representing the function
+     * @param file - File path containing this function
+     * @param containerKind - Type of container (contract, interface, library)
+     * @param contract - Name of the containing contract
+     * @returns GraphNode representing this function
+     */
     private async createFunctionNode(node: Node, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string): Promise<GraphNode> {
         let fnName = 'unknown';
         let params = '';
-        let visibility: string | undefined;
+        let visibility: Visibility | undefined;
 
         if (node.type === 'fallback_receive_definition') {
             fnName = node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
@@ -428,29 +521,23 @@ export class SolidityAdapter extends BaseAdapter {
             const nameNode = node.childForFieldName('name');
             fnName = nameNode ? nameNode.text : 'unknown';
 
-            // Parameters are direct children in this grammar
+            // Extract parameters from direct children
             const paramTexts: string[] = [];
             for (const child of node.children) {
                 if (child.type === 'parameter') {
                     paramTexts.push(child.text);
                 }
-                if (child.type === 'visibility') {
-                    visibility = child.text;
-                }
             }
             params = paramTexts.join(', ');
 
-            if (!visibility) {
-                // FALLBACK: maybe visibility is not a direct child? 
-                // In some versions it might be. Let's keep a query as backup or just check children.
-                // Based on our debug AST, it IS a child.
-            }
+            // Extract visibility - check direct children for visibility node
+            visibility = this.extractVisibility(node);
         }
 
         const signature = this.cleanSignature(`${fnName}(${params})`);
         const id = contract ? `${contract}.${signature}` : signature;
 
-        const finalVisibility: 'public' | 'external' | 'internal' | 'private' = (visibility as any) ??
+        const finalVisibility: Visibility = visibility ??
             (containerKind === 'interface' ? 'external' : 'internal');
 
         return {
@@ -466,5 +553,34 @@ export class SolidityAdapter extends BaseAdapter {
             },
             text: node.text
         };
+    }
+
+    /**
+     * Extracts visibility from a function node by checking its children.
+     * Handles various grammar structures robustly.
+     * 
+     * @param node - Function definition node
+     * @returns Visibility string or undefined if not found
+     */
+    private extractVisibility(node: Node): Visibility | undefined {
+        // First, check for a direct 'visibility' child
+        for (const child of node.children) {
+            if (child.type === 'visibility') {
+                const text = child.text;
+                if (text === 'public' || text === 'external' || text === 'internal' || text === 'private') {
+                    return text;
+                }
+            }
+        }
+
+        // Fallback: some grammar versions might have visibility as text in other nodes
+        // Check for common visibility keywords in the function signature
+        const signatureText = node.text.split('{')[0]; // Get everything before the body
+        if (signatureText.includes(' external')) return 'external';
+        if (signatureText.includes(' public')) return 'public';
+        if (signatureText.includes(' internal')) return 'internal';
+        if (signatureText.includes(' private')) return 'private';
+
+        return undefined;
     }
 }

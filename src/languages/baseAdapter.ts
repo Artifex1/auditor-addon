@@ -1,13 +1,14 @@
-import { LanguageAdapter, Entrypoint, FileContent, SupportedLanguage, CallGraph, FileMetrics } from "../engine/index.js";
-import { astGrep } from "../util/astGrepCli.js";
+import { LanguageAdapter, Entrypoint, FileContent, SupportedLanguage, CallGraph, FileMetrics } from "../engine/types.js";
+import { TreeSitterService } from "../util/treeSitter.js";
+import { Query, Parser, Language, Node } from "web-tree-sitter";
 
 export interface AdapterConfig {
     languageId: SupportedLanguage;
-    rules: {
-        comments: any[]; // Array of rules to match comments
-        functions: any; // Rule to match function definitions
-        branching: any; // Rule to match branching statements
-        normalization?: any[]; // Optional: Rules for multi-line constructs to normalize
+    queries: {
+        comments: string; // Tree-sitter query for matching comments
+        functions: string; // Tree-sitter query for matching function/method definitions
+        branching: string; // Tree-sitter query for matching branching statements
+        normalization?: string; // Optional: Tree-sitter query for multi-line constructs to normalize
     };
     constants: {
         baseRateNlocPerDay: number; // How many NLoC a reviewer covers in one day (8h baseline)
@@ -47,30 +48,41 @@ export abstract class BaseAdapter implements LanguageAdapter {
 
     async extractSignatures(files: FileContent[]): Promise<Record<string, string[]>> {
         const signaturesByFile: Record<string, string[]> = {};
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(this.languageId);
+        const parser = await service.createParser(this.languageId);
+        const query = new Query(lang, this.config.queries.functions);
 
         for (const file of files) {
             try {
-                const matches = await astGrep({
-                    code: file.content,
-                    language: this.languageId,
-                    rule: this.config.rules.functions
-                });
+                const tree = parser.parse(file.content);
+                if (!tree) continue;
+
+                const captures = query.captures(tree.rootNode);
 
                 const signatures: string[] = [];
-                for (const match of matches) {
-                    // Extract signature up to opening brace (handles multi-line signatures)
-                    const braceIndex = match.text.indexOf('{');
-                    const rawSignature = braceIndex !== -1
-                        ? match.text.substring(0, braceIndex)
-                        : match.text;
+                for (const capture of captures) {
+                    if (capture.name === 'function') {
+                        const node = capture.node;
+                        // For signatures, we often want the text up to the body
+                        // In tree-sitter, we usually have separate nodes for name, params, etc.
+                        // But to stay close to the original logic, we'll try to find a 'body' child or use the node text
+                        const bodyNode = node.childForFieldName('body') || node.children.find(c => c.type.includes('body') || c.type === 'block');
 
-                    const signature = this.cleanSignature(rawSignature);
+                        let rawSignature = '';
+                        if (bodyNode) {
+                            // Text from node start to body start
+                            rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
+                        } else {
+                            rawSignature = node.text;
+                        }
 
-                    // Truncate to 80 characters max
-                    const truncated = signature.length > 80
-                        ? signature.substring(0, 77) + '...'
-                        : signature;
-                    signatures.push(truncated);
+                        const signature = this.cleanSignature(rawSignature);
+                        const truncated = signature.length > 80
+                            ? signature.substring(0, 77) + '...'
+                            : signature;
+                        signatures.push(truncated);
+                    }
                 }
 
                 if (signatures.length > 0) {
@@ -95,57 +107,64 @@ export abstract class BaseAdapter implements LanguageAdapter {
             commentBenefitCap
         } = this.config.constants;
 
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(this.languageId);
+        const parser = await service.createParser(this.languageId);
+
+        const commentQuery = new Query(lang, this.config.queries.comments);
+        const branchQuery = new Query(lang, this.config.queries.branching);
+        const normQuery = this.config.queries.normalization ? new Query(lang, this.config.queries.normalization) : null;
+
         for (const file of files) {
             const lines = file.content.split('\n');
             const totalLines = lines.length;
+            const tree = parser.parse(file.content);
+            if (!tree) continue;
 
             // 1. Comments
             const commentLinesSet = new Set<number>();
             let onlyCommentLinesCount = 0;
 
-            for (const rule of this.config.rules.comments) {
-                const comments = await astGrep({
-                    code: file.content,
-                    language: this.languageId,
-                    rule: rule
-                });
-
-                for (const comment of comments) {
-                    for (let i = comment.range.start.line; i <= comment.range.end.line; i++) {
-                        commentLinesSet.add(i);
-                    }
+            const commentCaptures = commentQuery.captures(tree.rootNode);
+            for (const capture of commentCaptures) {
+                for (let i = capture.node.startPosition.row; i <= capture.node.endPosition.row; i++) {
+                    commentLinesSet.add(i);
                 }
             }
 
             const linesWithComments = commentLinesSet.size;
 
             for (const lineIdx of commentLinesSet) {
+                if (lineIdx >= lines.length) continue;
                 const lineContent = lines[lineIdx].trim();
-                // Simple heuristic for "only comment" lines
+                // Simple heuristic for "only comment" lines (consistent with original)
                 if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
                     onlyCommentLinesCount++;
                 }
             }
 
             // 2. Complexity
-            const branches = await astGrep({
-                code: file.content,
-                language: this.languageId,
-                rule: this.config.rules.branching
-            });
-
+            const branchCaptures = branchQuery.captures(tree.rootNode);
             let cc = 0;
+
+            // Nested branches calculation (consistent with original logic)
+            const branches = branchCaptures.map(c => c.node);
             for (const branch of branches) {
                 let nestingLevel = 0;
                 for (const other of branches) {
                     if (branch === other) continue;
-                    if (other.range.start.line <= branch.range.start.line &&
-                        other.range.end.line >= branch.range.end.line) {
-                        if (other.range.start.line < branch.range.start.line ||
-                            other.range.end.line > branch.range.end.line ||
-                            (other.range.start.line === branch.range.start.line && other.range.start.column < branch.range.start.column)) {
-                            nestingLevel++;
-                        }
+
+                    const isInside = (
+                        other.startIndex <= branch.startIndex &&
+                        other.endIndex >= branch.endIndex &&
+                        (
+                            other.startIndex < branch.startIndex ||
+                            other.endIndex > branch.endIndex
+                        )
+                    );
+
+                    if (isInside) {
+                        nestingLevel++;
                     }
                 }
                 cc += (1 + nestingLevel);
@@ -159,52 +178,57 @@ export abstract class BaseAdapter implements LanguageAdapter {
                 }
             }
 
-            // Calculate normalization adjustment for multi-line constructs
             let normalizationAdjustment = 0;
-            if (this.config.rules.normalization) {
-                const allConstructs: Array<any & { ruleId: string }> = [];
+            if (normQuery) {
+                const normCaptures = normQuery.captures(tree.rootNode);
+                const allConstructs = normCaptures.map(c => ({ node: c.node, name: c.name }));
 
-                // Collect all constructs from all normalization rules
-                for (const rule of this.config.rules.normalization) {
-                    const constructs = await astGrep({
-                        code: file.content,
-                        language: this.languageId,
-                        rule: rule
-                    });
-                    allConstructs.push(...constructs.map(c => ({ ...c, ruleId: rule.id })));
-                }
-
-                // Filter to only top-level (non-nested) constructs
+                // Filter constructs to prevent double-counting multi-line adjustments.
+                // A construct is "nested" if it's inside another construct that also normalizes its extent.
                 const topLevelConstructs = allConstructs.filter(construct => {
-                    // Check if this construct is nested inside any other construct
                     const isNested = allConstructs.some(other => {
                         if (construct === other) return false;
 
-                        // Check if 'other' contains 'construct'
-                        return other.range.start.line <= construct.range.start.line &&
-                            other.range.end.line >= construct.range.end.line &&
-                            (other.range.start.line < construct.range.start.line ||
-                                other.range.end.line > construct.range.end.line ||
-                                (other.range.start.line === construct.range.start.line &&
-                                    other.range.start.column < construct.range.start.column));
+                        // Functions/methods only normalize their signatures, not their bodies.
+                        // Therefore, a construct inside a function body is NOT "nested" in a way
+                        // that would cause double-counting of normalization adjustments.
+                        const isOtherFunction = other.name.includes('function') ||
+                            other.name.includes('method') ||
+                            other.node.type.includes('function') ||
+                            other.node.type.includes('method');
+
+                        if (isOtherFunction) {
+                            const bodyNode = other.node.childForFieldName('body') ||
+                                other.node.children.find(c => c.type.includes('body') || c.type === 'block');
+                            if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
+                                return false;
+                            }
+                        }
+
+                        return other.node.startIndex <= construct.node.startIndex &&
+                            other.node.endIndex >= construct.node.endIndex &&
+                            (other.node.startIndex < construct.node.startIndex ||
+                                other.node.endIndex > construct.node.endIndex);
                     });
                     return !isNested;
                 });
 
-                // Calculate adjustment for top-level constructs only
                 for (const construct of topLevelConstructs) {
-                    let startLine = construct.range.start.line;
-                    let endLine = construct.range.end.line;
+                    let startLine = construct.node.startPosition.row;
+                    let endLine = construct.node.endPosition.row;
 
-                    // Special handling for function definitions: only count the signature, not the body
-                    if (construct.ruleId?.includes('function') || construct.ruleId?.includes('method')) {
-                        // Try to find the function body within the construct
-                        const bodyMatch = construct.text.match(/\{/);
-                        if (bodyMatch) {
-                            // Count newlines from start to the opening brace
-                            const signatureText = construct.text.substring(0, construct.text.indexOf('{'));
-                            const newlinesInSignature = (signatureText.match(/\n/g) || []).length;
-                            endLine = startLine + newlinesInSignature;
+                    // Special handling for functions/methods: only count signature lines
+                    // Check capture name OR node type for robustness across languages
+                    const isFunction = construct.name.includes('function') ||
+                        construct.name.includes('method') ||
+                        construct.node.type.includes('function') ||
+                        construct.node.type.includes('method');
+
+                    if (isFunction) {
+                        const bodyNode = construct.node.childForFieldName('body') ||
+                            construct.node.children.find(c => c.type.includes('body') || c.type === 'block');
+                        if (bodyNode) {
+                            endLine = bodyNode.startPosition.row - 1;
                         }
                     }
 

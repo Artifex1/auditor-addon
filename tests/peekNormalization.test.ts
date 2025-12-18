@@ -1,21 +1,33 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseAdapter, AdapterConfig } from '../src/languages/baseAdapter.js';
-import { SupportedLanguage } from '../src/engine/index.js';
-import * as astGrepModule from '../src/util/astGrepCli.js';
+import { SupportedLanguage } from '../src/engine/types.js';
+import { TreeSitterService } from '../src/util/treeSitter.js';
+import { Query } from 'web-tree-sitter';
 
-// Mock astGrepCli
-vi.mock('../src/util/astGrepCli.js', () => ({
-    astGrep: vi.fn(),
+// Mock TreeSitterService
+vi.mock('../src/util/treeSitter.js', () => ({
+    TreeSitterService: {
+        getInstance: vi.fn()
+    }
 }));
+
+// Mock web-tree-sitter Query
+vi.mock('web-tree-sitter', async (importOriginal) => {
+    const original = await importOriginal<any>();
+    return {
+        ...original,
+        Query: vi.fn()
+    };
+});
 
 class TestAdapter extends BaseAdapter {
     constructor() {
         const config: AdapterConfig = {
-            languageId: SupportedLanguage.Cpp, // Arbitrary choice
-            rules: {
-                comments: [],
-                functions: { rule: { kind: 'function_definition' } },
-                branching: { rule: { kind: 'if_statement' } }
+            languageId: SupportedLanguage.Cpp,
+            queries: {
+                comments: '(comment) @comment',
+                functions: '(function_definition) @function',
+                branching: '(if_statement) @branch'
             },
             constants: {
                 baseRateNlocPerDay: 100,
@@ -32,32 +44,52 @@ class TestAdapter extends BaseAdapter {
 }
 
 describe('BaseAdapter - extractSignatures', () => {
+    let mockParser: any;
+    let mockLanguage: any;
+    let mockService: any;
+
+    beforeEach(() => {
+        mockParser = {
+            parse: vi.fn()
+        };
+        mockLanguage = {};
+        mockService = {
+            getLanguage: vi.fn().mockResolvedValue(mockLanguage),
+            createParser: vi.fn().mockResolvedValue(mockParser)
+        };
+        vi.mocked(TreeSitterService.getInstance).mockReturnValue(mockService);
+    });
+
     it('should normalize whitespace in signatures', async () => {
         const adapter = new TestAdapter();
-        const files = [{ path: 'test.cpp', content: 'void foo() {}' }];
+        const content = 'void  foo(\n    int a,\n    int b\n) { /* body */ }';
+        const files = [{ path: 'test.cpp', content }];
 
-        // Mock astGrep response with a function signature containing newlines and extra spaces
-        const mockAstGrep = vi.mocked(astGrepModule.astGrep);
-        mockAstGrep.mockResolvedValue([
-            {
-                text: 'void  foo(\n    int a,\n    int b\n) {',
-                range: { start: { line: 0, column: 0 }, end: { line: 3, column: 3 } }
-            }
-        ] as any);
+        const mockNode = {
+            startIndex: 0,
+            text: 'void  foo(\n    int a,\n    int b\n) {',
+            childForFieldName: vi.fn().mockReturnValue({ startIndex: content.indexOf('{') }), // Mock bodyNode start
+            children: []
+        };
+
+        const mockQueryInstance = {
+            captures: vi.fn().mockReturnValue([{ name: 'function', node: mockNode }])
+        };
+        vi.mocked(Query).mockImplementation(() => mockQueryInstance as any);
+
+        mockParser.parse.mockReturnValue({
+            rootNode: {}
+        });
 
         const signatures = await adapter.extractSignatures(files);
 
-        // Expectation: Newlines and multiple spaces are replaced by a single space
-        // The signature extraction logic in BaseAdapter also truncates to the opening brace
-        // Original logic: gets substring to '{', then trims.
-        // Current logic (pre-fix) does NOT replace internal newlines.
-        // We expect the fix to normalize it to "void foo( int a, int b )" or similar.
-
         expect(signatures['test.cpp']).toBeDefined();
-        // This is what we WANT to achieve. 
-        // Note: The current implementation slices up to '{'.
-        // "void  foo(\n    int a,\n    int b\n)"
-        // Normalization should turn this into single spaces.
+        // The original logic gets substring to bodyNode.startIndex (30)
+        // content = 'void  foo(\n    int a,\n    int b\n) {'
+        // Substring(0, 30) = 'void  foo(\n    int a,\n    int b\n)'
+        // cleanSignature('void  foo(\n    int a,\n    int b\n)') 
+        // -> spaces replaced: 'void foo( int a, int b )'
+        // -> parentheses cleaned: 'void foo(int a, int b)'
         expect(signatures['test.cpp'][0]).toBe('void foo(int a, int b)');
     });
 });

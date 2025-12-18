@@ -1,38 +1,33 @@
-import { SupportedLanguage } from "../engine/index.js";
+import { SupportedLanguage } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 
 export class JavaAdapter extends BaseAdapter {
     constructor() {
         super({
             languageId: SupportedLanguage.Java,
-            rules: {
-                comments: [
-                    { id: "line_comment", language: SupportedLanguage.Java, rule: { kind: "line_comment" } },
-                    { id: "block_comment", language: SupportedLanguage.Java, rule: { kind: "block_comment" } }
-                ],
-                functions: {
-                    id: "method_declaration",
-                    language: SupportedLanguage.Java,
-                    rule: { kind: "method_declaration" }
-                },
-                branching: {
-                    id: "branching",
-                    language: SupportedLanguage.Java,
-                    rule: {
-                        any: [
-                            { kind: "if_statement" },
-                            { kind: "for_statement" },
-                            { kind: "while_statement" },
-                            { kind: "do_statement" },
-                            { kind: "catch_clause" }
-                        ]
-                    }
-                },
-                normalization: [
-                    { id: "method_invocation", language: SupportedLanguage.Java, rule: { kind: "method_invocation" } },
-                    { id: "method_declaration", language: SupportedLanguage.Java, rule: { kind: "method_declaration" } },
-                    { id: "array_initializer", language: SupportedLanguage.Java, rule: { kind: "array_initializer" } }
-                ]
+            queries: {
+                comments: `
+                    (line_comment) @comment
+                    (block_comment) @comment
+                `,
+                functions: `
+                    (method_declaration) @function
+                    (constructor_declaration) @function
+                `,
+                branching: `
+                    (if_statement) @branch
+                    (for_statement) @branch
+                    (while_statement) @branch
+                    (do_statement) @branch
+                    (catch_clause) @branch
+                    (switch_expression) @branch
+                    (ternary_expression) @branch
+                `,
+                normalization: `
+                    (method_invocation) @norm
+                    (method_declaration) @norm
+                    (array_initializer) @norm
+                `
             },
             constants: {
                 baseRateNlocPerDay: 400,

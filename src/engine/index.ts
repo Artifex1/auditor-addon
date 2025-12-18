@@ -1,33 +1,13 @@
-import { SupportedLanguage, Entrypoint, FileContent, CallGraph, FileMetrics } from "./types.js";
+import { SupportedLanguage, Entrypoint, FileContent, CallGraph, FileMetrics, LanguageAdapter } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import path from "path";
-import { CppAdapter } from "../languages/cppAdapter.js";
-import { JavaAdapter } from "../languages/javaAdapter.js";
-import { GoAdapter } from "../languages/goAdapter.js";
-import { RustAdapter } from "../languages/rustAdapter.js";
-
 export * from "./types.js";
-
-export interface LanguageAdapter {
-    languageId: SupportedLanguage;
-    extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]>;
-    generateCallGraph(files: FileContent[]): Promise<CallGraph>;
-    extractSignatures(files: FileContent[]): Promise<Record<string, string[]>>;
-    calculateMetrics(files: FileContent[]): Promise<FileMetrics[]>;
-}
 
 export class Engine {
     private adapters: Map<SupportedLanguage, LanguageAdapter> = new Map();
 
     registerAdapter(adapter: LanguageAdapter) {
         this.adapters.set(adapter.languageId, adapter);
-    }
-
-    constructor() {
-        this.registerAdapter(new CppAdapter());
-        this.registerAdapter(new JavaAdapter());
-        this.registerAdapter(new GoAdapter());
-        this.registerAdapter(new RustAdapter());
     }
 
     getAdapter(languageId: SupportedLanguage): LanguageAdapter | undefined {
@@ -52,6 +32,16 @@ export class Engine {
                 return SupportedLanguage.Go;
             case ".rs":
                 return SupportedLanguage.Rust;
+            case ".cairo":
+                return SupportedLanguage.Cairo;
+            case ".compact":
+                return SupportedLanguage.Compact;
+            case ".move":
+                return SupportedLanguage.Move;
+            case ".nr":
+                return SupportedLanguage.Noir;
+            case ".tolk":
+                return SupportedLanguage.Tolk;
             default:
                 return undefined;
         }
@@ -70,8 +60,12 @@ export class Engine {
         for (const [lang, langFiles] of filesByLanguage.entries()) {
             const adapter = this.getAdapter(lang);
             if (adapter) {
-                const entrypoints = await adapter.extractEntrypoints(langFiles);
-                allEntrypoints.push(...entrypoints);
+                try {
+                    const entrypoints = await adapter.extractEntrypoints(langFiles);
+                    allEntrypoints.push(...entrypoints);
+                } catch (error) {
+                    console.error(`Failed to extract entrypoints for ${lang}:`, error);
+                }
             } else {
                 console.warn(`No adapter found for language: ${lang}`);
             }
@@ -89,8 +83,12 @@ export class Engine {
         for (const [lang, langFiles] of filesByLanguage.entries()) {
             const adapter = this.getAdapter(lang);
             if (adapter) {
-                const signatures = await adapter.extractSignatures(langFiles);
-                Object.assign(allSignatures, signatures);
+                try {
+                    const signatures = await adapter.extractSignatures(langFiles);
+                    Object.assign(allSignatures, signatures);
+                } catch (error) {
+                    console.error(`Failed to extract signatures for ${lang}:`, error);
+                }
             }
         }
         return allSignatures;
@@ -105,8 +103,12 @@ export class Engine {
         for (const [lang, langFiles] of filesByLanguage.entries()) {
             const adapter = this.getAdapter(lang);
             if (adapter) {
-                const metrics = await adapter.calculateMetrics(langFiles);
-                allMetrics.push(...metrics);
+                try {
+                    const metrics = await adapter.calculateMetrics(langFiles);
+                    allMetrics.push(...metrics);
+                } catch (error) {
+                    console.error(`Failed to calculate metrics for ${lang}:`, error);
+                }
             }
         }
         return allMetrics;
@@ -122,9 +124,13 @@ export class Engine {
         for (const [lang, langFiles] of filesByLanguage.entries()) {
             const adapter = this.getAdapter(lang);
             if (adapter) {
-                const graph = await adapter.generateCallGraph(langFiles);
-                combinedGraph.nodes.push(...graph.nodes);
-                combinedGraph.edges.push(...graph.edges);
+                try {
+                    const graph = await adapter.generateCallGraph(langFiles);
+                    combinedGraph.nodes.push(...graph.nodes);
+                    combinedGraph.edges.push(...graph.edges);
+                } catch (error) {
+                    console.error(`Failed to generate call graph for ${lang}:`, error);
+                }
             }
         }
         return combinedGraph;

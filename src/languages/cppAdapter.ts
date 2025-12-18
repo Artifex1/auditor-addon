@@ -1,37 +1,26 @@
-import { SupportedLanguage } from "../engine/index.js";
+import { SupportedLanguage } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 
 export class CppAdapter extends BaseAdapter {
     constructor() {
         super({
             languageId: SupportedLanguage.Cpp,
-            rules: {
-                comments: [
-                    { id: "comment", language: SupportedLanguage.Cpp, rule: { kind: "comment" } }
-                ],
-                functions: {
-                    id: "function_definition",
-                    language: SupportedLanguage.Cpp,
-                    rule: { kind: "function_definition" }
-                },
-                branching: {
-                    id: "branching",
-                    language: SupportedLanguage.Cpp,
-                    rule: {
-                        any: [
-                            { kind: "if_statement" },
-                            { kind: "for_statement" },
-                            { kind: "while_statement" },
-                            { kind: "do_statement" },
-                            { kind: "catch_clause" }
-                        ]
-                    }
-                },
-                normalization: [
-                    { id: "call_expression", language: SupportedLanguage.Cpp, rule: { kind: "call_expression" } },
-                    { id: "function_definition", language: SupportedLanguage.Cpp, rule: { kind: "function_definition" } },
-                    { id: "initializer_list", language: SupportedLanguage.Cpp, rule: { kind: "initializer_list" } }
-                ]
+            queries: {
+                comments: '(comment) @comment',
+                functions: '(function_definition) @function',
+                branching: `
+                    (if_statement) @branch
+                    (for_statement) @branch
+                    (while_statement) @branch
+                    (do_statement) @branch
+                    (switch_statement) @branch
+                    (catch_clause) @branch
+                `,
+                normalization: `
+                    (call_expression) @norm
+                    (function_definition) @norm
+                    (initializer_list) @norm
+                `
             },
             constants: {
                 baseRateNlocPerDay: 400,

@@ -1,42 +1,29 @@
-import { SupportedLanguage } from "../engine/index.js";
+import { Entrypoint, FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 
 export class GoAdapter extends BaseAdapter {
     constructor() {
         super({
             languageId: SupportedLanguage.Go,
-            rules: {
-                comments: [
-                    { id: "comment", language: SupportedLanguage.Go, rule: { kind: "comment" } }
-                ],
-                functions: {
-                    id: "function_or_method",
-                    language: SupportedLanguage.Go,
-                    rule: {
-                        any: [
-                            { kind: "function_declaration" },
-                            { kind: "method_declaration" }
-                        ]
-                    }
-                },
-                branching: {
-                    id: "branching",
-                    language: SupportedLanguage.Go,
-                    rule: {
-                        any: [
-                            { kind: "if_statement" },
-                            { kind: "for_statement" },
-                            { kind: "expression_switch_statement" },
-                            { kind: "type_switch_statement" }
-                        ]
-                    }
-                },
-                normalization: [
-                    { id: "call_expression", language: SupportedLanguage.Go, rule: { kind: "call_expression" } },
-                    { id: "function_declaration", language: SupportedLanguage.Go, rule: { kind: "function_declaration" } },
-                    { id: "method_declaration", language: SupportedLanguage.Go, rule: { kind: "method_declaration" } },
-                    { id: "composite_literal", language: SupportedLanguage.Go, rule: { kind: "composite_literal" } }
-                ]
+            queries: {
+                comments: '(comment) @comment',
+                functions: `
+                    (function_declaration) @function
+                    (method_declaration) @function
+                `,
+                branching: `
+                    (if_statement) @branch
+                    (for_statement) @branch
+                    (expression_switch_statement) @branch
+                    (type_switch_statement) @branch
+                    (select_statement) @branch
+                `,
+                normalization: `
+                    (call_expression) @norm
+                    (function_declaration) @norm
+                    (method_declaration) @norm
+                    (composite_literal) @norm
+                `
             },
             constants: {
                 baseRateNlocPerDay: 400,

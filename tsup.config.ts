@@ -4,7 +4,7 @@ export default defineConfig({
     entry: ['src/mcp/server.ts'],
     format: ['esm'],
     outDir: 'dist/mcp',
-    clean: true,
+    clean: false,
     noExternal: [/(.*)/],
     sourcemap: true,
     dts: false,

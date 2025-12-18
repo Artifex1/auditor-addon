@@ -1,8 +1,7 @@
-import { Entrypoint, FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/index.js";
-import { astGrep } from "../util/astGrepCli.js";
+import { Entrypoint, FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
-
-
+import { TreeSitterService } from "../util/treeSitter.js";
+import { Query, Node } from "web-tree-sitter";
 
 enum CallType {
     Simple,
@@ -15,37 +14,23 @@ export class SolidityAdapter extends BaseAdapter {
     constructor() {
         super({
             languageId: SupportedLanguage.Solidity,
-            rules: {
-                comments: [
-                    { id: "comment", language: SupportedLanguage.Solidity, rule: { kind: "comment" } }
-                ],
-                functions: {
-                    id: "function",
-                    language: SupportedLanguage.Solidity,
-                    rule: {
-                        any: [
-                            { kind: "function_definition" },
-                            { kind: "fallback_receive_definition" }
-                        ]
-                    }
-                },
-                branching: {
-                    id: "branching",
-                    language: SupportedLanguage.Solidity,
-                    rule: {
-                        any: [
-                            { kind: "if_statement" },
-                            { kind: "for_statement" },
-                            { kind: "while_statement" },
-                            { kind: "do_while_statement" },
-                            { kind: "catch_clause" }
-                        ]
-                    }
-                },
-                normalization: [
-                    { id: "call_expression", language: SupportedLanguage.Solidity, rule: { kind: "call_expression" } },
-                    { id: "function_definition", language: SupportedLanguage.Solidity, rule: { kind: "function_definition" } }
-                ]
+            queries: {
+                comments: '(comment) @comment',
+                functions: `
+                    (function_definition) @function
+                    (fallback_receive_definition) @function
+                `,
+                branching: `
+                    (if_statement) @branch
+                    (for_statement) @branch
+                    (while_statement) @branch
+                    (do_while_statement) @branch
+                    (catch_clause) @branch
+                `,
+                normalization: `
+                    (call_expression) @norm
+                    (function_definition) @norm
+                `
             },
             constants: {
                 baseRateNlocPerDay: 250,
@@ -104,7 +89,7 @@ export class SolidityAdapter extends BaseAdapter {
         await this.buildSymbolTable(files);
 
         // Phase 2: Call Identification
-        await this.identifyCalls(edges);
+        await this.identifyCalls(edges, files);
 
         // Return nodes
         const nodes: GraphNode[] = Array.from(this.symbolTable.values());
@@ -138,131 +123,139 @@ export class SolidityAdapter extends BaseAdapter {
         return this.symbolsByContract.get(contract)?.find(n => n.label === label);
     }
 
-    private async identifyCalls(edges: GraphEdge[]) {
-        for (const node of this.symbolTable.values()) {
-            // Rule 1: Super calls - super.FUNC($$$)
-            await this.processCallType(node, edges, {
-                ruleId: "super_call",
-                pattern: "super.$FUNC($$$)",
-                callType: CallType.Super
-            });
+    private async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Solidity);
+        const parser = await service.createParser(SupportedLanguage.Solidity);
 
-            // Rule 2: Member calls - RECV.FUNC($$$)
-            await this.processCallType(node, edges, {
-                ruleId: "member_call",
-                pattern: "$RECV.$FUNC($$$)",
-                callType: CallType.Member,
-                extractMember: true
-            });
+        const functionQuery = new Query(lang, `
+            [(function_definition) (fallback_receive_definition)] @function
+        `);
 
-            // Rule 3: This calls - this.FUNC($$$)
-            await this.processCallType(node, edges, {
-                ruleId: "this_call",
-                pattern: "this.$FUNC($$$)",
-                callType: CallType.This
-            });
+        for (const file of files) {
+            const tree = parser.parse(file.content);
+            if (!tree) continue;
 
-            // Rule 4: Simple calls - FUNC($$$)
-            await this.processCallType(node, edges, {
-                ruleId: "simple_call",
-                pattern: "$FUNC($$$)",
-                callType: CallType.Simple
-            });
+            const captures = functionQuery.captures(tree.rootNode);
+            for (const capture of captures) {
+                const fnNode = capture.node;
 
-            // Rule 5: Assembly calls
-            await this.processAssemblyCalls(node, edges);
+                // Find the corresponding GraphNode in our symbol table
+                // We use the same ID generation logic as in buildSymbolTable/createFunctionNode
+                // But wait, it's easier to just use the range to find the symbol.
+                const symbol = this.findSymbolAtNode(fnNode, file.path);
+                if (!symbol) continue;
+
+                // Rule 1: Super calls
+                await this.processCallType(fnNode, symbol, edges, {
+                    callType: CallType.Super
+                });
+
+                // Rule 2: Member calls
+                await this.processCallType(fnNode, symbol, edges, {
+                    callType: CallType.Member,
+                    extractMember: true
+                });
+
+                // Rule 3: This calls
+                await this.processCallType(fnNode, symbol, edges, {
+                    callType: CallType.This
+                });
+
+                // Rule 4: Simple calls
+                await this.processCallType(fnNode, symbol, edges, {
+                    callType: CallType.Simple
+                });
+
+                // Rule 5: Assembly calls
+                await this.processAssemblyCalls(fnNode, symbol, edges);
+            }
         }
     }
 
+    private findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
+        const line = node.startPosition.row + 1;
+        const col = node.startPosition.column;
+
+        return Array.from(this.symbolTable.values()).find(s =>
+            s.file === filePath &&
+            s.range?.start.line === line &&
+            s.range?.start.column === col
+        );
+    }
+
     private async processCallType(
-        node: GraphNode,
+        tsNode: Node,
+        symbol: GraphNode,
         edges: GraphEdge[],
         config: {
-            ruleId: string;
-            pattern: string;
             callType: CallType;
             extractMember?: boolean;
         }
     ) {
-        // Wrap code in a contract to ensure valid parsing for all function types (including fallback/receive)
-        const codeToSearch = `contract C { ${node.text} }`;
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Solidity);
 
-        const calls = await astGrep({
-            rule: {
-                id: config.ruleId,
-                language: "Solidity",
-                rule: {
-                    kind: "call_expression",
-                    pattern: {
-                        context: `function f() { ${config.pattern}; }`,
-                        selector: "call_expression"
-                    }
-                }
-            },
-            code: codeToSearch
-        });
+        const querySource = config.callType === CallType.Super
+            ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))'
+            : config.callType === CallType.This
+                ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "this") property: (identifier) @FUNC)))'
+                : config.callType === CallType.Member
+                    ? '(call_expression function: (expression (member_expression object: (_) @RECV property: (identifier) @FUNC)))'
+                    : '(call_expression function: (expression (identifier) @FUNC))';
 
-        for (const call of calls) {
-            const funcName = call.metaVariables?.single?.FUNC?.text;
-            if (!funcName) continue;
+        const query = new Query(lang, querySource);
+        const matches = query.matches(tsNode);
 
-            const memberName = config.extractMember
-                ? call.metaVariables?.single?.RECV?.text
-                : undefined;
+        for (const match of matches) {
+            const funcCapture = match.captures.find(c => c.name === 'FUNC');
+            if (!funcCapture) continue;
+
+            const funcName = funcCapture.node.text;
+            let memberName: string | undefined;
+
+            if (config.extractMember) {
+                const recvCapture = match.captures.find(c => c.name === 'RECV');
+                memberName = recvCapture?.node.text;
+            }
 
             if (this.shouldSkipCall(funcName, memberName, config.callType)) continue;
 
-            const calleeNode = this.resolveCallNode(config.callType, funcName, memberName, node);
+            const calleeNode = this.resolveCallNode(config.callType, funcName, memberName, symbol);
             if (calleeNode) {
                 const kind = this.determineEdgeKind(config.callType, calleeNode);
-                edges.push({ from: node.id, to: calleeNode.id, kind });
+                edges.push({ from: symbol.id, to: calleeNode.id, kind });
             }
         }
     }
+
 
     private determineEdgeKind(callType: CallType, callee: GraphNode): 'internal' | 'external' {
         if (callType === CallType.This) return 'external';
         if (callType === CallType.Super) return 'internal';
         if (callType === CallType.Simple) {
-            // Simple calls are internal unless they are cross-contract (which shouldn't happen in simple call syntax mostly, 
-            // but if we resolved it to a free function or something else might differ. 
-            // In Solidity, f() is internal jump.
             return 'internal';
         }
 
-        // Member calls: RECV.FUNC()
         if (callee.containerKind === 'library') {
-            // Library: internal if function is internal (inlined), external if public/external (delegatecall)
             return callee.visibility === 'internal' ? 'internal' : 'external';
         }
 
-        // Interface or Contract member call -> External
         return 'external';
     }
 
-    private async processAssemblyCalls(node: GraphNode, edges: GraphEdge[]) {
-        // Wrap code in a contract to ensure valid parsing
-        const codeToSearch = `contract C { ${node.text} }`;
+    private async processAssemblyCalls(tsNode: Node, symbol: GraphNode, edges: GraphEdge[]) {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Solidity);
 
-        const assemblyCalls = await astGrep({
-            rule: {
-                id: "assembly_call",
-                language: "Solidity",
-                rule: { kind: "yul_function_call" }
-            },
-            code: codeToSearch
-        });
+        const query = new Query(lang, '(yul_function_call function: (yul_identifier) @FUNC)');
+        const captures = query.captures(tsNode);
 
-        for (const call of assemblyCalls) {
-            const text = call.text;
-            const parenIndex = text.indexOf('(');
-            if (parenIndex === -1) continue;
-
-            const callName = text.substring(0, parenIndex).trim();
-            const calleeNode = this.resolveCallNode(CallType.Simple, callName, undefined, node);
+        for (const capture of captures) {
+            const callName = capture.node.text;
+            const calleeNode = this.resolveCallNode(CallType.Simple, callName, undefined, symbol);
             if (calleeNode) {
-                // Assembly calls are usually local jumps or precompiles, treat as internal for now
-                edges.push({ from: node.id, to: calleeNode.id, kind: 'internal' });
+                edges.push({ from: symbol.id, to: calleeNode.id, kind: 'internal' });
             }
         }
     }
@@ -300,11 +293,9 @@ export class SolidityAdapter extends BaseAdapter {
     }
 
     private resolveMemberCall(name: string, memberName: string, caller: GraphNode): GraphNode | undefined {
-        // Try direct contract/interface reference
         const func = this.findInContract(memberName, name);
         if (func) return func;
 
-        // Try using-for libraries
         if (caller.contract) {
             const libraries = this.usingForMap.get(caller.contract);
             if (libraries) {
@@ -318,23 +309,18 @@ export class SolidityAdapter extends BaseAdapter {
     }
 
     private resolveLocalOrInheritedCall(name: string, caller: GraphNode): GraphNode | undefined {
-        // Check local contract
         if (caller.contract) {
             const local = this.findInContract(caller.contract, name);
             if (local) return local;
 
-            // Check inheritance (recursive)
             const inherited = this.resolveInheritedCall(name, caller.contract);
             if (inherited) return inherited;
         }
 
-        // Check free functions
         const freeFuncs = this.symbolsByLabel.get(name);
         const free = freeFuncs?.find(n => !n.contract);
         if (free) return free;
 
-        // Fallback: Loose matching (restore original behavior)
-        // This is needed for cases where inheritance resolution fails or for complex chains
         const any = this.symbolsByLabel.get(name)?.[0];
         return any;
     }
@@ -357,195 +343,115 @@ export class SolidityAdapter extends BaseAdapter {
     }
 
     private async buildSymbolTable(files: FileContent[]) {
-        const contractRule = {
-            id: "contract",
-            language: "Solidity",
-            rule: {
-                kind: "contract_declaration",
-                any: [
-                    { pattern: "contract $NAME { $$$ }" },
-                    { pattern: "contract $NAME is $$$PARENTS { $$$ }" },
-                    { pattern: "abstract contract $NAME { $$$ }" },
-                    { pattern: "abstract contract $NAME is $$$PARENTS { $$$ }" }
-                ]
-            }
-        };
-        const interfaceRule = {
-            id: "interface",
-            language: "Solidity",
-            rule: {
-                kind: "interface_declaration",
-                any: [
-                    { pattern: "interface $NAME { $$$ }" },
-                    { pattern: "interface $NAME is $$$PARENTS { $$$ }" }
-                ]
-            }
-        };
-        const libraryRule = {
-            id: "library",
-            language: "Solidity",
-            rule: {
-                kind: "library_declaration",
-                any: [{ pattern: "library $NAME { $$$ }" }]
-            }
-        };
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Solidity);
+        const parser = await service.createParser(SupportedLanguage.Solidity);
 
-        const regularFunctionRule = {
-            id: "function",
-            language: "Solidity",
-            rule: {
-                kind: "function_definition",
-                any: [
-                    { pattern: "function $NAME($$$PARAMS) $$$MODIFIERS { $$$ }" },
-                    { pattern: "function $NAME($$$PARAMS) $$$MODIFIERS;" }
-                ]
-            }
-        };
+        const containerQuery = new Query(lang, `
+            [(contract_declaration) (interface_declaration) (library_declaration)] @container
+        `);
 
-        const fallbackReceiveRule = {
-            id: "fallback_receive",
-            language: "Solidity",
-            rule: { kind: "fallback_receive_definition" }
-        };
+        const inheritanceQuery = new Query(lang, `
+            (inheritance_specifier ancestor: (user_defined_type (identifier) @parent))
+        `);
 
-        const usingRule = {
-            id: "using",
-            language: "Solidity",
-            rule: { kind: "using_directive", pattern: "using $LIB for $TYPE;" }
-        };
+        const usingQuery = new Query(lang, `
+            (using_directive (type_alias (identifier) @lib))
+        `);
 
-        const freeFunctionRule = {
-            id: "free_function",
-            language: "Solidity",
-            rule: {
-                kind: "function_definition",
-                not: { inside: { kind: "contract_body" } },
-                any: [
-                    { pattern: "function $NAME($$$PARAMS) $$$MODIFIERS { $$$ }" },
-                    { pattern: "function $NAME($$$PARAMS) $$$MODIFIERS;" }
-                ]
-            }
-        };
+        const functionQuery = new Query(lang, `
+            [(function_definition) (fallback_receive_definition)] @function
+        `);
 
         for (const file of files) {
-            // 1. Find Contracts/Interfaces/Libraries
-            // We search separately to track the kind
-            const contractMatches = await astGrep({ rule: contractRule, code: file.content });
-            const interfaceMatches = await astGrep({ rule: interfaceRule, code: file.content });
-            const libraryMatches = await astGrep({ rule: libraryRule, code: file.content });
+            const tree = parser.parse(file.content);
+            if (!tree) continue;
 
-            const allContainers = [
-                ...contractMatches.map(c => ({ match: c, kind: 'contract' as const })),
-                ...interfaceMatches.map(c => ({ match: c, kind: 'interface' as const })),
-                ...libraryMatches.map(c => ({ match: c, kind: 'library' as const }))
-            ];
+            // 1. Find all containers
+            const containerCaptures = containerQuery.captures(tree.rootNode);
 
-            // 2. Process each container
-            for (const { match: container, kind } of allContainers) {
-                const contractName = container.metaVariables?.single?.NAME?.text;
-                if (!contractName) continue;
+            for (const capture of containerCaptures) {
+                const containerNode = capture.node;
+                const kind = containerNode.type.replace('_declaration', '') as 'contract' | 'interface' | 'library';
+                const nameNode = containerNode.childForFieldName('name');
+                if (!nameNode) continue;
+                const contractName = nameNode.text;
 
                 // Handle Inheritance
-                const parentsText = container.metaVariables?.multi?.PARENTS
-                    ?.map((p: any) => p.text)
-                    .filter((t: string) => t !== ',')
-                    .map((t: string) => t.trim()) || [];
+                const inheritanceCaptures = inheritanceQuery.captures(containerNode);
+                const parentsText = inheritanceCaptures
+                    .filter(c => c.name === 'parent')
+                    .map(c => c.node.text);
 
                 if (parentsText.length > 0) {
                     this.inheritanceGraph.set(contractName, parentsText);
                 }
 
                 // Track using-for
-                const usingDirectives = await astGrep({ rule: usingRule, code: container.text });
-                const libs = usingDirectives
-                    .map(d => d.metaVariables?.single?.LIB?.text)
-                    .filter((t): t is string => !!t);
+                const usingCaptures = usingQuery.captures(containerNode);
+                const libs = usingCaptures
+                    .filter(c => c.name === 'lib')
+                    .map(c => c.node.text);
 
                 if (libs.length > 0) {
                     this.usingForMap.set(contractName, libs);
                 }
 
-                // Find functions
-                const functions = await astGrep({ rule: regularFunctionRule, code: container.text });
-                const fallbackReceives = await astGrep({ rule: fallbackReceiveRule, code: container.text });
-
-                for (const fn of functions) {
-                    this.indexSymbol(await this.createFunctionNode(fn, file.path, kind, contractName, container.range.start.line));
-                }
-
-                for (const fn of fallbackReceives) {
-                    const text = fn.text.trim();
-                    const name = text.includes('receive') ? 'receive' : 'fallback';
-                    // Mock a match object for the helper
-                    const mockFn = { ...fn, metaVariables: { single: { NAME: { text: name } }, multi: { PARAMS: [], MODIFIERS: [{ text: 'external' }] } } };
-                    this.indexSymbol(await this.createFunctionNode(mockFn, file.path, kind, contractName, container.range.start.line));
+                // Find functions inside container
+                const bodyNode = containerNode.childForFieldName('body');
+                if (bodyNode) {
+                    const functions = functionQuery.captures(bodyNode);
+                    for (const fnCapture of functions) {
+                        this.indexSymbol(await this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
+                    }
                 }
             }
 
-            // 3. Find free functions
-            const freeFunctions = await astGrep({ rule: freeFunctionRule, code: file.content });
-            for (const fn of freeFunctions) {
-                this.indexSymbol(await this.createFunctionNode(fn, file.path));
+            // 2. Find free functions (not inside a container)
+            for (const child of tree.rootNode.children) {
+                if (child.type === 'function_definition' || child.type === 'fallback_receive_definition') {
+                    this.indexSymbol(await this.createFunctionNode(child, file.path));
+                }
             }
         }
     }
 
-    private async createFunctionNode(fn: any, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string, baseLineOffset: number = 0): Promise<GraphNode> {
-        const fnName = fn.metaVariables?.single?.NAME?.text!;
-        let params = fn.metaVariables?.multi?.PARAMS?.map((p: { text: string }) => p.text).join('') || '';
+    private async createFunctionNode(node: Node, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string): Promise<GraphNode> {
+        let fnName = 'unknown';
+        let params = '';
+        let visibility: string | undefined;
 
-        // Fallback: If ast-grep failed to capture params via pattern (common with complex types), extract via structural search
-        if (!params && fn.text) {
-            try {
-                // We wrap in a contract to ensure valid parsing structure for the snippet
-                // If it's already a method inside a contract, this mock contract wrapper is safe standard practice for snippet parsing
-                const snippet = `contract C { ${fn.text} }`;
-                const paramMatches = await astGrep({
-                    code: snippet,
-                    language: SupportedLanguage.Solidity,
-                    rule: {
-                        id: "parameter",
-                        language: SupportedLanguage.Solidity,
-                        rule: {
-                            kind: "parameter",
-                            inside: {
-                                kind: "function_definition"
-                            },
-                            not: {
-                                any: [
-                                    { inside: { kind: "catch_clause" } },          // Exclude catch parameters
-                                    { inside: { kind: "return_type_definition" } }, // Exclude return params
-                                    { inside: { kind: "try_statement" } }, // Exclude try params (returns)
-                                    // Crucial: Exclude parameters that are inside OTHER parameters (e.g. function type args)
-                                    // We only want the top-level parameters of THIS function definition
-                                    { inside: { kind: "parameter" } }
-                                ]
-                            }
-                        }
-                    }
-                });
+        if (node.type === 'fallback_receive_definition') {
+            fnName = node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
+            visibility = 'external';
+        } else {
+            const nameNode = node.childForFieldName('name');
+            fnName = nameNode ? nameNode.text : 'unknown';
 
-                if (paramMatches.length > 0) {
-                    params = paramMatches.map(p => p.text).join(', ');
+            // Parameters are direct children in this grammar
+            const paramTexts: string[] = [];
+            for (const child of node.children) {
+                if (child.type === 'parameter') {
+                    paramTexts.push(child.text);
                 }
-            } catch (e) {
-                // If sub-search fails, we leave params empty
-                console.warn(`Failed to extract parameters for ${fnName} in ${file}`, e);
+                if (child.type === 'visibility') {
+                    visibility = child.text;
+                }
+            }
+            params = paramTexts.join(', ');
+
+            if (!visibility) {
+                // FALLBACK: maybe visibility is not a direct child? 
+                // In some versions it might be. Let's keep a query as backup or just check children.
+                // Based on our debug AST, it IS a child.
             }
         }
-
-        const modifiers: string[] = fn.metaVariables?.multi?.MODIFIERS?.map((m: { text: string }) => m.text) ?? [];
-        const visibility = modifiers.find(
-            (m): m is 'external' | 'public' | 'internal' | 'private' =>
-                ['external', 'public', 'internal', 'private'].includes(m)
-        );
 
         const signature = this.cleanSignature(`${fnName}(${params})`);
         const id = contract ? `${contract}.${signature}` : signature;
 
-        // Default visibility for interface functions is external if not specified
-        const finalVisibility: 'public' | 'external' | 'internal' | 'private' = visibility ??
-            (containerKind === 'interface' ? 'external' : 'internal'); // Default to internal otherwise
+        const finalVisibility: 'public' | 'external' | 'internal' | 'private' = (visibility as any) ??
+            (containerKind === 'interface' ? 'external' : 'internal');
 
         return {
             id,
@@ -555,10 +461,10 @@ export class SolidityAdapter extends BaseAdapter {
             containerKind,
             visibility: finalVisibility,
             range: {
-                start: { line: baseLineOffset + fn.range.start.line + 1, column: fn.range.start.column },
-                end: { line: baseLineOffset + fn.range.end.line + 1, column: fn.range.end.column }
+                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
             },
-            text: fn.text
+            text: node.text
         };
     }
 }

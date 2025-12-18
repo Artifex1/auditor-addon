@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const ROOT_DIR = path.join(__dirname, '..');
 const GRAMMARS_DIR = path.join(ROOT_DIR, 'vendor', 'grammars');
-const PARSERS_DIR = path.join(ROOT_DIR, 'lib', 'parsers');
+const PARSERS_DIR = path.join(ROOT_DIR, 'dist', 'mcp', 'parsers');
 
 const filter = process.argv[2];
 

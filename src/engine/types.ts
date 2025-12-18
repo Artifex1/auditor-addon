@@ -4,9 +4,11 @@ export enum SupportedLanguage {
     Java = "java",
     Go = "go",
     Rust = "rust",
-    // Future languages:
-    // TypeScript = "typescript",
-    // JavaScript = "javascript",
+    Cairo = "cairo",
+    Compact = "compact",
+    Move = "move",
+    Noir = "noir",
+    Tolk = "tolk",
 }
 
 export interface Entrypoint {
@@ -62,4 +64,12 @@ export interface FileMetrics {
     commentDensity: number;
     cognitiveComplexity: number;
     estimatedHours: number;
+}
+
+export interface LanguageAdapter {
+    languageId: SupportedLanguage;
+    extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]>;
+    generateCallGraph(files: FileContent[]): Promise<CallGraph>;
+    extractSignatures(files: FileContent[]): Promise<Record<string, string[]>>;
+    calculateMetrics(files: FileContent[]): Promise<FileMetrics[]>;
 }

@@ -46,6 +46,11 @@ Generate professional audit reports in OpenZeppelin style
 | Language | Entrypoints | Peek | Call Graphs | Metrics | Status |
 |:--------:|:-----------:|:-----------:|:-----------:|:-------:|:------:|
 | 🔷 **Solidity** | ✅ | ✅ | ✅ | ✅ | **Full Support** |
+| 🐪 **Cairo** | ❌ | ✅ | ⏳ | ✅ | Partial |
+| 📦 **Compact** | ❌ | ✅ | ⏳ | ✅ | Partial |
+| 💧 **Move** | ❌ | ✅ | ⏳ | ✅ | Partial |
+| 🌑 **Noir** | ❌ | ✅ | ⏳ | ✅ | Partial |
+| 🧩 **Tolk** | ❌ | ✅ | ⏳ | ✅ | Partial |
 | ⚡ **C++** | ❌ | ✅ | ⏳ | ✅ | Partial |
 | ☕ **Java** | ❌ | ✅ | ⏳ | ✅ | Partial |
 | 🐹 **Go** | ❌ | ✅ | ⏳ | ✅ | Partial |
@@ -182,7 +187,7 @@ The `commands/` directory contains **TOML-based systematic prompts** for structu
 ### Technology Stack
 
 - **Runtime**: ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript&logoColor=white)
-- **AST Engine**: [`ast-grep`](https://github.com/ast-grep/ast-grep) - Fast pattern matching & parsing
+- **AST Engine**: [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Fast, incremental parsing for various languages
 - **Output Format**: [TOON](https://github.com/toon-format/toon) - Token-Oriented Object Notation
 - **Protocol**: [MCP](https://modelcontextprotocol.io) - Model Context Protocol
 - **Testing**: ![Vitest](https://img.shields.io/badge/Vitest-Latest-729B1B?logo=vitest&logoColor=white)

@@ -13,10 +13,9 @@ import { MoveAdapter } from "../languages/moveAdapter.js";
 import { NoirAdapter } from "../languages/noirAdapter.js";
 import { TolkAdapter } from "../languages/tolkAdapter.js";
 import { FlowAdapter, JavaScriptAdapter, TsxAdapter, TypeScriptAdapter } from "../languages/javascriptAdapter.js";
-import { createEntrypointsHandler, entrypointsSchema } from "./tools/entrypoints.js";
 import { createPeekHandler, peekSchema } from "./tools/peek.js";
 import { createMetricsHandler, metricsSchema } from "./tools/metrics.js";
-import { createCallGraphHandler, callGraphSchema } from "./tools/callgraph.js";
+import { createExecutionPathsHandler, executionPathsSchema } from "./tools/executionPaths.js";
 
 // Create and configure engine
 const engine = new Engine();
@@ -42,12 +41,6 @@ const server = new McpServer({
 });
 
 server.registerTool(
-    "entrypoints",
-    entrypointsSchema,
-    createEntrypointsHandler(engine)
-);
-
-server.registerTool(
     "peek",
     peekSchema,
     createPeekHandler(engine)
@@ -60,9 +53,9 @@ server.registerTool(
 );
 
 server.registerTool(
-    "callgraph",
-    callGraphSchema,
-    createCallGraphHandler(engine)
+    "execution_paths",
+    executionPathsSchema,
+    createExecutionPathsHandler(engine)
 );
 
 async function main() {

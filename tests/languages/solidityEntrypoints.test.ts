@@ -16,9 +16,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
         expect(entrypoints.length).toBeGreaterThan(0);
 
@@ -39,9 +40,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
         const deposit = entrypoints.find(e => e.id === 'SimpleVault.deposit(uint256 amount)');
         expect(deposit?.visibility).toBe('external');
@@ -56,9 +58,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
         entrypoints.forEach(e => {
             expect(e.contract).toBe('SimpleVault');
@@ -70,9 +73,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
     function foo() public {}
 }`;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
         expect(entrypoints.length).toBe(1);
         expect(entrypoints[0].id).toBe('Test.foo()');
@@ -84,15 +88,16 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'AbstractContract.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const pendingBalance = entrypoints.find(e => e.name === 'pendingBalance');
+        const pendingBalance = entrypoints.find(e => e.label === 'pendingBalance');
         expect(pendingBalance).toBeDefined();
         expect(pendingBalance?.contract).toBe('BaseVault');
 
-        const deposit = entrypoints.find(e => e.name === 'deposit');
+        const deposit = entrypoints.find(e => e.label === 'deposit');
         expect(deposit).toBeDefined();
         expect(deposit?.contract).toBe('DerivedVault');
     });
@@ -105,18 +110,19 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const functionNames = entrypoints.map(e => e.name);
+        const functionNames = entrypoints.map(e => e.label);
         expect(functionNames).toContain('fallback');
         expect(functionNames).toContain('receive');
 
-        const fallbackFunc = entrypoints.find(e => e.name === 'fallback');
+        const fallbackFunc = entrypoints.find(e => e.label === 'fallback');
         expect(fallbackFunc?.visibility).toBe('external');
 
-        const receiveFunc = entrypoints.find(e => e.name === 'receive');
+        const receiveFunc = entrypoints.find(e => e.label === 'receive');
         expect(receiveFunc?.visibility).toBe('external');
     });
     it('should normalize function signatures with extra whitespace', async () => {
@@ -127,9 +133,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             ) public {}
         }`;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
         expect(entrypoints[0].id).toBe('Test.foo(uint256 a, uint256 b)');
     });
@@ -141,11 +148,12 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const execute = entrypoints.find(e => e.name === 'execute');
+        const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
         expect(execute?.id).toContain('function(uint256) external returns (uint256) callback');
     });
@@ -160,11 +168,12 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const complex = entrypoints.find(e => e.name === 'complex');
+        const complex = entrypoints.find(e => e.label === 'complex');
         expect(complex).toBeDefined();
         expect(complex?.id).toBe('Test.complex(uint256 a, function(uint256) external returns (uint256) cb)');
     });
@@ -182,11 +191,12 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const execute = entrypoints.find(e => e.name === 'execute');
+        const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
         expect(execute?.id).toBe('Test.execute(uint256 input)');
     });
@@ -201,11 +211,12 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const entrypoints = await adapter.extractEntrypoints([
+        const graph = await adapter.generateCallGraph([
             { path: 'Test.sol', content: code }
         ]);
+        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
 
-        const execute = entrypoints.find(e => e.name === 'execute');
+        const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
         expect(execute?.id).toBe('Test.execute(uint256 id, function(uint256 nestedParam) external callback)');
     });

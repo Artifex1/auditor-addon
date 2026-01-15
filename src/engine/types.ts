@@ -72,7 +72,6 @@ export interface FileMetrics {
 
 export interface LanguageAdapter {
     languageId: SupportedLanguage;
-    extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]>;
     generateCallGraph(files: FileContent[]): Promise<CallGraph>;
     extractSignatures(files: FileContent[]): Promise<Record<string, string[]>>;
     calculateMetrics(files: FileContent[]): Promise<FileMetrics[]>;

@@ -43,28 +43,31 @@ Generate professional audit reports in OpenZeppelin style
 
 <div align="center">
 
-| Language | Entrypoints | Peek | Call Graphs | Metrics | Status |
-|:--------:|:-----------:|:-----------:|:-----------:|:-------:|:------:|
-| 🔷 **Solidity** | ✅ | ✅ | ✅ | ✅ | **Full Support** |
-| 🐪 **Cairo** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 📦 **Compact** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 💧 **Move** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🌑 **Noir** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🧩 **Tolk** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| ⚡ **C++** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| ☕ **Java** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🐹 **Go** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🦀 **Rust** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🟨 **JavaScript** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🔷 **TypeScript** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🧩 **TSX** | ❌ | ✅ | ⏳ | ✅ | Partial |
-| 🌀 **Flow** | ❌ | ✅ | ⏳ | ✅ | Partial |
+| Language | Peek | Execution Paths | Metrics | Status |
+|:--------:|:-----------:|:-----------:|:-------:|:------:|
+| 🔷 **Solidity** | ✅ | ✅ | ✅ | **Full Support** |
+| 🐪 **Cairo** | ✅ | ⏳ | ✅ | Partial |
+| 📦 **Compact** | ✅ | ⏳ | ✅ | Partial |
+| 💧 **Move** | ✅ | ⏳ | ✅ | Partial |
+| 🌑 **Noir** | ✅ | ⏳ | ✅ | Partial |
+| 🧩 **Tolk** | ✅ | ⏳ | ✅ | Partial |
+| ⚡ **C++** | ✅ | ⏳ | ✅ | Partial |
+| ☕ **Java** | ✅ | ⏳ | ✅ | Partial |
+| 🐹 **Go** | ✅ | ⏳ | ✅ | Partial |
+| 🦀 **Rust** | ✅ | ⏳ | ✅ | Partial |
+| 🟨 **JavaScript** | ✅ | ⏳ | ✅ | Partial |
+| 🔷 **TypeScript** | ✅ | ⏳ | ✅ | Partial |
+| 🧩 **TSX** | ✅ | ⏳ | ✅ | Partial |
+| 🌀 **Flow** | ✅ | ⏳ | ✅ | Partial |
 
 </div>
 
 ## 📦 Installation
 
 ### Via Gemini CLI Extension
+
+> [!NOTE]
+> This extension uses Skills. Please ensure the **Skills Preview** feature is enabled in your Gemini CLI settings. Confirm by typing `/skills list` in the CLI.
 
 ```bash
 # Install the MCP server
@@ -112,11 +115,6 @@ pnpm test:watch
 </thead>
 <tbody>
 <tr>
-<td><code>entrypoints</code></td>
-<td><code>paths</code> (string[])</td>
-<td><code>Entrypoint[]</code></td>
-<td>🎯 List all public/external functions to map the attack surface</td>
-</tr>
 <tr>
 <td><code>peek</code></td>
 <td><code>paths</code> (string[])</td>
@@ -130,10 +128,10 @@ pnpm test:watch
 <td>📏 Calculate NLoC, complexity, and effort estimates</td>
 </tr>
 <tr>
-<td><code>callgraph</code></td>
+<td><code>execution_paths</code></td>
 <td><code>paths</code> (string[])</td>
-<td><code>CallGraph</code></td>
-<td>🕸️ Generate call graphs (nodes/edges) for flow analysis</td>
+<td><code>string[]</code></td>
+<td>🕸️ Generate linear execution call chains from public entrypoints</td>
 </tr>
 </tbody>
 </table>

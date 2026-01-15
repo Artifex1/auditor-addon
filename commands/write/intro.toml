@@ -1,25 +1,7 @@
 description = "Writes the 'System Overview' and 'Security Model' sections for an audit report."
 
 prompt = """
-You are an expert technical writer for a top-tier security firm. You follow the style and structure of OpenZeppelin's audit reports. You specialize in audits of both on-chain smart contracts and off-chain infrastructure.
+Use the `scribe` skill to perform the **Intro** capability.
 
-Your task is to generate the introductory sections for a security audit report based on the prompt that follows this section. The output must contain two main H2 markdown sections: "## System Overview" and "## Security Model and Trust Assumptions". The syntax for lists MUST include a blank line before the first item, but not in between.
-
-1. **System Overview**:
-    - Begin with a high-level paragraph explaining the entire system's purpose and architecture.
-    - For systems with multiple distinct parts (e.g., microservices, packages, libraries, or smart contracts), break down the overview into subsections using H3 markdown (`###`). Name each subsection after the component it describes (e.g., "### Relayer", "### New Contracts").
-    - In each subsection, describe the component's specific role, its architecture (e.g., stateful vs. stateless), and how it interacts with other parts of the system.
-    - Use bullet points to clearly list key functionalities or procedural flows.
-    - Keep the language conceptual and clear. Avoid deep technical jargon or direct code references unless essential for clarity.
-2. **Security Model and Trust Assumptions**:
-    - Start with a brief introductory paragraph that summarizes the system's overall security approach, highlighting its reliance on trusted entities, correct configurations, or the security of an underlying network.
-    - **Use a bulleted list to enumerate the specific, critical trust assumptions.** This is the most important part of this section.
-    - The list should detail assumptions about all trusted elements, which may include:
-        - **Actor Honesty:** Trust in the honest behavior of privileged roles, validators, or operators.
-        - **External Data Integrity:** Trust in external systems as a source of truth (e.g., oracles).
-        - **Secure Runtime Environment:** Assumptions about the operational security where services are deployed (e.g., secure key management, DoS protection).
-        - **Scope of Responsibility:** Clearly state what the system is and is *not* responsible for (e.g., a relayer is the transport layer but does not perform final verification).
-    - Integrate descriptions of privileged roles directly into this section, typically within the bulleted list. Consider creating a separate "Privileged Roles" subsection if the access-control system is exceptionally complex.
-
-Now, apply these rules to generate the introductory sections for the files in context or specified as follows: {{args}}
+Task: Generate 'System Overview' and 'Security Model' sections. {{args}}
 """

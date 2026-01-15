@@ -6,47 +6,19 @@
 
 | Tool | Inputs | Output | Purpose |
 | :--- | :--- | :--- | :--- |
-| `entrypoints` | `paths` (str[]) | `Entrypoint[]` | List public/external functions (attack surface). |
 | `peek` | `paths` (str[]) | `Signature[]` | Extract function signatures for quick overview. |
 | `metrics` | `paths` (str[]) | `Metrics[]` | Calculate NLoC, complexity, and effort estimates. |
-| `callgraph` | `paths` (str[]) | `CallGraph` | Generate call graph (nodes/edges) for flow analysis. |
+| `execution_paths` | `paths` (str[]) | `string[]` | Generate linear execution call chains from public entrypoints. |
 
 **Note:** `paths` allow for glob patterns.
+**Format**: The output format of the MCP tools is Token-Oriented Object Notation (TOON).
 
-## Workflows
+## Skills
 
-Workflows are defined in `commands/` as TOML prompts. Use them sequentially.
+This project uses Gemini CLI Skills for its primary workflows.
 
-### 1. Estimation (`/estimate/*`)
-1.  **Discovery** (`discovery`): Identify scope and chunk files.
-2.  **Explore** (`explore`): Categorize files and refine scope using `peek`.
-3.  **Metrics** (`metrics`): Calculate effort for in-scope files using `metrics`.
-4.  **Report** (`report`): Generate final estimation report.
+- **Security Auditor** (`security-auditor`): Comprehensive auditing (Map, Hunt, Attack).
+- **Estimator** (`estimator`): Project scoping and effort estimation (Discovery, Explore, Metrics).
+- **Scribe** (`scribe`): Report writing and finding generation.
 
-**Important:** Agents should work primarily from context and **must not** write any intermediate outcomes to files unless explicitly asked to do so.
-
-### 2. Audit (`/audit/*`)
-1.  **Map** (`map`): Build system map (Components, Invariants, Flows) using `entrypoints` & `callgraph`.
-2.  **Hunt** (`hunt`): Identify suspicious spots (high recall) using `entrypoints`.
-3.  **Attack** (`attack`): Verify specific spots (high precision) via rigorous reasoning.
-
-### 3. Writing (`/write/*`)
-1.  **Issue** (`issue`): Write up confirmed vulnerabilities (OpenZeppelin style).
-2.  **Intro** (`intro`): Generate audit report introduction.
-
-## Critical Reasoning & Validation Protocol
-
-**Agents MUST adhere to this protocol for every code review or vulnerability analysis task:**
-
-1.  **Hypothesis-Driven Analysis**: Treat every user-provided "issue" or "vulnerability" as a **hypothesis to be falsified**, not a fact to be confirmed.
-2.  **Cross-Reference Mandate**: Never validate a code finding in isolation. You MUST cross-reference the code against documentation, specs, and protocol invariants.
-3.  **Devil's Advocate**: Before concluding that an issue is true, you must explicitly try to find a reason why it is "False" (e.g., a constraint in another file, a protocol constant, or a deterministic fallback).
-
-## Key Concepts
-
--   **Anti-Parroting**: Do not repeat the user's claims back to them. Provide independent, evidence-based (in)validation.
--   **Threat Model**: Privileged roles are honest; focus on unprivileged/external actors.
--   **TOON**: The output format of the MCP tools is Token-Oriented Object Notation (TOON).
--   **Invariants**: Properties that must always hold true (e.g., `UserBalance <= TotalSupply`).
--   **No Code Fixes**: Do NOT suggest code fixes; focus on identifying and explaining issues.
--   **Tool-first rule**: Use tool calls quickly where applicable; avoid preamble.
+Refer to the respective `SKILL.md` files in the `skills/` directory for detailed protocols and prompts.

@@ -1,27 +1,7 @@
 description = "Stage 4: Report - Generate the final audit estimation report."
 
 prompt = """
-You are a senior Security Auditor.
+Use the `estimator` skill to perform the **Report** capability.
 
-Task: Generate a comprehensive "Audit Estimation Report".
-
-The user might specify specific demands on the output format: {{ args }}
-
-1. **Summarize**:
-    - Start with a headline "Audit Estimation - <Repository name>"
-    - Provide a high-level summary of the repository and each identified chunk.
-
-2. **Detailed Scope Table**:
-    - Create a table listing all **in-scope** files.
-    - Columns: Chunk Name, File Path, Category, NLoC, Comment Density, Cognitive Complexity, Estimated Hours.
-    - IMPORTANT: This table is the heart of this whole estimation process. Make sure it is correct and complete. Losing files or including non-in-scope files is unacceptable.
-
-3. **Totals**:
-    - Total NLoC.
-    - Total Estimated Hours.
-    - Total Estimated Days.
-
-4. **Recommendations & Timeline**:
-    - Propose a rough timeline or order of execution (e.g., "Start with Core Logic, then move to Periphery").
-    - Highlight any specific concerns or risks identified during the exploration.
+Task: Generate final estimation report. {{args}}
 """

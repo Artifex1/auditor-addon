@@ -71,17 +71,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
     }
 
     /**
-     * Extracts entrypoints (public/external functions) from source files.
-     * Default implementation returns empty array - override in language-specific adapters.
-     * 
-     * @param files - Array of source files to analyze
-     * @returns Array of entrypoints
-     */
-    async extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]> {
-        return [];
-    }
-
-    /**
      * Generates a call graph for the source files.
      * Default implementation returns empty graph - override in language-specific adapters.
      * 

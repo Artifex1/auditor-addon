@@ -1,21 +1,7 @@
 description = "Stage 1: Discovery - Identify and chunk files for the audit."
 
 prompt = """
-You are a senior Security Auditor.
+Use the `estimator` skill to perform the **Discovery** capability.
 
-Task: Discover the scope of the audit and organize files into logical chunks.
-
-The user might specify a directory, file path, or scope text file: {{ args }}
-
-1. **Get file structure**: Immediately check the scope.
-    - If user provided a path to a scope file, read it.
-    - Otherwise, run a `tree`-like command or `ls -R` to get the file structure.
-
-2. **Chunk files**: Group files into logical chunks based on the structure.
-    - Examples: "Core Logic", "Token Implementation", "Governance", "Utils", "Tests", "Scripts"
-    - Aim for high cohesion within chunks.
-
-3. **Report**: Present the chunks to the user.
-    - List each chunk with a one-liner description and included files/patterns underneath.
-    - Ask if the organization looks correct.
+Task: Discover scope and chunk files. {{args}}
 """

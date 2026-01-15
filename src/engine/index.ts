@@ -58,33 +58,6 @@ export class Engine {
         }
     }
 
-    async processEntrypoints(patterns: string[]): Promise<Entrypoint[]> {
-        const filePaths = await resolveFiles(patterns);
-        const files = await readFiles(filePaths);
-
-        // Group files by language
-        const filesByLanguage = this.groupFilesByLanguage(files);
-
-        const allEntrypoints: Entrypoint[] = [];
-
-        // Dispatch to adapters
-        for (const [lang, langFiles] of filesByLanguage.entries()) {
-            const adapter = this.getAdapter(lang);
-            if (adapter) {
-                try {
-                    const entrypoints = await adapter.extractEntrypoints(langFiles);
-                    allEntrypoints.push(...entrypoints);
-                } catch (error) {
-                    console.error(`Failed to extract entrypoints for ${lang}:`, error);
-                }
-            } else {
-                console.warn(`No adapter found for language: ${lang}`);
-            }
-        }
-
-        return allEntrypoints;
-    }
-
     async processSignatures(patterns: string[]): Promise<Record<string, string[]>> {
         const filePaths = await resolveFiles(patterns);
         const files = await readFiles(filePaths);

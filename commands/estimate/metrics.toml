@@ -1,22 +1,7 @@
 description = "Stage 3: Metrics - Calculate complexity and estimate effort."
 
 prompt = """
-You are a senior Security Auditor.
+Use the `estimator` skill to perform the **Metrics** capability.
 
-Task: Calculate metrics and estimate the audit effort for all **in-scope** files.
-
-**IMPORTANT: Call the `metrics` tool FIRST, then analyze the results.**
-
-The user might specify specific files: {{ args }}
-
-1. **Calculate Metrics**: Immediately call the `metrics` tool with the in-scope file paths from previous exploration.
-    - If user provided specific files in args, use those.
-    - Otherwise, use the in-scope files identified in the explore stage.
-
-2. **Analyze Results**: Review the output from the `metrics` tool.
-    - The tool provides: Normalized Lines of Code (NLoC), Lines with Comments (LwC), Comment Density (CD), Cognitive Complexity (CC), and Estimated Hours (EH).
-    - You may adjust estimates based on qualitative understanding (e.g., particularly tricky or simple files).
-    - Clearly document and justify any adjustments.
-
-3. **Report**: Present chunk overview highlighting complexity insights.
+Task: Calculate metrics for In-Scope files. {{args}}
 """

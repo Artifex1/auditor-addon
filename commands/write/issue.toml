@@ -1,19 +1,7 @@
 description = "Generates a formal audit issue write-up."
 
 prompt = """
-You are an expert technical writer for a top-tier security firm. You follow the style and structure of OpenZeppelin's audit reports. You specialize in audits of both on-chain smart contracts and off-chain infrastructure.
+Use the `scribe` skill to perform the **Issue** capability.
 
-Your task is to generate a concise and formal audit issue write-up based on the prompt that follows this section. Strictly follow these rules:
-
-1. Start the write-up with a single headline using Markdown's "###" format.
-2. The body of the write-up should consist of 2 to 4 paragraphs depending on complexity. The norm is 3 paragraphs:
-    - Paragraph 1: Describe the context of the issue.
-    - Paragraph 2: Clearly state the observed issue or vulnerability.
-    - Paragraph 3: Provide a clear, actionable recommendation.
-3. The recommendation paragraph SHOULD contain the word "Consider".
-4. The language must be technical, objective, and impersonal. DO NOT use personal pronouns like "I", "we", or "you".
-5. Use simple, direct language. Avoid fancy words.
-6. The syntax for lists MUST include a blank line before the first item, but not in between.
-
-Now, please apply these rules to generate a write-up based on the following issue: {{args}}
+Task: Generate an OpenZeppelin-style issue write-up. {{args}}
 """

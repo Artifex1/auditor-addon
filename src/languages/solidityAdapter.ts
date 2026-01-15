@@ -110,29 +110,6 @@ export class SolidityAdapter extends BaseAdapter {
     private static readonly BUILTIN_FUNCTIONS = new Set(['require', 'assert', 'revert', 'emit']);
 
     /**
-     * Extracts all public and external functions from Solidity files.
-     * These represent the attack surface of the smart contracts.
-     * 
-     * @param files - Array of Solidity source files to analyze
-     * @returns Array of entrypoints with their signatures and metadata
-     */
-    async extractEntrypoints(files: FileContent[]): Promise<Entrypoint[]> {
-        this.resetState();
-        await this.buildSymbolTable(files);
-
-        return Array.from(this.symbolTable.values())
-            .filter(node => node.visibility === 'public' || node.visibility === 'external')
-            .map(node => ({
-                file: node.file,
-                contract: node.contract || 'Unknown',
-                name: node.label,
-                signature: this.cleanSignature(node.id.includes('.') ? node.id.split('.').pop()! : node.id),
-                visibility: node.visibility!,
-                id: node.id
-            }));
-    }
-
-    /**
      * Generates a complete call graph for Solidity contracts.
      * Includes nodes for all functions and edges representing function calls.
      * Handles inheritance, super calls, library usage, and assembly calls.

@@ -8,6 +8,7 @@ Task: Build a precise **system map** for the given codebase. Do **not** look for
 **Tools:**
 - Use the `entrypoints` tool to accurately list the external surface (public APIs/functions).
 - Use the `callgraph` tool to identify cross-component flows.
+- **Context Loading**: If you encounter imported files, base classes, or libraries that are NOT in the current context but are critical for understanding the system (e.g., for type definitions or shared logic), **use your available tools read them** to ensure you have a complete picture.
 
 Threat model (for later stages; keep in mind when inferring invariants):
 - Privileged roles (owner, admin, maintainers, etc.) are **honest and aligned** with the system.
@@ -43,11 +44,15 @@ List **3-10 important invariants**. Each invariant should:
 
 - Be a precise statement that “should always be true” assuming honest privileged roles.
 - Refer explicitly to variables, balances, or data states, not just vague goals.
+- **Categorize Invariants** into:
+  - **Local Properties**: (e.g., specific variable relationships, auth checks, arithmetic limits).
+  - **System-Wide Invariants**: (e.g., protocol liveness, progress, insolvency prevention).
 
 Examples of style (not actual content):
-- `TotalSupply(token) == sum of all user balances.`
-- `User cannot withdraw more than they deposited.`
-- `Connection pool size must never exceed MAX_CONNECTIONS.`
+- `TotalSupply(token) == sum of all user balances.` (Local)
+- `User cannot withdraw more than they deposited.` (Local)
+- `The system must always remain progressible (proposals can always eventually be finalized).` (System-Wide)
+- `Any unprivileged user must be able to exit the system within a bounded time window.` (System-Wide)
 
 Format:
 

@@ -28,7 +28,13 @@ Go **component by component**, and for each component:
    - moves value/data (transfers, state updates, etc.), or
    - makes **external calls** (APIs, DB, other services, low-level calls),
    then treat it as a candidate hotspot.
-3. For each such function, **try** to identify at least one plausible way in which:
+3. **Deep Check:**
+   - **Consistency**: Compare the logic against similar components or base implementations. Are there optimizations or alternative paths that skip standard checks?
+   - **Data Integrity**: Verify that data types (e.g., int sizes) and constraints are respected. Look for overflows, truncations, or unvalidated casts.
+   - **Mechanical Integrity**: Trace index updates and variable state through loops. Look for cases where a variable's *actual* update pattern (e.g., `i += span`) deviates from the *assumed* pattern in subsequent logic (e.g., assuming `i` is always sequential).
+   - **Invariants**: Explicitly ask provided System Invariants: "Does this function maintain Inv X?"
+   - **Adversarial Use**: Can these "intended" features or design choices be used by an external actor to trigger a **safety-violating outcome** (e.g., permanent halt, unfair throttling)?
+4. For each such function, **try** to identify at least one plausible way in which:
    - a non-privileged caller or external actor could stress or misuse it, or
    - an invariant from the system map might be at risk.
 

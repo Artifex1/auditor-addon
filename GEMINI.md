@@ -34,11 +34,19 @@ Workflows are defined in `commands/` as TOML prompts. Use them sequentially.
 1.  **Issue** (`issue`): Write up confirmed vulnerabilities (OpenZeppelin style).
 2.  **Intro** (`intro`): Generate audit report introduction.
 
+## Critical Reasoning & Validation Protocol
+
+**Agents MUST adhere to this protocol for every code review or vulnerability analysis task:**
+
+1.  **Hypothesis-Driven Analysis**: Treat every user-provided "issue" or "vulnerability" as a **hypothesis to be falsified**, not a fact to be confirmed.
+2.  **Cross-Reference Mandate**: Never validate a code finding in isolation. You MUST cross-reference the code against documentation, specs, and protocol invariants.
+3.  **Devil's Advocate**: Before concluding that an issue is true, you must explicitly try to find a reason why it is "False" (e.g., a constraint in another file, a protocol constant, or a deterministic fallback).
+
 ## Key Concepts
 
+-   **Anti-Parroting**: Do not repeat the user's claims back to them. Provide independent, evidence-based (in)validation.
 -   **Threat Model**: Privileged roles are honest; focus on unprivileged/external actors.
 -   **TOON**: The output format of the MCP tools is Token-Oriented Object Notation (TOON).
 -   **Invariants**: Properties that must always hold true (e.g., `UserBalance <= TotalSupply`).
 -   **No Code Fixes**: Do NOT suggest code fixes; focus on identifying and explaining issues.
--   **Tool-first rule:** User tool calls quickly where applicable; avoid preamble.
--   **Batching:** Prefer glob/array inputs; minimize number of tool calls.
+-   **Tool-first rule**: Use tool calls quickly where applicable; avoid preamble.

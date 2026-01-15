@@ -35,6 +35,10 @@ For this one suspicious spot:
   - Which invariant or property is broken, or how is value/data improperly created, destroyed, stolen, or locked?
 - Internally, attempt to **refute your own attack**:
   - Look for checks, invariants, or constraints that would prevent the exploit.
+  - Verify data types and implicit limits (e.g. `uint8` max value) to ensure the attack state is actually reachable.
+  - **Impact-First Recognition**: Do not dismiss an issue just because it seems "intended by the design" or is a consequence of an "honest" administrative action. If a specific code logic or system state allows for a permanent halt of progress, theft of funds, or breaking of a **System Invariant**, it IS a vulnerability.
+  - **Mechanical Refutation**: Before dismissing a "boring" implementation bug (like an overflow or index shift), perform a dry-run of the code. If `i += span` and `span > 1`, does the next line that expects `i` to be `last_i + 1` still work? If it breaks finalization, it is a **Critical** finding, not a minor bug.
+  - **Implicit Abuse**: Under the "honest admin" model, assume the admin follows the protocol, but if the protocol's *intended* behavior combined with external inputs/state leads to a safety violation, it is a design vulnerability.
   - If such checks reliably block the attack under the threat model, treat the suspicious spot as safe.
 
 Do NOT output your intermediate reasoning or thought process. Only output the final conclusion in the required format.

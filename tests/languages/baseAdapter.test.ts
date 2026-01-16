@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BaseAdapter, AdapterConfig } from '../src/languages/baseAdapter.js';
-import { SupportedLanguage } from '../src/engine/types.js';
-import { TreeSitterService } from '../src/util/treeSitter.js';
+import { BaseAdapter, AdapterConfig } from '../../src/languages/baseAdapter.js';
+import { SupportedLanguage } from '../../src/engine/types.js';
+import { TreeSitterService } from '../../src/util/treeSitter.js';
 import { Query } from 'web-tree-sitter';
 
 // Mock TreeSitterService
-vi.mock('../src/util/treeSitter.js', () => ({
+vi.mock('../../src/util/treeSitter.js', () => ({
     TreeSitterService: {
         getInstance: vi.fn()
     }

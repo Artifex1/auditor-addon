@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { server } from '../src/mcp/server.js';
-import { SolidityAdapter } from '../src/languages/solidityAdapter.js';
+import { server } from '../../src/mcp/server.js';
+import { SolidityAdapter } from '../../src/languages/solidityAdapter.js';
 
 describe('Smoke Test', () => {
     it('should import server instance', () => {

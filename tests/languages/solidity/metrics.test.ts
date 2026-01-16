@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SolidityAdapter } from '../../src/languages/solidityAdapter.js';
+import { SolidityAdapter } from '../../../src/languages/solidityAdapter.js';
 
 describe('SolidityAdapter Metrics', () => {
     const adapter = new SolidityAdapter();

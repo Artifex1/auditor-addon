@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { SolidityAdapter } from '../../src/languages/solidityAdapter';
-import { FileContent } from '../../src/engine/types';
+import { SolidityAdapter } from '../../../src/languages/solidityAdapter';
+import { FileContent } from '../../../src/engine/types';
 
 describe('SolidityAdapter Call Graph', () => {
     const adapter = new SolidityAdapter();

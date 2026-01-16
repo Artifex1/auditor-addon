@@ -39,6 +39,9 @@ Generate professional audit reports in OpenZeppelin style
 </tr>
 </table>
 
+### 🧠 **Design Challenge**
+Challenge overcomplicated designs and propose simpler alternatives with explicit trade-offs
+
 ## 🌐 Supported Languages
 
 <div align="center">
@@ -163,7 +166,15 @@ The `commands/` directory contains **TOML-based systematic prompts** for structu
 
 **Perfect for:** Security audits, vulnerability assessment, threat modeling
 
-### 3️⃣ Writing Workflow
+### 3️⃣ Design Challenge Workflow
+
+```
+/design:challenge  → Challenge design and propose simplifications
+```
+
+**Perfect for:** Overcomplication review, protocol simplification, design trade-offs
+
+### 4️⃣ Writing Workflow
 
 ```
 /write:intro   → Generate professional report introduction

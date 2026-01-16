@@ -19,6 +19,7 @@ This project uses Gemini CLI Skills for its primary workflows.
 
 - **Security Auditor** (`security-auditor`): Comprehensive auditing (Map, Hunt, Attack).
 - **Estimator** (`estimator`): Project scoping and effort estimation (Discovery, Explore, Metrics).
+- **Design Challenger** (`design-challenger`): Challenge overcomplicated designs and propose simplifications with trade-offs.
 - **Scribe** (`scribe`): Report writing and finding generation.
 
 Refer to the respective `SKILL.md` files in the `skills/` directory for detailed protocols and prompts.

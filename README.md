@@ -72,6 +72,8 @@ Traces call chains from public entrypoints through internal function calls, prod
 | Language | Peek | Execution Paths | Metrics |
 |:--------:|:-----------:|:-----------:|:-------:|
 | 🔷 **Solidity** | ✅ | ✅ | ✅ |
+| 🦀 **Rust** | ✅ | ✅ | ✅ |
+| 🐹 **Go** | ✅ | ✅ | ✅ |
 | 🐪 **Cairo** | ✅ | ⏳ | ✅ |
 | 📦 **Compact** | ✅ | ⏳ | ✅ |
 | 💧 **Move** | ✅ | ⏳ | ✅ |
@@ -79,8 +81,6 @@ Traces call chains from public entrypoints through internal function calls, prod
 | 🧩 **Tolk** | ✅ | ⏳ | ✅ |
 | ⚡ **C++** | ✅ | ⏳ | ✅ |
 | ☕ **Java** | ✅ | ⏳ | ✅ |
-| 🐹 **Go** | ✅ | ⏳ | ✅ |
-| 🦀 **Rust** | ✅ | ⏳ | ✅ |
 | 🟨 **JavaScript** | ✅ | ⏳ | ✅ |
 | 🔷 **TypeScript** | ✅ | ⏳ | ✅ |
 | 🧩 **TSX** | ✅ | ⏳ | ✅ |

@@ -1,6 +1,6 @@
-import { LanguageAdapter, Entrypoint, FileContent, SupportedLanguage, CallGraph, FileMetrics } from "../engine/types.js";
+import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics } from "../engine/types.js";
 import { TreeSitterService } from "../util/treeSitter.js";
-import { Query, Parser, Language, Node } from "web-tree-sitter";
+import { Query, Node } from "web-tree-sitter";
 
 /**
  * Configuration for a language adapter.

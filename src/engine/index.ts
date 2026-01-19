@@ -1,4 +1,4 @@
-import { SupportedLanguage, Entrypoint, FileContent, CallGraph, FileMetrics, LanguageAdapter } from "./types.js";
+import { SupportedLanguage, FileContent, CallGraph, FileMetrics, LanguageAdapter } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import path from "path";
 export * from "./types.js";

@@ -15,15 +15,6 @@ export enum SupportedLanguage {
     Tolk = "tolk",
 }
 
-export interface Entrypoint {
-    file: string;
-    contract: string;
-    name: string;
-    signature: string;
-    visibility: string;
-    id: string;
-}
-
 export interface FileContent {
     path: string;
     content: string;

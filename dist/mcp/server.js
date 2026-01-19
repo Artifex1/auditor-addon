@@ -407,7 +407,7 @@ var require_codegen = __commonJS({
       AND: new code_1._Code("&&"),
       ADD: new code_1._Code("+")
     };
-    var Node4 = class {
+    var Node6 = class {
       optimizeNodes() {
         return this;
       }
@@ -415,7 +415,7 @@ var require_codegen = __commonJS({
         return this;
       }
     };
-    var Def = class extends Node4 {
+    var Def = class extends Node6 {
       constructor(varKind, name2, rhs) {
         super();
         this.varKind = varKind;
@@ -438,7 +438,7 @@ var require_codegen = __commonJS({
         return this.rhs instanceof code_1._CodeOrName ? this.rhs.names : {};
       }
     };
-    var Assign = class extends Node4 {
+    var Assign = class extends Node6 {
       constructor(lhs, rhs, sideEffects) {
         super();
         this.lhs = lhs;
@@ -468,7 +468,7 @@ var require_codegen = __commonJS({
         return `${this.lhs} ${this.op}= ${this.rhs};` + _n;
       }
     };
-    var Label = class extends Node4 {
+    var Label = class extends Node6 {
       constructor(label) {
         super();
         this.label = label;
@@ -478,7 +478,7 @@ var require_codegen = __commonJS({
         return `${this.label}:` + _n;
       }
     };
-    var Break = class extends Node4 {
+    var Break = class extends Node6 {
       constructor(label) {
         super();
         this.label = label;
@@ -489,7 +489,7 @@ var require_codegen = __commonJS({
         return `break${label};` + _n;
       }
     };
-    var Throw = class extends Node4 {
+    var Throw = class extends Node6 {
       constructor(error) {
         super();
         this.error = error;
@@ -501,7 +501,7 @@ var require_codegen = __commonJS({
         return this.error.names;
       }
     };
-    var AnyCode = class extends Node4 {
+    var AnyCode = class extends Node6 {
       constructor(code) {
         super();
         this.code = code;
@@ -520,7 +520,7 @@ var require_codegen = __commonJS({
         return this.code instanceof code_1._CodeOrName ? this.code.names : {};
       }
     };
-    var ParentNode = class extends Node4 {
+    var ParentNode = class extends Node6 {
       constructor(nodes = []) {
         super();
         this.nodes = nodes;
@@ -30320,7 +30320,44 @@ var JavaAdapter = class extends BaseAdapter {
 
 // src/languages/goAdapter.ts
 init_esm_shims();
-var GoAdapter = class extends BaseAdapter {
+var GoAdapter = class _GoAdapter extends BaseAdapter {
+  static QUERIES = {
+    FUNCTIONS: `
+            (function_declaration) @function
+        `,
+    METHODS: `
+            (method_declaration) @method
+        `,
+    SIMPLE_CALL: `
+            (call_expression function: (identifier) @FUNC)
+        `,
+    SELECTOR_CALL: `
+            (call_expression function: (selector_expression field: (field_identifier) @FUNC))
+        `
+  };
+  static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set([
+    "make",
+    "new",
+    "len",
+    "cap",
+    "append",
+    "copy",
+    "close",
+    "delete",
+    "complex",
+    "real",
+    "imag",
+    "panic",
+    "recover",
+    "print",
+    "println",
+    "min",
+    "max",
+    "clear"
+  ]);
+  symbolTable = /* @__PURE__ */ new Map();
+  symbolsByLabel = /* @__PURE__ */ new Map();
+  symbolsByReceiver = /* @__PURE__ */ new Map();
   constructor() {
     super({
       languageId: "go" /* Go */,
@@ -30346,29 +30383,215 @@ var GoAdapter = class extends BaseAdapter {
       },
       constants: {
         baseRateNlocPerDay: 400,
-        // Go is intentionally simple; deep nesting and clever control flow
-        // are atypical. We start penalizing at a lower CC density than C++.
         complexityMidpoint: 12,
-        // A bit sharper than C++: once Go code gets significantly more complex
-        // than “normal,” review cost ramps up fairly quickly.
         complexitySteepness: 9,
-        // Very simple Go can give ~25% speedup, while heavily tangled logic
-        // can cost up to ~50% more time. Extreme complexity is less common
-        // than in low-level systems languages.
         complexityBenefitCap: 0.25,
         complexityPenaltyCap: 0.5,
-        // Idiomatic Go favors clear code with modest comments. Around 15%+
-        // starts unlocking the bulk of the documentation benefit (up to ~25%).
         commentFullBenefitDensity: 15,
         commentBenefitCap: 0.25
       }
     });
   }
+  async generateCallGraph(files) {
+    this.resetState();
+    const edges = [];
+    await this.buildSymbolTable(files);
+    await this.identifyCalls(edges, files);
+    const nodes = Array.from(this.symbolTable.values());
+    return { nodes, edges };
+  }
+  resetState() {
+    this.symbolTable.clear();
+    this.symbolsByLabel.clear();
+    this.symbolsByReceiver.clear();
+  }
+  indexSymbol(node) {
+    this.symbolTable.set(node.id, node);
+    const labelNodes = this.symbolsByLabel.get(node.label) || [];
+    labelNodes.push(node);
+    this.symbolsByLabel.set(node.label, labelNodes);
+    if (node.contract) {
+      const receiverNodes = this.symbolsByReceiver.get(node.contract) || [];
+      receiverNodes.push(node);
+      this.symbolsByReceiver.set(node.contract, receiverNodes);
+    }
+  }
+  async buildSymbolTable(files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("go" /* Go */);
+    const parser = await service.createParser("go" /* Go */);
+    const functionQuery = new Query(lang, _GoAdapter.QUERIES.FUNCTIONS);
+    const methodQuery = new Query(lang, _GoAdapter.QUERIES.METHODS);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const funcCaptures = functionQuery.captures(tree.rootNode);
+      for (const capture of funcCaptures) {
+        const node = this.createFunctionNode(capture.node, file.path);
+        this.indexSymbol(node);
+      }
+      const methodCaptures = methodQuery.captures(tree.rootNode);
+      for (const capture of methodCaptures) {
+        const node = this.createMethodNode(capture.node, file.path);
+        this.indexSymbol(node);
+      }
+    }
+  }
+  createFunctionNode(node, file) {
+    const nameNode = node.childForFieldName("name");
+    const fnName = nameNode?.text ?? "unknown";
+    const visibility = this.extractVisibility(fnName);
+    const id = fnName;
+    return {
+      id,
+      label: fnName,
+      file,
+      visibility,
+      range: {
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+      },
+      text: node.text
+    };
+  }
+  createMethodNode(node, file) {
+    const nameNode = node.childForFieldName("name");
+    const fnName = nameNode?.text ?? "unknown";
+    const receiverType = this.extractReceiverType(node);
+    const visibility = this.extractVisibility(fnName);
+    const id = receiverType ? `${receiverType}.${fnName}` : fnName;
+    return {
+      id,
+      label: fnName,
+      file,
+      contract: receiverType,
+      visibility,
+      range: {
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+      },
+      text: node.text
+    };
+  }
+  extractReceiverType(node) {
+    const receiverNode = node.childForFieldName("receiver");
+    if (!receiverNode) return void 0;
+    const text = receiverNode.text;
+    const match = text.match(/\(\s*\w*\s*\*?\s*(\w+)\s*\)/);
+    return match?.[1];
+  }
+  extractVisibility(name2) {
+    if (name2.length === 0) return "private";
+    const firstChar = name2.charAt(0);
+    return firstChar === firstChar.toUpperCase() && firstChar !== firstChar.toLowerCase() ? "public" : "private";
+  }
+  async identifyCalls(edges, files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("go" /* Go */);
+    const parser = await service.createParser("go" /* Go */);
+    const functionQuery = new Query(lang, _GoAdapter.QUERIES.FUNCTIONS);
+    const methodQuery = new Query(lang, _GoAdapter.QUERIES.METHODS);
+    const simpleCallQuery = new Query(lang, _GoAdapter.QUERIES.SIMPLE_CALL);
+    const selectorCallQuery = new Query(lang, _GoAdapter.QUERIES.SELECTOR_CALL);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const funcCaptures = functionQuery.captures(tree.rootNode);
+      for (const capture of funcCaptures) {
+        const functionNode = capture.node;
+        const symbol = this.findSymbolAtNode(functionNode, file.path);
+        if (!symbol) continue;
+        await this.processCallsInFunction(functionNode, symbol, edges, simpleCallQuery, selectorCallQuery);
+      }
+      const methodCaptures = methodQuery.captures(tree.rootNode);
+      for (const capture of methodCaptures) {
+        const methodNode = capture.node;
+        const symbol = this.findSymbolAtNode(methodNode, file.path);
+        if (!symbol) continue;
+        await this.processCallsInFunction(methodNode, symbol, edges, simpleCallQuery, selectorCallQuery);
+      }
+    }
+  }
+  async processCallsInFunction(functionNode, caller, edges, simpleCallQuery, selectorCallQuery) {
+    const simpleCaptures = simpleCallQuery.captures(functionNode);
+    for (const capture of simpleCaptures) {
+      if (capture.name !== "FUNC") continue;
+      const callName = capture.node.text;
+      if (_GoAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
+      const callee = this.resolveSimpleCall(callName, caller);
+      if (callee && callee.id !== caller.id) {
+        this.addEdge(edges, caller.id, callee.id);
+      }
+    }
+    const selectorCaptures = selectorCallQuery.captures(functionNode);
+    for (const capture of selectorCaptures) {
+      if (capture.name !== "FUNC") continue;
+      const methodName = capture.node.text;
+      const callee = this.resolveSelectorCall(methodName, caller);
+      if (callee && callee.id !== caller.id) {
+        this.addEdge(edges, caller.id, callee.id);
+      }
+    }
+  }
+  addEdge(edges, from, to) {
+    const exists = edges.some((e) => e.from === from && e.to === to);
+    if (!exists) {
+      edges.push({ from, to, kind: "internal" });
+    }
+  }
+  resolveSimpleCall(callName, caller) {
+    const packageFuncs = this.symbolsByLabel.get(callName);
+    const packageFunc = packageFuncs?.find((n) => !n.contract);
+    if (packageFunc) return packageFunc;
+    return packageFuncs?.[0];
+  }
+  resolveSelectorCall(methodName, caller) {
+    if (caller.contract) {
+      const receiverMethods = this.symbolsByReceiver.get(caller.contract);
+      const match = receiverMethods?.find((n) => n.label === methodName);
+      if (match) return match;
+    }
+    const methods = this.symbolsByLabel.get(methodName);
+    return methods?.[0];
+  }
+  findSymbolAtNode(node, filePath) {
+    const line = node.startPosition.row + 1;
+    const col = node.startPosition.column;
+    return Array.from(this.symbolTable.values()).find(
+      (s) => s.file === filePath && s.range?.start.line === line && s.range?.start.column === col
+    );
+  }
 };
 
 // src/languages/rustAdapter.ts
 init_esm_shims();
-var RustAdapter = class extends BaseAdapter {
+var RustAdapter = class _RustAdapter extends BaseAdapter {
+  static QUERIES = {
+    IMPL_BLOCKS: `
+            (impl_item) @impl
+        `,
+    FUNCTIONS: `
+            (function_item) @function
+        `,
+    SIMPLE_CALL: `
+            (call_expression function: (identifier) @FUNC)
+        `,
+    METHOD_CALL: `
+            (call_expression function: (field_expression field: (field_identifier) @FUNC))
+        `,
+    SCOPED_CALL: `
+            (call_expression function: (scoped_identifier) @FUNC)
+        `,
+    GENERIC_CALL: `
+            (call_expression function: (generic_function function: (identifier) @FUNC))
+        `,
+    GENERIC_SCOPED_CALL: `
+            (call_expression function: (generic_function function: (scoped_identifier) @FUNC))
+        `
+  };
+  symbolTable = /* @__PURE__ */ new Map();
+  symbolsByLabel = /* @__PURE__ */ new Map();
+  symbolsByContainer = /* @__PURE__ */ new Map();
   constructor() {
     super({
       languageId: "rust" /* Rust */,
@@ -30393,25 +30616,227 @@ var RustAdapter = class extends BaseAdapter {
       },
       constants: {
         baseRateNlocPerDay: 400,
-        // Rust code often has more branches/match arms and explicit error
-        // handling; structurally busier code is normal, so midpoint is a bit
-        // higher than C++.
         complexityMidpoint: 16,
-        // Similar ramp to C++: you need to be meaningfully above midpoint
-        // before hitting the strongest penalties.
         complexitySteepness: 10,
-        // Complex Rust (async, unsafe, advanced generics) can be very slow
-        // to audit, so penalty is higher (up to ~70% extra time). Simpler
-        // Rust still gives at most ~30% speedup.
         complexityBenefitCap: 0.3,
         complexityPenaltyCap: 0.7,
-        // Invariants, lifetimes, unsafe blocks, and async semantics benefit
-        // a lot from documentation. Good comments can improve throughput by
-        // up to ~35%.
         commentFullBenefitDensity: 18,
         commentBenefitCap: 0.35
       }
     });
+  }
+  async generateCallGraph(files) {
+    this.resetState();
+    const edges = [];
+    await this.buildSymbolTable(files);
+    await this.identifyCalls(edges, files);
+    const nodes = Array.from(this.symbolTable.values());
+    return { nodes, edges };
+  }
+  resetState() {
+    this.symbolTable.clear();
+    this.symbolsByLabel.clear();
+    this.symbolsByContainer.clear();
+  }
+  indexSymbol(node) {
+    this.symbolTable.set(node.id, node);
+    const labelNodes = this.symbolsByLabel.get(node.label) || [];
+    labelNodes.push(node);
+    this.symbolsByLabel.set(node.label, labelNodes);
+    if (node.contract) {
+      const containerNodes = this.symbolsByContainer.get(node.contract) || [];
+      containerNodes.push(node);
+      this.symbolsByContainer.set(node.contract, containerNodes);
+    }
+  }
+  async buildSymbolTable(files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("rust" /* Rust */);
+    const parser = await service.createParser("rust" /* Rust */);
+    const implQuery = new Query(lang, _RustAdapter.QUERIES.IMPL_BLOCKS);
+    const functionQuery = new Query(lang, _RustAdapter.QUERIES.FUNCTIONS);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const implCaptures = implQuery.captures(tree.rootNode);
+      for (const capture of implCaptures) {
+        const implNode = capture.node;
+        const containerName = this.extractImplTypeName(implNode);
+        const bodyNode = implNode.childForFieldName("body");
+        if (bodyNode) {
+          const funcCaptures = functionQuery.captures(bodyNode);
+          for (const funcCapture of funcCaptures) {
+            const node = await this.createFunctionNode(
+              funcCapture.node,
+              file.path,
+              containerName
+            );
+            this.indexSymbol(node);
+          }
+        }
+      }
+      for (const child of tree.rootNode.children) {
+        if (child.type === "function_item") {
+          const isInImpl = implCaptures.some((c) => {
+            const body2 = c.node.childForFieldName("body");
+            return body2 && child.startIndex >= body2.startIndex && child.endIndex <= body2.endIndex;
+          });
+          if (!isInImpl) {
+            const node = await this.createFunctionNode(child, file.path);
+            this.indexSymbol(node);
+          }
+        }
+        if (child.type === "mod_item") {
+          await this.processModItem(child, file.path, functionQuery);
+        }
+      }
+    }
+  }
+  async processModItem(modNode, filePath, functionQuery) {
+    const modName = modNode.childForFieldName("name")?.text;
+    const bodyNode = modNode.childForFieldName("body");
+    if (bodyNode && modName) {
+      const funcCaptures = functionQuery.captures(bodyNode);
+      for (const funcCapture of funcCaptures) {
+        const node = await this.createFunctionNode(
+          funcCapture.node,
+          filePath,
+          modName
+        );
+        this.indexSymbol(node);
+      }
+    }
+  }
+  extractImplTypeName(implNode) {
+    const typeNode = implNode.childForFieldName("type");
+    if (typeNode) {
+      if (typeNode.type === "generic_type") {
+        const typeName = typeNode.childForFieldName("type");
+        return typeName?.text ?? typeNode.text;
+      }
+      return typeNode.text;
+    }
+    return "unknown";
+  }
+  async createFunctionNode(node, file, container) {
+    const nameNode = node.childForFieldName("name");
+    const fnName = nameNode?.text ?? "unknown";
+    const visibility = this.extractVisibility(node);
+    const id = container ? `${container}::${fnName}` : fnName;
+    return {
+      id,
+      label: fnName,
+      file,
+      contract: container,
+      visibility,
+      range: {
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+      },
+      text: node.text
+    };
+  }
+  extractVisibility(node) {
+    for (const child of node.children) {
+      if (child.type === "visibility_modifier") {
+        const text = child.text;
+        if (text === "pub") return "public";
+        if (text.startsWith("pub(crate)")) return "internal";
+        if (text.startsWith("pub(super)")) return "internal";
+        if (text.startsWith("pub(in")) return "internal";
+        return "public";
+      }
+    }
+    return "private";
+  }
+  async identifyCalls(edges, files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("rust" /* Rust */);
+    const parser = await service.createParser("rust" /* Rust */);
+    const functionQuery = new Query(lang, _RustAdapter.QUERIES.FUNCTIONS);
+    const simpleCallQuery = new Query(lang, _RustAdapter.QUERIES.SIMPLE_CALL);
+    const methodCallQuery = new Query(lang, _RustAdapter.QUERIES.METHOD_CALL);
+    const scopedCallQuery = new Query(lang, _RustAdapter.QUERIES.SCOPED_CALL);
+    const genericCallQuery = new Query(lang, _RustAdapter.QUERIES.GENERIC_CALL);
+    const genericScopedCallQuery = new Query(lang, _RustAdapter.QUERIES.GENERIC_SCOPED_CALL);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const funcCaptures = functionQuery.captures(tree.rootNode);
+      for (const capture of funcCaptures) {
+        const functionNode = capture.node;
+        const symbol = this.findSymbolAtNode(functionNode, file.path);
+        if (!symbol) continue;
+        await this.processCallQuery(simpleCallQuery, functionNode, symbol, edges, "simple");
+        await this.processCallQuery(methodCallQuery, functionNode, symbol, edges, "method");
+        await this.processCallQuery(scopedCallQuery, functionNode, symbol, edges, "scoped");
+        await this.processCallQuery(genericCallQuery, functionNode, symbol, edges, "simple");
+        await this.processCallQuery(genericScopedCallQuery, functionNode, symbol, edges, "scoped");
+      }
+    }
+  }
+  async processCallQuery(query, functionNode, caller, edges, callType) {
+    const captures = query.captures(functionNode);
+    for (const capture of captures) {
+      if (capture.name !== "FUNC") continue;
+      const callText = capture.node.text;
+      if (this.isMacroCall(capture.node)) continue;
+      const callee = this.resolveCall(callText, callType, caller);
+      if (callee && callee.id !== caller.id) {
+        const exists = edges.some((e) => e.from === caller.id && e.to === callee.id);
+        if (!exists) {
+          edges.push({
+            from: caller.id,
+            to: callee.id,
+            kind: "internal"
+          });
+        }
+      }
+    }
+  }
+  isMacroCall(node) {
+    let current = node.parent;
+    while (current) {
+      if (current.type === "macro_invocation") return true;
+      if (current.type === "call_expression") return false;
+      current = current.parent;
+    }
+    return false;
+  }
+  resolveCall(callText, callType, caller) {
+    if (callType === "scoped") {
+      const parts2 = callText.split("::");
+      const funcName = parts2[parts2.length - 1];
+      const containerName = parts2.slice(0, -1).join("::");
+      const containerFuncs = this.symbolsByContainer.get(containerName);
+      const match = containerFuncs?.find((n) => n.label === funcName);
+      if (match) return match;
+      return this.symbolsByLabel.get(funcName)?.[0];
+    }
+    if (callType === "method") {
+      if (caller.contract) {
+        const containerFuncs = this.symbolsByContainer.get(caller.contract);
+        const match = containerFuncs?.find((n) => n.label === callText);
+        if (match) return match;
+      }
+      return this.symbolsByLabel.get(callText)?.[0];
+    }
+    if (caller.contract) {
+      const containerFuncs = this.symbolsByContainer.get(caller.contract);
+      const match = containerFuncs?.find((n) => n.label === callText);
+      if (match) return match;
+    }
+    const freeFuncs = this.symbolsByLabel.get(callText);
+    const free = freeFuncs?.find((n) => !n.contract);
+    if (free) return free;
+    return this.symbolsByLabel.get(callText)?.[0];
+  }
+  findSymbolAtNode(node, filePath) {
+    const line = node.startPosition.row + 1;
+    const col = node.startPosition.column;
+    return Array.from(this.symbolTable.values()).find(
+      (s) => s.file === filePath && s.range?.start.line === line && s.range?.start.column === col
+    );
   }
 };
 

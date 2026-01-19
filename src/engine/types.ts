@@ -66,4 +66,21 @@ export interface LanguageAdapter {
     generateCallGraph(files: FileContent[]): Promise<CallGraph>;
     extractSignatures(files: FileContent[]): Promise<Record<string, string[]>>;
     calculateMetrics(files: FileContent[]): Promise<FileMetrics[]>;
+    calculateDiffMetrics(
+        file: FileContent,
+        addedLines: number[],
+        removedLines: number[],
+        status: 'added' | 'modified' | 'deleted'
+    ): Promise<DiffFileMetrics>;
+}
+
+export interface DiffFileMetrics {
+    file: string;
+    status: 'added' | 'modified' | 'deleted';
+    addedLines: number;
+    removedLines: number;
+    diffNloc: number;
+    diffComplexity: number;
+    commentDensity: number;
+    estimatedHours: number;
 }

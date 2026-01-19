@@ -15,6 +15,7 @@ import { FlowAdapter, JavaScriptAdapter, TsxAdapter, TypeScriptAdapter } from ".
 import { createPeekHandler, peekSchema } from "./tools/peek.js";
 import { createMetricsHandler, metricsSchema } from "./tools/metrics.js";
 import { createExecutionPathsHandler, executionPathsSchema } from "./tools/executionPaths.js";
+import { createDiffMetricsHandler, diffMetricsSchema } from "./tools/diffMetrics.js";
 
 // Create and configure engine
 const engine = new Engine();
@@ -55,6 +56,12 @@ server.registerTool(
     "execution_paths",
     executionPathsSchema,
     createExecutionPathsHandler(engine)
+);
+
+server.registerTool(
+    "diff_metrics",
+    diffMetricsSchema,
+    createDiffMetricsHandler(engine)
 );
 
 async function main() {

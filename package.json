@@ -24,6 +24,7 @@
     "@modelcontextprotocol/sdk": "^1.11.0",
     "@toon-format/toon": "^2.0.0",
     "fast-glob": "^3.3.3",
+    "gitdiff-parser": "^0.3.1",
     "web-tree-sitter": "^0.26.3",
     "zod": "^3.22.4"
   }

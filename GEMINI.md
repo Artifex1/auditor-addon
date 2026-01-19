@@ -8,9 +8,10 @@
 | :--- | :--- | :--- | :--- |
 | `peek` | `paths` (str[]) | `Signature[]` | Extract function signatures for quick overview. |
 | `metrics` | `paths` (str[]) | `Metrics[]` | Calculate NLoC, complexity, and effort estimates. |
+| `diff_metrics` | `base` (str), `head?` (str), `paths?` (str[]) | `DiffMetrics[]` | Calculate metrics for changes between git refs. |
 | `execution_paths` | `paths` (str[]) | `string[]` | Generate linear execution call chains from public entrypoints. |
 
-**Note:** `paths` allow for glob patterns.
+**Note:** `paths` allow for glob patterns. For `diff_metrics`, `base` and `head` are git refs (commit, branch, tag).
 **Format**: The output format of the MCP tools is Token-Oriented Object Notation (TOON).
 
 ## Skills

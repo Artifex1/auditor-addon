@@ -57,9 +57,20 @@ The metrics tool calculates code metrics:
 - **Lines with Comments**: Count of lines containing comments, including inline comments.
 - **Comment Density**: Percentage of lines that have/are comments, indicating documentation coverage.
 - **Cognitive Complexity**: Measures control flow complexity by counting branches (if, for, while, etc.) weighted by nesting depth. Deeply nested logic scores higher than flat code.
-- **Estimated Hours**: Review time estimate based on nLOC, adjusted by complexity (penalty for high, benefit for low) and comment density (benefit for well-documented code). 
+- **Estimated Hours**: Review time estimate based on nLOC, adjusted by complexity (penalty for high, benefit for low) and comment density (benefit for well-documented code).
 
 The **estimator** skill uses this tool to calculate how long it takes to perform a security audit.
+
+### 📊 `diff_metrics`
+
+Calculates metrics for code changes between two git refs (commits, branches, or tags). Useful for estimating incremental audit effort when reviewing pull requests or comparing versions.
+
+- **Added/Removed Lines**: Tracks line changes per file
+- **Diff nLOC**: Lines of code added (excluding blanks and comments)
+- **Diff Complexity**: Sum of nesting depths for changed lines (deeply nested changes score higher)
+- **Estimated Hours**: Review time for the diff, using the same estimation formula as `metrics`
+
+Deleted files are considered "free" (zero effort) since they reduce attack surface.
 
 ### 🕸️ `execution_paths`
 

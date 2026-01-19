@@ -1,4 +1,4 @@
-import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics } from "../engine/types.js";
+import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics } from "../engine/types.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
@@ -410,5 +410,178 @@ export abstract class BaseAdapter implements LanguageAdapter {
         factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
 
         return parseFloat((baseHours * factor).toFixed(2));
+    }
+
+    /**
+     * Calculates metrics for changed lines in a diff.
+     *
+     * @param file - Source file content
+     * @param addedLines - Line numbers that were added (1-indexed)
+     * @param removedLines - Line numbers that were removed (1-indexed)
+     * @param status - File status: added, modified, or deleted
+     * @returns Diff-specific metrics
+     */
+    async calculateDiffMetrics(
+        file: FileContent,
+        addedLines: number[],
+        removedLines: number[],
+        status: 'added' | 'modified' | 'deleted'
+    ): Promise<DiffFileMetrics> {
+        const {
+            baseRateNlocPerDay,
+            complexityMidpoint,
+            complexitySteepness,
+            complexityBenefitCap,
+            complexityPenaltyCap,
+            commentFullBenefitDensity,
+            commentBenefitCap
+        } = this.config.constants;
+
+        // Deleted files are free
+        if (status === 'deleted') {
+            return {
+                file: file.path,
+                status,
+                addedLines: 0,
+                removedLines: removedLines.length,
+                diffNloc: 0,
+                diffComplexity: 0,
+                commentDensity: 0,
+                estimatedHours: 0
+            };
+        }
+
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(this.languageId);
+        const parser = await service.createParser(this.languageId);
+
+        const tree = parser.parse(file.content);
+        if (!tree) {
+            return {
+                file: file.path,
+                status,
+                addedLines: addedLines.length,
+                removedLines: removedLines.length,
+                diffNloc: addedLines.length,
+                diffComplexity: 0,
+                commentDensity: 0,
+                estimatedHours: 0
+            };
+        }
+
+        const lines = file.content.split('\n');
+
+        // Calculate diff NLoC (exclude blank lines and comment-only lines from added lines)
+        const commentQuery = new Query(lang, this.config.queries.comments);
+        const commentCaptures = commentQuery.captures(tree.rootNode);
+        const commentOnlyLines = new Set<number>();
+
+        for (const capture of commentCaptures) {
+            for (let i = capture.node.startPosition.row; i <= capture.node.endPosition.row; i++) {
+                const lineNum = i + 1; // Convert to 1-indexed
+                if (lineNum < lines.length) {
+                    const lineContent = lines[i].trim();
+                    if (/^(\/\/|\/\*|\*|#|--|;;)/.test(lineContent)) {
+                        commentOnlyLines.add(lineNum);
+                    }
+                }
+            }
+        }
+
+        let diffNloc = 0;
+        let linesWithComments = 0;
+
+        for (const lineNum of addedLines) {
+            const lineIdx = lineNum - 1;
+            if (lineIdx >= 0 && lineIdx < lines.length) {
+                const lineContent = lines[lineIdx].trim();
+
+                // Skip blank lines
+                if (lineContent === '') continue;
+
+                // Skip comment-only lines for NLoC but track them
+                if (commentOnlyLines.has(lineNum)) {
+                    linesWithComments++;
+                    continue;
+                }
+
+                diffNloc++;
+            }
+        }
+
+        // Calculate diff complexity based on nesting depth of changed lines
+        const branchQuery = new Query(lang, this.config.queries.branching);
+        const branchCaptures = branchQuery.captures(tree.rootNode);
+        const branches = branchCaptures.map(c => c.node);
+
+        let diffComplexity = 0;
+        for (const lineNum of addedLines) {
+            const lineIdx = lineNum - 1;
+            if (lineIdx >= 0 && lineIdx < lines.length) {
+                const lineContent = lines[lineIdx].trim();
+                if (lineContent === '' || commentOnlyLines.has(lineNum)) continue;
+
+                // Calculate nesting depth for this line
+                const nestingDepth = this.calculateNestingDepthForLine(lineNum, branches);
+                diffComplexity += nestingDepth;
+            }
+        }
+
+        // Calculate comment density for diff
+        const commentDensity = diffNloc > 0
+            ? parseFloat(((linesWithComments / diffNloc) * 100).toFixed(2))
+            : 0;
+
+        // Calculate normalized complexity and estimated hours
+        const normalizedComplexity = diffNloc > 0 ? (diffComplexity / diffNloc) * 100 : 0;
+
+        const estimatedHours = this.calculateEstimation(
+            diffNloc,
+            normalizedComplexity,
+            commentDensity,
+            baseRateNlocPerDay,
+            complexityMidpoint,
+            complexitySteepness,
+            complexityBenefitCap,
+            complexityPenaltyCap,
+            commentFullBenefitDensity,
+            commentBenefitCap
+        );
+
+        return {
+            file: file.path,
+            status,
+            addedLines: addedLines.length,
+            removedLines: removedLines.length,
+            diffNloc,
+            diffComplexity,
+            commentDensity,
+            estimatedHours
+        };
+    }
+
+    /**
+     * Calculates the nesting depth for a specific line number.
+     * Returns the number of branching statements that contain this line.
+     *
+     * @param lineNum - 1-indexed line number
+     * @param branches - Array of branch nodes from Tree-sitter
+     * @returns Nesting depth (0 if not inside any branch)
+     */
+    private calculateNestingDepthForLine(lineNum: number, branches: Node[]): number {
+        const lineIdx = lineNum - 1; // Convert to 0-indexed for comparison
+        let depth = 0;
+
+        for (const branch of branches) {
+            const branchStartLine = branch.startPosition.row;
+            const branchEndLine = branch.endPosition.row;
+
+            // Check if line is inside this branch
+            if (lineIdx >= branchStartLine && lineIdx <= branchEndLine) {
+                depth++;
+            }
+        }
+
+        return depth;
     }
 }

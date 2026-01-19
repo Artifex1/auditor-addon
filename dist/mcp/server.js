@@ -6863,12 +6863,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name2}"`);
       return f;
     };
-    function addFormats(ajv, list, fs4, exportName) {
+    function addFormats(ajv, list, fs5, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs4[f]);
+        ajv.addFormat(f, fs5[f]);
     }
     module2.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -10289,8 +10289,8 @@ var require_utils4 = __commonJS({
     exports.array = array2;
     var errno = require_errno();
     exports.errno = errno;
-    var fs4 = require_fs();
-    exports.fs = fs4;
+    var fs5 = require_fs();
+    exports.fs = fs5;
     var path5 = require_path();
     exports.path = path5;
     var pattern = require_pattern2();
@@ -10478,12 +10478,12 @@ var require_fs2 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
-    var fs4 = __require("fs");
+    var fs5 = __require("fs");
     exports.FILE_SYSTEM_ADAPTER = {
-      lstat: fs4.lstat,
-      stat: fs4.stat,
-      lstatSync: fs4.lstatSync,
-      statSync: fs4.statSync
+      lstat: fs5.lstat,
+      stat: fs5.stat,
+      lstatSync: fs5.lstatSync,
+      statSync: fs5.statSync
     };
     function createFileSystemAdapter(fsMethods) {
       if (fsMethods === void 0) {
@@ -10501,12 +10501,12 @@ var require_settings = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var fs4 = require_fs2();
+    var fs5 = require_fs2();
     var Settings = class {
       constructor(_options = {}) {
         this._options = _options;
         this.followSymbolicLink = this._getValue(this._options.followSymbolicLink, true);
-        this.fs = fs4.createFileSystemAdapter(this._options.fs);
+        this.fs = fs5.createFileSystemAdapter(this._options.fs);
         this.markSymbolicLink = this._getValue(this._options.markSymbolicLink, false);
         this.throwErrorOnBrokenSymbolicLink = this._getValue(this._options.throwErrorOnBrokenSymbolicLink, true);
       }
@@ -10669,8 +10669,8 @@ var require_utils5 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.fs = void 0;
-    var fs4 = require_fs3();
-    exports.fs = fs4;
+    var fs5 = require_fs3();
+    exports.fs = fs5;
   }
 });
 
@@ -10869,14 +10869,14 @@ var require_fs4 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
-    var fs4 = __require("fs");
+    var fs5 = __require("fs");
     exports.FILE_SYSTEM_ADAPTER = {
-      lstat: fs4.lstat,
-      stat: fs4.stat,
-      lstatSync: fs4.lstatSync,
-      statSync: fs4.statSync,
-      readdir: fs4.readdir,
-      readdirSync: fs4.readdirSync
+      lstat: fs5.lstat,
+      stat: fs5.stat,
+      lstatSync: fs5.lstatSync,
+      statSync: fs5.statSync,
+      readdir: fs5.readdir,
+      readdirSync: fs5.readdirSync
     };
     function createFileSystemAdapter(fsMethods) {
       if (fsMethods === void 0) {
@@ -10896,12 +10896,12 @@ var require_settings2 = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var path5 = __require("path");
     var fsStat = require_out();
-    var fs4 = require_fs4();
+    var fs5 = require_fs4();
     var Settings = class {
       constructor(_options = {}) {
         this._options = _options;
         this.followSymbolicLinks = this._getValue(this._options.followSymbolicLinks, false);
-        this.fs = fs4.createFileSystemAdapter(this._options.fs);
+        this.fs = fs5.createFileSystemAdapter(this._options.fs);
         this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path5.sep);
         this.stats = this._getValue(this._options.stats, false);
         this.throwErrorOnBrokenSymbolicLink = this._getValue(this._options.throwErrorOnBrokenSymbolicLink, true);
@@ -12286,16 +12286,16 @@ var require_settings4 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_FILE_SYSTEM_ADAPTER = void 0;
-    var fs4 = __require("fs");
+    var fs5 = __require("fs");
     var os = __require("os");
     var CPU_COUNT = Math.max(os.cpus().length, 1);
     exports.DEFAULT_FILE_SYSTEM_ADAPTER = {
-      lstat: fs4.lstat,
-      lstatSync: fs4.lstatSync,
-      stat: fs4.stat,
-      statSync: fs4.statSync,
-      readdir: fs4.readdir,
-      readdirSync: fs4.readdirSync
+      lstat: fs5.lstat,
+      lstatSync: fs5.lstatSync,
+      stat: fs5.stat,
+      statSync: fs5.statSync,
+      readdir: fs5.readdir,
+      readdirSync: fs5.readdirSync
     };
     var Settings = class {
       constructor(_options = {}) {
@@ -12439,6 +12439,213 @@ var require_out4 = __commonJS({
       }
     }
     module2.exports = FastGlob;
+  }
+});
+
+// node_modules/.pnpm/gitdiff-parser@0.3.1/node_modules/gitdiff-parser/index.js
+var require_gitdiff_parser = __commonJS({
+  "node_modules/.pnpm/gitdiff-parser@0.3.1/node_modules/gitdiff-parser/index.js"(exports, module2) {
+    "use strict";
+    init_esm_shims();
+    (function(root) {
+      var STAT_START = 2;
+      var STAT_FILE_META = 3;
+      var STAT_HUNK = 5;
+      function parsePathFromFirstLine(line) {
+        var filesStr = line.slice(11);
+        var oldPath = null;
+        var newPath = null;
+        var quoteIndex = filesStr.indexOf('"');
+        switch (quoteIndex) {
+          case -1:
+            var segs = filesStr.split(" ");
+            oldPath = segs[0].slice(2);
+            newPath = segs[1].slice(2);
+            break;
+          case 0:
+            var nextQuoteIndex = filesStr.indexOf('"', 2);
+            oldPath = filesStr.slice(3, nextQuoteIndex);
+            var newQuoteIndex = filesStr.indexOf('"', nextQuoteIndex + 1);
+            if (newQuoteIndex < 0) {
+              newPath = filesStr.slice(nextQuoteIndex + 4);
+            } else {
+              newPath = filesStr.slice(newQuoteIndex + 3, -1);
+            }
+            break;
+          default:
+            var segs = filesStr.split(" ");
+            oldPath = segs[0].slice(2);
+            newPath = segs[1].slice(3, -1);
+            break;
+        }
+        return {
+          oldPath,
+          newPath
+        };
+      }
+      var parser = {
+        /**
+         * 解析 gitdiff 消息
+         *
+         * @param {string} source gitdiff消息内容
+         * @return {Object}
+         */
+        parse: function(source) {
+          var infos = [];
+          var stat = STAT_START;
+          var currentInfo;
+          var currentHunk;
+          var changeOldLine;
+          var changeNewLine;
+          var paths;
+          var lines = source.split("\n");
+          var linesLen = lines.length;
+          var i2 = 0;
+          while (i2 < linesLen) {
+            var line = lines[i2];
+            if (line.indexOf("diff --git") === 0) {
+              paths = parsePathFromFirstLine(line);
+              currentInfo = {
+                hunks: [],
+                oldEndingNewLine: true,
+                newEndingNewLine: true,
+                oldPath: paths.oldPath,
+                newPath: paths.newPath
+              };
+              infos.push(currentInfo);
+              var currentInfoType = null;
+              var simiLine;
+              simiLoop: while (simiLine = lines[++i2]) {
+                var spaceIndex = simiLine.indexOf(" ");
+                var infoType = spaceIndex > -1 ? simiLine.slice(0, spaceIndex) : infoType;
+                switch (infoType) {
+                  case "diff":
+                    i2--;
+                    break simiLoop;
+                  case "deleted":
+                  case "new":
+                    var leftStr = simiLine.slice(spaceIndex + 1);
+                    if (leftStr.indexOf("file mode") === 0) {
+                      currentInfo[infoType === "new" ? "newMode" : "oldMode"] = leftStr.slice(10);
+                    }
+                    break;
+                  case "similarity":
+                    currentInfo.similarity = parseInt(simiLine.split(" ")[2], 10);
+                    break;
+                  case "index":
+                    var segs = simiLine.slice(spaceIndex + 1).split(" ");
+                    var revs = segs[0].split("..");
+                    currentInfo.oldRevision = revs[0];
+                    currentInfo.newRevision = revs[1];
+                    if (segs[1]) {
+                      currentInfo.oldMode = currentInfo.newMode = segs[1];
+                    }
+                    break;
+                  case "copy":
+                  case "rename":
+                    var infoStr = simiLine.slice(spaceIndex + 1);
+                    if (infoStr.indexOf("from") === 0) {
+                      currentInfo.oldPath = infoStr.slice(5);
+                    } else {
+                      currentInfo.newPath = infoStr.slice(3);
+                    }
+                    currentInfoType = infoType;
+                    break;
+                  case "---":
+                    var oldPath = simiLine.slice(spaceIndex + 1);
+                    var newPath = lines[++i2].slice(4);
+                    if (oldPath === "/dev/null") {
+                      newPath = newPath.slice(2);
+                      currentInfoType = "add";
+                    } else if (newPath === "/dev/null") {
+                      oldPath = oldPath.slice(2);
+                      currentInfoType = "delete";
+                    } else {
+                      currentInfoType = "modify";
+                      oldPath = oldPath.slice(2);
+                      newPath = newPath.slice(2);
+                    }
+                    if (oldPath) {
+                      currentInfo.oldPath = oldPath;
+                    }
+                    if (newPath) {
+                      currentInfo.newPath = newPath;
+                    }
+                    stat = STAT_HUNK;
+                    break simiLoop;
+                }
+              }
+              currentInfo.type = currentInfoType || "modify";
+            } else if (line.indexOf("Binary") === 0) {
+              currentInfo.isBinary = true;
+              currentInfo.type = line.indexOf("/dev/null and") >= 0 ? "add" : line.indexOf("and /dev/null") >= 0 ? "delete" : "modify";
+              stat = STAT_START;
+              currentInfo = null;
+            } else if (stat === STAT_HUNK) {
+              if (line.indexOf("@@") === 0) {
+                var match = /^@@\s+-([0-9]+)(,([0-9]+))?\s+\+([0-9]+)(,([0-9]+))?/.exec(line);
+                currentHunk = {
+                  content: line,
+                  oldStart: match[1] - 0,
+                  newStart: match[4] - 0,
+                  oldLines: match[3] - 0 || 1,
+                  newLines: match[6] - 0 || 1,
+                  changes: []
+                };
+                currentInfo.hunks.push(currentHunk);
+                changeOldLine = currentHunk.oldStart;
+                changeNewLine = currentHunk.newStart;
+              } else {
+                var typeChar = line.slice(0, 1);
+                var change = {
+                  content: line.slice(1)
+                };
+                switch (typeChar) {
+                  case "+":
+                    change.type = "insert";
+                    change.isInsert = true;
+                    change.lineNumber = changeNewLine;
+                    changeNewLine++;
+                    break;
+                  case "-":
+                    change.type = "delete";
+                    change.isDelete = true;
+                    change.lineNumber = changeOldLine;
+                    changeOldLine++;
+                    break;
+                  case " ":
+                    change.type = "normal";
+                    change.isNormal = true;
+                    change.oldLineNumber = changeOldLine;
+                    change.newLineNumber = changeNewLine;
+                    changeOldLine++;
+                    changeNewLine++;
+                    break;
+                  case "\\":
+                    var lastChange = currentHunk.changes[currentHunk.changes.length - 1];
+                    if (!lastChange.isDelete) {
+                      currentInfo.newEndingNewLine = false;
+                    }
+                    if (!lastChange.isInsert) {
+                      currentInfo.oldEndingNewLine = false;
+                    }
+                }
+                change.type && currentHunk.changes.push(change);
+              }
+            }
+            i2++;
+          }
+          return infos;
+        }
+      };
+      if (typeof exports === "object" && typeof module2 === "object") {
+        exports = module2.exports = parser;
+      } else if (typeof define === "function" && define.amd) {
+        define("gitDiffParser", [], parser);
+      } else {
+        root.gitDiffParser = parser;
+      }
+    })(exports);
   }
 });
 
@@ -25325,8 +25532,56 @@ async function readFiles(paths, rootDir = process.cwd()) {
   return results;
 }
 
+// src/engine/gitDiff.ts
+init_esm_shims();
+import { execSync } from "child_process";
+var gitdiffParser = require_gitdiff_parser();
+function getGitDiff(base, head = "HEAD", paths, cwd = process.cwd()) {
+  const pathArgs = paths && paths.length > 0 ? ["--", ...paths] : [];
+  const args2 = ["diff", "--no-color", `${base}...${head}`, ...pathArgs];
+  let diffOutput;
+  try {
+    diffOutput = execSync(`git ${args2.join(" ")}`, {
+      cwd,
+      encoding: "utf-8",
+      maxBuffer: 50 * 1024 * 1024
+      // 50MB buffer for large diffs
+    });
+  } catch (error) {
+    if (error instanceof Error && "stdout" in error) {
+      diffOutput = error.stdout || "";
+    } else {
+      throw error;
+    }
+  }
+  if (!diffOutput.trim()) {
+    return [];
+  }
+  return gitdiffParser.parse(diffOutput);
+}
+function getChangedLineNumbers(file) {
+  const added = [];
+  const removed = [];
+  for (const hunk of file.hunks) {
+    for (const change of hunk.changes) {
+      if (change.type === "insert") {
+        added.push(change.lineNumber);
+      } else if (change.type === "delete") {
+        removed.push(change.lineNumber);
+      }
+    }
+  }
+  return { added, removed };
+}
+function getFileStatus(file) {
+  if (file.type === "add") return "added";
+  if (file.type === "delete") return "deleted";
+  return "modified";
+}
+
 // src/engine/index.ts
 import path3 from "path";
+import fs3 from "fs/promises";
 var Engine = class {
   adapters = /* @__PURE__ */ new Map();
   registerAdapter(adapter) {
@@ -25445,6 +25700,53 @@ var Engine = class {
       }
     }
     return filesByLanguage;
+  }
+  /**
+   * Processes diff metrics between two git refs.
+   *
+   * @param base - Base commit/branch/tag
+   * @param head - Head commit/branch/tag (defaults to HEAD)
+   * @param pathFilters - Optional glob patterns to filter files
+   * @param cwd - Working directory (defaults to process.cwd())
+   * @returns Array of diff metrics per file
+   */
+  async processDiffMetrics(base, head = "HEAD", pathFilters, cwd = process.cwd()) {
+    const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
+    const results = [];
+    for (const fileDiff of fileDiffs) {
+      const filePath = fileDiff.newPath || fileDiff.oldPath;
+      const lang = this.detectLanguage(filePath);
+      if (!lang) continue;
+      const adapter = this.getAdapter(lang);
+      if (!adapter) continue;
+      const { added, removed } = getChangedLineNumbers(fileDiff);
+      const status = getFileStatus(fileDiff);
+      let fileContent;
+      if (status === "deleted") {
+        fileContent = { path: filePath, content: "" };
+      } else {
+        try {
+          const absolutePath = path3.isAbsolute(filePath) ? filePath : path3.join(cwd, filePath);
+          const content = await fs3.readFile(absolutePath, "utf-8");
+          fileContent = { path: filePath, content };
+        } catch (error) {
+          console.error(`Failed to read file ${filePath}:`, error);
+          continue;
+        }
+      }
+      try {
+        const metrics = await adapter.calculateDiffMetrics(
+          fileContent,
+          added,
+          removed,
+          status
+        );
+        results.push(metrics);
+      } catch (error) {
+        console.error(`Failed to calculate diff metrics for ${filePath}:`, error);
+      }
+    }
+    return results;
   }
 };
 
@@ -29432,12 +29734,12 @@ var Query = class {
 // src/util/treeSitter.ts
 import path4 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import fs3 from "fs";
+import fs4 from "fs";
 var __filename2 = fileURLToPath2(import.meta.url);
 var __dirname2 = path4.dirname(__filename2);
 var BUNDLED_PATH = path4.join(__dirname2, "parsers");
 var DEV_PATH = path4.join(__dirname2, "..", "..", "dist", "mcp", "parsers");
-var PARSERS_DIR = fs3.existsSync(BUNDLED_PATH) ? BUNDLED_PATH : DEV_PATH;
+var PARSERS_DIR = fs4.existsSync(BUNDLED_PATH) ? BUNDLED_PATH : DEV_PATH;
 var TreeSitterService = class _TreeSitterService {
   static instance;
   initialized = false;
@@ -29470,7 +29772,7 @@ var TreeSitterService = class _TreeSitterService {
     }
     const wasmName = this.mapLanguageToWasm(lang);
     const wasmPath = path4.join(PARSERS_DIR, wasmName);
-    if (!fs3.existsSync(wasmPath)) {
+    if (!fs4.existsSync(wasmPath)) {
       throw new Error(`WASM parser not found for language ${lang} at ${wasmPath}`);
     }
     try {
@@ -29786,6 +30088,140 @@ var BaseAdapter = class {
     let factor = 1 + complexityAdjustment - commentAdjustment;
     factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
     return parseFloat((baseHours * factor).toFixed(2));
+  }
+  /**
+   * Calculates metrics for changed lines in a diff.
+   *
+   * @param file - Source file content
+   * @param addedLines - Line numbers that were added (1-indexed)
+   * @param removedLines - Line numbers that were removed (1-indexed)
+   * @param status - File status: added, modified, or deleted
+   * @returns Diff-specific metrics
+   */
+  async calculateDiffMetrics(file, addedLines, removedLines, status) {
+    const {
+      baseRateNlocPerDay,
+      complexityMidpoint,
+      complexitySteepness,
+      complexityBenefitCap,
+      complexityPenaltyCap,
+      commentFullBenefitDensity,
+      commentBenefitCap
+    } = this.config.constants;
+    if (status === "deleted") {
+      return {
+        file: file.path,
+        status,
+        addedLines: 0,
+        removedLines: removedLines.length,
+        diffNloc: 0,
+        diffComplexity: 0,
+        commentDensity: 0,
+        estimatedHours: 0
+      };
+    }
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage(this.languageId);
+    const parser = await service.createParser(this.languageId);
+    const tree = parser.parse(file.content);
+    if (!tree) {
+      return {
+        file: file.path,
+        status,
+        addedLines: addedLines.length,
+        removedLines: removedLines.length,
+        diffNloc: addedLines.length,
+        diffComplexity: 0,
+        commentDensity: 0,
+        estimatedHours: 0
+      };
+    }
+    const lines = file.content.split("\n");
+    const commentQuery = new Query(lang, this.config.queries.comments);
+    const commentCaptures = commentQuery.captures(tree.rootNode);
+    const commentOnlyLines = /* @__PURE__ */ new Set();
+    for (const capture of commentCaptures) {
+      for (let i2 = capture.node.startPosition.row; i2 <= capture.node.endPosition.row; i2++) {
+        const lineNum = i2 + 1;
+        if (lineNum < lines.length) {
+          const lineContent = lines[i2].trim();
+          if (/^(\/\/|\/\*|\*|#|--|;;)/.test(lineContent)) {
+            commentOnlyLines.add(lineNum);
+          }
+        }
+      }
+    }
+    let diffNloc = 0;
+    let linesWithComments = 0;
+    for (const lineNum of addedLines) {
+      const lineIdx = lineNum - 1;
+      if (lineIdx >= 0 && lineIdx < lines.length) {
+        const lineContent = lines[lineIdx].trim();
+        if (lineContent === "") continue;
+        if (commentOnlyLines.has(lineNum)) {
+          linesWithComments++;
+          continue;
+        }
+        diffNloc++;
+      }
+    }
+    const branchQuery = new Query(lang, this.config.queries.branching);
+    const branchCaptures = branchQuery.captures(tree.rootNode);
+    const branches = branchCaptures.map((c) => c.node);
+    let diffComplexity = 0;
+    for (const lineNum of addedLines) {
+      const lineIdx = lineNum - 1;
+      if (lineIdx >= 0 && lineIdx < lines.length) {
+        const lineContent = lines[lineIdx].trim();
+        if (lineContent === "" || commentOnlyLines.has(lineNum)) continue;
+        const nestingDepth = this.calculateNestingDepthForLine(lineNum, branches);
+        diffComplexity += nestingDepth;
+      }
+    }
+    const commentDensity = diffNloc > 0 ? parseFloat((linesWithComments / diffNloc * 100).toFixed(2)) : 0;
+    const normalizedComplexity = diffNloc > 0 ? diffComplexity / diffNloc * 100 : 0;
+    const estimatedHours = this.calculateEstimation(
+      diffNloc,
+      normalizedComplexity,
+      commentDensity,
+      baseRateNlocPerDay,
+      complexityMidpoint,
+      complexitySteepness,
+      complexityBenefitCap,
+      complexityPenaltyCap,
+      commentFullBenefitDensity,
+      commentBenefitCap
+    );
+    return {
+      file: file.path,
+      status,
+      addedLines: addedLines.length,
+      removedLines: removedLines.length,
+      diffNloc,
+      diffComplexity,
+      commentDensity,
+      estimatedHours
+    };
+  }
+  /**
+   * Calculates the nesting depth for a specific line number.
+   * Returns the number of branching statements that contain this line.
+   *
+   * @param lineNum - 1-indexed line number
+   * @param branches - Array of branch nodes from Tree-sitter
+   * @returns Nesting depth (0 if not inside any branch)
+   */
+  calculateNestingDepthForLine(lineNum, branches) {
+    const lineIdx = lineNum - 1;
+    let depth = 0;
+    for (const branch of branches) {
+      const branchStartLine = branch.startPosition.row;
+      const branchEndLine = branch.endPosition.row;
+      if (lineIdx >= branchStartLine && lineIdx <= branchEndLine) {
+        depth++;
+      }
+    }
+    return depth;
   }
 };
 
@@ -31624,6 +32060,69 @@ function resolvePaths(currentId, graph, depth, stack) {
   return paths;
 }
 
+// src/mcp/tools/diffMetrics.ts
+init_esm_shims();
+var diffMetricsSchema = {
+  description: "Calculate code metrics for changes between two git refs (commits, branches, or tags)",
+  inputSchema: {
+    base: external_exports.string().describe("Base git ref (commit SHA, branch, or tag)"),
+    head: external_exports.string().optional().describe("Head git ref (defaults to HEAD)"),
+    paths: external_exports.array(external_exports.string()).optional().describe("Optional file paths or glob patterns to filter")
+  }
+};
+function createDiffMetricsHandler(engine2) {
+  return async ({ base, head, paths }) => {
+    try {
+      const metrics = await engine2.processDiffMetrics(
+        base,
+        head || "HEAD",
+        paths
+      );
+      const summary = metrics.reduce((acc, curr) => {
+        acc.totalAddedLines += curr.addedLines;
+        acc.totalRemovedLines += curr.removedLines;
+        acc.totalDiffNloc += curr.diffNloc;
+        acc.totalDiffComplexity += curr.diffComplexity;
+        acc.totalHours += curr.estimatedHours;
+        return acc;
+      }, {
+        totalAddedLines: 0,
+        totalRemovedLines: 0,
+        totalDiffNloc: 0,
+        totalDiffComplexity: 0,
+        totalHours: 0
+      });
+      summary.totalHours = parseFloat(summary.totalHours.toFixed(2));
+      const totalDays = parseFloat((summary.totalHours / 8).toFixed(2));
+      const filesByStatus = metrics.reduce((acc, curr) => {
+        acc[curr.status] = (acc[curr.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        content: [{
+          type: "text",
+          text: encode({
+            diffMetrics: metrics,
+            summary: {
+              ...summary,
+              totalDays,
+              filesChanged: metrics.length,
+              filesByStatus
+            }
+          })
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`
+        }]
+      };
+    }
+  };
+}
+
 // src/mcp/server.ts
 var engine = new Engine();
 engine.registerAdapter(new SolidityAdapter());
@@ -31658,6 +32157,11 @@ server.registerTool(
   "execution_paths",
   executionPathsSchema,
   createExecutionPathsHandler(engine)
+);
+server.registerTool(
+  "diff_metrics",
+  diffMetricsSchema,
+  createDiffMetricsHandler(engine)
 );
 async function main() {
   const transport = new StdioServerTransport();

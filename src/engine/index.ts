@@ -1,6 +1,8 @@
-import { SupportedLanguage, FileContent, CallGraph, FileMetrics, LanguageAdapter } from "./types.js";
+import { SupportedLanguage, FileContent, CallGraph, FileMetrics, DiffFileMetrics, LanguageAdapter } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
+import { getGitDiff, getChangedLineNumbers, getFileStatus } from "./gitDiff.js";
 import path from "path";
+import fs from "fs/promises";
 export * from "./types.js";
 
 export class Engine {
@@ -132,5 +134,68 @@ export class Engine {
             }
         }
         return filesByLanguage;
+    }
+
+    /**
+     * Processes diff metrics between two git refs.
+     *
+     * @param base - Base commit/branch/tag
+     * @param head - Head commit/branch/tag (defaults to HEAD)
+     * @param pathFilters - Optional glob patterns to filter files
+     * @param cwd - Working directory (defaults to process.cwd())
+     * @returns Array of diff metrics per file
+     */
+    async processDiffMetrics(
+        base: string,
+        head: string = 'HEAD',
+        pathFilters?: string[],
+        cwd: string = process.cwd()
+    ): Promise<DiffFileMetrics[]> {
+        const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
+        const results: DiffFileMetrics[] = [];
+
+        for (const fileDiff of fileDiffs) {
+            const filePath = fileDiff.newPath || fileDiff.oldPath;
+            const lang = this.detectLanguage(filePath);
+
+            if (!lang) continue;
+
+            const adapter = this.getAdapter(lang);
+            if (!adapter) continue;
+
+            const { added, removed } = getChangedLineNumbers(fileDiff);
+            const status = getFileStatus(fileDiff);
+
+            // Read file content (for non-deleted files)
+            let fileContent: FileContent;
+            if (status === 'deleted') {
+                fileContent = { path: filePath, content: '' };
+            } else {
+                try {
+                    const absolutePath = path.isAbsolute(filePath)
+                        ? filePath
+                        : path.join(cwd, filePath);
+                    const content = await fs.readFile(absolutePath, 'utf-8');
+                    fileContent = { path: filePath, content };
+                } catch (error) {
+                    console.error(`Failed to read file ${filePath}:`, error);
+                    continue;
+                }
+            }
+
+            try {
+                const metrics = await adapter.calculateDiffMetrics(
+                    fileContent,
+                    added,
+                    removed,
+                    status
+                );
+                results.push(metrics);
+            } catch (error) {
+                console.error(`Failed to calculate diff metrics for ${filePath}:`, error);
+            }
+        }
+
+        return results;
     }
 }

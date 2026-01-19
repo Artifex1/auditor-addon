@@ -1,0 +1,7 @@
+---
+description: "Stage 1: Map out a set of files/components for analysis."
+---
+
+Use the `security-auditor` skill to perform the **Map** capability.
+
+Task: Build a precise system map for the codebase. $ARGUMENTS

@@ -25347,6 +25347,17 @@ var Engine = class {
       case ".c":
       case ".h":
         return "cpp" /* Cpp */;
+      case ".js":
+      case ".jsx":
+      case ".mjs":
+      case ".cjs":
+        return "javascript" /* JavaScript */;
+      case ".ts":
+        return "typescript" /* TypeScript */;
+      case ".tsx":
+        return "tsx" /* Tsx */;
+      case ".flow":
+        return "flow" /* Flow */;
       case ".java":
         return "java" /* Java */;
       case ".go":
@@ -25366,26 +25377,6 @@ var Engine = class {
       default:
         return void 0;
     }
-  }
-  async processEntrypoints(patterns) {
-    const filePaths = await resolveFiles(patterns);
-    const files = await readFiles(filePaths);
-    const filesByLanguage = this.groupFilesByLanguage(files);
-    const allEntrypoints = [];
-    for (const [lang, langFiles] of filesByLanguage.entries()) {
-      const adapter = this.getAdapter(lang);
-      if (adapter) {
-        try {
-          const entrypoints = await adapter.extractEntrypoints(langFiles);
-          allEntrypoints.push(...entrypoints);
-        } catch (error) {
-          console.error(`Failed to extract entrypoints for ${lang}:`, error);
-        }
-      } else {
-        console.warn(`No adapter found for language: ${lang}`);
-      }
-    }
-    return allEntrypoints;
   }
   async processSignatures(patterns) {
     const filePaths = await resolveFiles(patterns);
@@ -29511,6 +29502,14 @@ var TreeSitterService = class _TreeSitterService {
         return "tree-sitter-rust.wasm";
       case "cpp" /* Cpp */:
         return "tree-sitter-cpp.wasm";
+      case "javascript" /* JavaScript */:
+        return "tree-sitter-javascript.wasm";
+      case "typescript" /* TypeScript */:
+        return "tree-sitter-typescript.wasm";
+      case "tsx" /* Tsx */:
+        return "tree-sitter-tsx.wasm";
+      case "flow" /* Flow */:
+        return "tree-sitter-flow.wasm";
       case "cairo" /* Cairo */:
         return "tree-sitter-cairo.wasm";
       case "compact" /* Compact */:
@@ -29537,15 +29536,33 @@ var BaseAdapter = class {
     this.languageId = config2.languageId;
     this.config = config2;
   }
+  /**
+   * Normalizes a function signature by cleaning up whitespace.
+   * Converts multi-line signatures to single line with consistent spacing.
+   * 
+   * @param raw - Raw signature string
+   * @returns Cleaned signature string
+   */
   cleanSignature(raw) {
     return raw.replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/\s*,\s*/g, ", ").trim();
   }
-  async extractEntrypoints(files) {
-    return [];
-  }
+  /**
+   * Generates a call graph for the source files.
+   * Default implementation returns empty graph - override in language-specific adapters.
+   * 
+   * @param files - Array of source files to analyze
+   * @returns Call graph with nodes and edges
+   */
   async generateCallGraph(files) {
     return { nodes: [], edges: [] };
   }
+  /**
+   * Extracts function signatures from source files.
+   * Returns signatures without function bodies, truncated to 80 characters.
+   * 
+   * @param files - Array of source files to analyze
+   * @returns Map of file paths to arrays of function signatures
+   */
   async extractSignatures(files) {
     const signaturesByFile = {};
     const service = TreeSitterService.getInstance();
@@ -29577,11 +29594,19 @@ var BaseAdapter = class {
           signaturesByFile[file.path] = signatures;
         }
       } catch (e) {
-        console.error(`Error extracting signatures for ${file.path}:`, e);
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error(`Error extracting signatures for ${file.path}: ${errorMessage}`);
       }
     }
     return signaturesByFile;
   }
+  /**
+   * Calculates code metrics for source files.
+   * Computes NLoC, complexity, comment density, and estimated review time.
+   * 
+   * @param files - Array of source files to analyze
+   * @returns Array of file metrics
+   */
   async calculateMetrics(files) {
     const results = [];
     const {
@@ -29604,104 +29629,198 @@ var BaseAdapter = class {
       const totalLines = lines.length;
       const tree = parser.parse(file.content);
       if (!tree) continue;
-      const commentLinesSet = /* @__PURE__ */ new Set();
-      let onlyCommentLinesCount = 0;
-      const commentCaptures = commentQuery.captures(tree.rootNode);
-      for (const capture of commentCaptures) {
-        for (let i2 = capture.node.startPosition.row; i2 <= capture.node.endPosition.row; i2++) {
-          commentLinesSet.add(i2);
-        }
-      }
-      const linesWithComments = commentLinesSet.size;
-      for (const lineIdx of commentLinesSet) {
-        if (lineIdx >= lines.length) continue;
-        const lineContent = lines[lineIdx].trim();
-        if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
-          onlyCommentLinesCount++;
-        }
-      }
-      const branchCaptures = branchQuery.captures(tree.rootNode);
-      let cc = 0;
-      const branches = branchCaptures.map((c) => c.node);
-      for (const branch of branches) {
-        let nestingLevel = 0;
-        for (const other of branches) {
-          if (branch === other) continue;
-          const isInside = other.startIndex <= branch.startIndex && other.endIndex >= branch.endIndex && (other.startIndex < branch.startIndex || other.endIndex > branch.endIndex);
-          if (isInside) {
-            nestingLevel++;
-          }
-        }
-        cc += 1 + nestingLevel;
-      }
-      let blankLines = 0;
-      for (const line of lines) {
-        if (line.trim() === "") {
-          blankLines++;
-        }
-      }
-      let normalizationAdjustment = 0;
-      if (normQuery) {
-        const normCaptures = normQuery.captures(tree.rootNode);
-        const allConstructs = normCaptures.map((c) => ({ node: c.node, name: c.name }));
-        const topLevelConstructs = allConstructs.filter((construct) => {
-          const isNested = allConstructs.some((other) => {
-            if (construct === other) return false;
-            const isOtherFunction = other.name.includes("function") || other.name.includes("method") || other.node.type.includes("function") || other.node.type.includes("method");
-            if (isOtherFunction) {
-              const bodyNode = other.node.childForFieldName("body") || other.node.children.find((c) => c.type.includes("body") || c.type === "block");
-              if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
-                return false;
-              }
-            }
-            return other.node.startIndex <= construct.node.startIndex && other.node.endIndex >= construct.node.endIndex && (other.node.startIndex < construct.node.startIndex || other.node.endIndex > construct.node.endIndex);
-          });
-          return !isNested;
-        });
-        for (const construct of topLevelConstructs) {
-          let startLine = construct.node.startPosition.row;
-          let endLine = construct.node.endPosition.row;
-          const isFunction = construct.name.includes("function") || construct.name.includes("method") || construct.node.type.includes("function") || construct.node.type.includes("method");
-          if (isFunction) {
-            const bodyNode = construct.node.childForFieldName("body") || construct.node.children.find((c) => c.type.includes("body") || c.type === "block");
-            if (bodyNode) {
-              endLine = bodyNode.startPosition.row - 1;
-            }
-          }
-          const linesSpanned = endLine - startLine + 1;
-          if (linesSpanned > 1) {
-            normalizationAdjustment += linesSpanned - 1;
-          }
-        }
-      }
+      const { linesWithComments, onlyCommentLinesCount } = this.calculateCommentMetrics(
+        commentQuery,
+        tree.rootNode,
+        lines
+      );
+      const cognitiveComplexity = this.calculateCognitiveComplexity(branchQuery, tree.rootNode);
+      const blankLines = lines.filter((line) => line.trim() === "").length;
+      const normalizationAdjustment = normQuery ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode, file.content) : 0;
       const nloc = Math.max(0, totalLines - blankLines - onlyCommentLinesCount - normalizationAdjustment);
       const commentDensity = nloc > 0 ? parseFloat((linesWithComments / nloc * 100).toFixed(2)) : 0;
-      const normalizedCC = nloc > 0 ? cc / nloc * 100 : 0;
-      const baseHours = nloc / baseRateNlocPerDay * 8;
-      const ccDelta = normalizedCC - complexityMidpoint;
-      const ccShape = Math.tanh(ccDelta / complexitySteepness);
-      const ccAdjustment = ccShape >= 0 ? ccShape * complexityPenaltyCap : ccShape * complexityBenefitCap;
-      const cdProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
-      const cdShape = Math.tanh(cdProgress * 2.646);
-      const cdAdjustment = cdShape * commentBenefitCap;
-      let factor = 1 + ccAdjustment - cdAdjustment;
-      factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
-      const estimatedHours = parseFloat((baseHours * factor).toFixed(2));
+      const normalizedComplexity = nloc > 0 ? cognitiveComplexity / nloc * 100 : 0;
+      const estimatedHours = this.calculateEstimation(
+        nloc,
+        normalizedComplexity,
+        commentDensity,
+        baseRateNlocPerDay,
+        complexityMidpoint,
+        complexitySteepness,
+        complexityBenefitCap,
+        complexityPenaltyCap,
+        commentFullBenefitDensity,
+        commentBenefitCap
+      );
       results.push({
         file: file.path,
         nloc,
         linesWithComments,
         commentDensity,
-        cognitiveComplexity: cc,
+        cognitiveComplexity,
         estimatedHours
       });
     }
     return results;
   }
+  /**
+   * Calculates comment-related metrics for a file.
+   * 
+   * @param commentQuery - Tree-sitter query for matching comments
+   * @param rootNode - Root node of the syntax tree
+   * @param lines - Array of file lines
+   * @returns Object with linesWithComments and onlyCommentLinesCount
+   */
+  calculateCommentMetrics(commentQuery, rootNode, lines) {
+    const commentLinesSet = /* @__PURE__ */ new Set();
+    let onlyCommentLinesCount = 0;
+    const commentCaptures = commentQuery.captures(rootNode);
+    for (const capture of commentCaptures) {
+      for (let i2 = capture.node.startPosition.row; i2 <= capture.node.endPosition.row; i2++) {
+        commentLinesSet.add(i2);
+      }
+    }
+    const linesWithComments = commentLinesSet.size;
+    for (const lineIdx of commentLinesSet) {
+      if (lineIdx >= lines.length) continue;
+      const lineContent = lines[lineIdx].trim();
+      if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
+        onlyCommentLinesCount++;
+      }
+    }
+    return { linesWithComments, onlyCommentLinesCount };
+  }
+  /**
+   * Calculates cognitive complexity based on branching statements and nesting.
+   * Nested branches contribute more to complexity.
+   * 
+   * @param branchQuery - Tree-sitter query for matching branching statements
+   * @param rootNode - Root node of the syntax tree
+   * @returns Cognitive complexity score
+   */
+  calculateCognitiveComplexity(branchQuery, rootNode) {
+    const branchCaptures = branchQuery.captures(rootNode);
+    let cognitiveComplexity = 0;
+    const branches = branchCaptures.map((c) => c.node);
+    for (const branch of branches) {
+      let nestingLevel = 0;
+      for (const other of branches) {
+        if (branch === other) continue;
+        const isInside = other.startIndex <= branch.startIndex && other.endIndex >= branch.endIndex && (other.startIndex < branch.startIndex || other.endIndex > branch.endIndex);
+        if (isInside) {
+          nestingLevel++;
+        }
+      }
+      cognitiveComplexity += 1 + nestingLevel;
+    }
+    return cognitiveComplexity;
+  }
+  /**
+   * Calculates the normalization adjustment for NLoC.
+   * Multi-line constructs (like function signatures) are normalized to single lines.
+   * 
+   * @param normQuery - Tree-sitter query for normalization constructs
+   * @param rootNode - Root node of the syntax tree
+   * @param fileContent - Full file content
+   * @returns Number of lines to subtract from total
+   */
+  calculateNormalizationAdjustment(normQuery, rootNode, fileContent) {
+    const normCaptures = normQuery.captures(rootNode);
+    const allConstructs = normCaptures.map((c) => ({ node: c.node, name: c.name }));
+    const topLevelConstructs = allConstructs.filter((construct) => {
+      const isNested = allConstructs.some((other) => {
+        if (construct === other) return false;
+        const isOtherFunction = other.name.includes("function") || other.name.includes("method") || other.node.type.includes("function") || other.node.type.includes("method");
+        if (isOtherFunction) {
+          const bodyNode = other.node.childForFieldName("body") || other.node.children.find((c) => c.type.includes("body") || c.type === "block");
+          if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
+            return false;
+          }
+        }
+        return other.node.startIndex <= construct.node.startIndex && other.node.endIndex >= construct.node.endIndex && (other.node.startIndex < construct.node.startIndex || other.node.endIndex > construct.node.endIndex);
+      });
+      return !isNested;
+    });
+    let normalizationAdjustment = 0;
+    for (const construct of topLevelConstructs) {
+      let startLine = construct.node.startPosition.row;
+      let endLine = construct.node.endPosition.row;
+      const isFunction = construct.name.includes("function") || construct.name.includes("method") || construct.node.type.includes("function") || construct.node.type.includes("method");
+      if (isFunction) {
+        const bodyNode = construct.node.childForFieldName("body") || construct.node.children.find((c) => c.type.includes("body") || c.type === "block");
+        if (bodyNode) {
+          endLine = bodyNode.startPosition.row - 1;
+        }
+      }
+      const linesSpanned = endLine - startLine + 1;
+      if (linesSpanned > 1) {
+        normalizationAdjustment += linesSpanned - 1;
+      }
+    }
+    return normalizationAdjustment;
+  }
+  /**
+   * Calculates estimated review time based on NLoC, complexity, and documentation.
+   * Uses a tanh-based formula to apply complexity penalties and documentation benefits.
+   * 
+   * @param nloc - Normalized lines of code
+   * @param normalizedComplexity - Complexity per 100 NLoC
+   * @param commentDensity - Percentage of lines with comments
+   * @param baseRateNlocPerDay - Base review rate
+   * @param complexityMidpoint - Neutral complexity level
+   * @param complexitySteepness - How quickly complexity impacts time
+   * @param complexityBenefitCap - Max benefit from low complexity
+   * @param complexityPenaltyCap - Max penalty from high complexity
+   * @param commentFullBenefitDensity - Comment density for full benefit
+   * @param commentBenefitCap - Max benefit from documentation
+   * @returns Estimated hours
+   */
+  calculateEstimation(nloc, normalizedComplexity, commentDensity, baseRateNlocPerDay, complexityMidpoint, complexitySteepness, complexityBenefitCap, complexityPenaltyCap, commentFullBenefitDensity, commentBenefitCap) {
+    const baseHours = nloc / baseRateNlocPerDay * 8;
+    const complexityDelta = normalizedComplexity - complexityMidpoint;
+    const complexityShape = Math.tanh(complexityDelta / complexitySteepness);
+    const complexityAdjustment = complexityShape >= 0 ? complexityShape * complexityPenaltyCap : complexityShape * complexityBenefitCap;
+    const commentDensityProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
+    const commentShape = Math.tanh(commentDensityProgress * 2.646);
+    const commentAdjustment = commentShape * commentBenefitCap;
+    let factor = 1 + complexityAdjustment - commentAdjustment;
+    factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
+    return parseFloat((baseHours * factor).toFixed(2));
+  }
 };
 
 // src/languages/solidityAdapter.ts
 var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
+  // Tree-sitter query strings
+  static QUERIES = {
+    CONTAINERS: `
+            [(contract_declaration) (interface_declaration) (library_declaration)] @container
+        `,
+    INHERITANCE: `
+            (inheritance_specifier ancestor: (user_defined_type (identifier) @parent))
+        `,
+    USING_FOR: `
+            (using_directive (type_alias (identifier) @lib))
+        `,
+    FUNCTIONS: `
+            [(function_definition) (fallback_receive_definition)] @function
+        `,
+    SUPER_CALL: `
+            (call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))
+        `,
+    THIS_CALL: `
+            (call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "this") property: (identifier) @FUNC)))
+        `,
+    MEMBER_CALL: `
+            (call_expression function: (expression (member_expression object: (_) @RECV property: (identifier) @FUNC)))
+        `,
+    SIMPLE_CALL: `
+            (call_expression function: (expression (identifier) @FUNC))
+        `,
+    ASSEMBLY_CALL: `
+            (yul_function_call function: (yul_identifier) @FUNC)
+        `
+  };
   constructor() {
     super({
       languageId: "solidity" /* Solidity */,
@@ -29754,18 +29873,14 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   symbolsByContract = /* @__PURE__ */ new Map();
   symbolsByLabel = /* @__PURE__ */ new Map();
   static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set(["require", "assert", "revert", "emit"]);
-  async extractEntrypoints(files) {
-    this.resetState();
-    await this.buildSymbolTable(files);
-    return Array.from(this.symbolTable.values()).filter((node) => node.visibility === "public" || node.visibility === "external").map((node) => ({
-      file: node.file,
-      contract: node.contract || "Unknown",
-      name: node.label,
-      signature: this.cleanSignature(node.id.includes(".") ? node.id.split(".").pop() : node.id),
-      visibility: node.visibility,
-      id: node.id
-    }));
-  }
+  /**
+   * Generates a complete call graph for Solidity contracts.
+   * Includes nodes for all functions and edges representing function calls.
+   * Handles inheritance, super calls, library usage, and assembly calls.
+   * 
+   * @param files - Array of Solidity source files to analyze
+   * @returns Call graph with nodes and edges
+   */
   async generateCallGraph(files) {
     this.resetState();
     const edges = [];
@@ -29774,6 +29889,10 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const nodes = Array.from(this.symbolTable.values());
     return { nodes, edges };
   }
+  /**
+   * Resets all internal state (symbol table, inheritance graph, etc.).
+   * Called at the start of each analysis operation.
+   */
   resetState() {
     this.symbolTable.clear();
     this.inheritanceGraph.clear();
@@ -29781,6 +29900,11 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     this.symbolsByContract.clear();
     this.symbolsByLabel.clear();
   }
+  /**
+   * Indexes a symbol in the symbol table and optimization indices.
+   * 
+   * @param node - GraphNode to index
+   */
   indexSymbol(node) {
     this.symbolTable.set(node.id, node);
     if (node.contract) {
@@ -29799,34 +29923,39 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("solidity" /* Solidity */);
     const parser = await service.createParser("solidity" /* Solidity */);
-    const functionQuery = new Query(lang, `
-            [(function_definition) (fallback_receive_definition)] @function
-        `);
+    const functionQuery = new Query(lang, _SolidityAdapter.QUERIES.FUNCTIONS);
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
       const captures = functionQuery.captures(tree.rootNode);
       for (const capture of captures) {
-        const fnNode = capture.node;
-        const symbol = this.findSymbolAtNode(fnNode, file.path);
+        const functionNode = capture.node;
+        const symbol = this.findSymbolAtNode(functionNode, file.path);
         if (!symbol) continue;
-        await this.processCallType(fnNode, symbol, edges, {
+        await this.processCallType(functionNode, symbol, edges, {
           callType: 3 /* Super */
         });
-        await this.processCallType(fnNode, symbol, edges, {
+        await this.processCallType(functionNode, symbol, edges, {
           callType: 1 /* Member */,
           extractMember: true
         });
-        await this.processCallType(fnNode, symbol, edges, {
+        await this.processCallType(functionNode, symbol, edges, {
           callType: 2 /* This */
         });
-        await this.processCallType(fnNode, symbol, edges, {
+        await this.processCallType(functionNode, symbol, edges, {
           callType: 0 /* Simple */
         });
-        await this.processAssemblyCalls(fnNode, symbol, edges);
+        await this.processAssemblyCalls(functionNode, symbol, edges);
       }
     }
   }
+  /**
+   * Finds a GraphNode in the symbol table matching a tree-sitter node's position.
+   * 
+   * @param node - Tree-sitter node to locate
+   * @param filePath - File path containing the node
+   * @returns Matching GraphNode or undefined
+   */
   findSymbolAtNode(node, filePath) {
     const line = node.startPosition.row + 1;
     const col = node.startPosition.column;
@@ -29834,27 +29963,50 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       (s) => s.file === filePath && s.range?.start.line === line && s.range?.start.column === col
     );
   }
-  async processCallType(tsNode, symbol, edges, config2) {
+  /**
+   * Processes function calls of a specific type within a function node.
+   * 
+   * @param functionNode - The tree-sitter node representing the function
+   * @param symbol - The GraphNode representing this function in the symbol table
+   * @param edges - Array to collect discovered call edges
+   * @param callConfig - Configuration specifying the call type and options
+   */
+  async processCallType(functionNode, symbol, edges, callConfig) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("solidity" /* Solidity */);
-    const querySource = config2.callType === 3 /* Super */ ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))' : config2.callType === 2 /* This */ ? '(call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "this") property: (identifier) @FUNC)))' : config2.callType === 1 /* Member */ ? "(call_expression function: (expression (member_expression object: (_) @RECV property: (identifier) @FUNC)))" : "(call_expression function: (expression (identifier) @FUNC))";
+    const querySource = this.getQueryForCallType(callConfig.callType);
     const query = new Query(lang, querySource);
-    const matches = query.matches(tsNode);
+    const matches = query.matches(functionNode);
     for (const match of matches) {
-      const funcCapture = match.captures.find((c) => c.name === "FUNC");
-      if (!funcCapture) continue;
-      const funcName = funcCapture.node.text;
+      const functionCapture = match.captures.find((c) => c.name === "FUNC");
+      if (!functionCapture) continue;
+      const funcName = functionCapture.node.text;
       let memberName;
-      if (config2.extractMember) {
+      if (callConfig.extractMember) {
         const recvCapture = match.captures.find((c) => c.name === "RECV");
         memberName = recvCapture?.node.text;
       }
-      if (this.shouldSkipCall(funcName, memberName, config2.callType)) continue;
-      const calleeNode = this.resolveCallNode(config2.callType, funcName, memberName, symbol);
+      if (this.shouldSkipCall(funcName, memberName, callConfig.callType)) continue;
+      const calleeNode = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
       if (calleeNode) {
-        const kind = this.determineEdgeKind(config2.callType, calleeNode);
+        const kind = this.determineEdgeKind(callConfig.callType, calleeNode);
         edges.push({ from: symbol.id, to: calleeNode.id, kind });
       }
+    }
+  }
+  /**
+   * Returns the appropriate tree-sitter query string for a given call type.
+   */
+  getQueryForCallType(callType) {
+    switch (callType) {
+      case 3 /* Super */:
+        return _SolidityAdapter.QUERIES.SUPER_CALL;
+      case 2 /* This */:
+        return _SolidityAdapter.QUERIES.THIS_CALL;
+      case 1 /* Member */:
+        return _SolidityAdapter.QUERIES.MEMBER_CALL;
+      case 0 /* Simple */:
+        return _SolidityAdapter.QUERIES.SIMPLE_CALL;
     }
   }
   determineEdgeKind(callType, callee) {
@@ -29868,11 +30020,11 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     }
     return "external";
   }
-  async processAssemblyCalls(tsNode, symbol, edges) {
+  async processAssemblyCalls(functionNode, symbol, edges) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("solidity" /* Solidity */);
-    const query = new Query(lang, "(yul_function_call function: (yul_identifier) @FUNC)");
-    const captures = query.captures(tsNode);
+    const query = new Query(lang, _SolidityAdapter.QUERIES.ASSEMBLY_CALL);
+    const captures = query.captures(functionNode);
     for (const capture of captures) {
       const callName = capture.node.text;
       const calleeNode = this.resolveCallNode(0 /* Simple */, callName, void 0, symbol);
@@ -29949,22 +30101,20 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     }
     return void 0;
   }
+  /**
+   * Builds the complete symbol table for all contracts, interfaces, and libraries.
+   * Also populates inheritance and using-for mappings.
+   * 
+   * @param files - Array of Solidity source files to analyze
+   */
   async buildSymbolTable(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("solidity" /* Solidity */);
     const parser = await service.createParser("solidity" /* Solidity */);
-    const containerQuery = new Query(lang, `
-            [(contract_declaration) (interface_declaration) (library_declaration)] @container
-        `);
-    const inheritanceQuery = new Query(lang, `
-            (inheritance_specifier ancestor: (user_defined_type (identifier) @parent))
-        `);
-    const usingQuery = new Query(lang, `
-            (using_directive (type_alias (identifier) @lib))
-        `);
-    const functionQuery = new Query(lang, `
-            [(function_definition) (fallback_receive_definition)] @function
-        `);
+    const containerQuery = new Query(lang, _SolidityAdapter.QUERIES.CONTAINERS);
+    const inheritanceQuery = new Query(lang, _SolidityAdapter.QUERIES.INHERITANCE);
+    const usingQuery = new Query(lang, _SolidityAdapter.QUERIES.USING_FOR);
+    const functionQuery = new Query(lang, _SolidityAdapter.QUERIES.FUNCTIONS);
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
@@ -30000,6 +30150,16 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       }
     }
   }
+  /**
+   * Creates a GraphNode from a tree-sitter function node.
+   * Handles regular functions, fallback, and receive functions.
+   * 
+   * @param node - Tree-sitter node representing the function
+   * @param file - File path containing this function
+   * @param containerKind - Type of container (contract, interface, library)
+   * @param contract - Name of the containing contract
+   * @returns GraphNode representing this function
+   */
   async createFunctionNode(node, file, containerKind, contract) {
     let fnName = "unknown";
     let params = "";
@@ -30015,13 +30175,9 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         if (child.type === "parameter") {
           paramTexts.push(child.text);
         }
-        if (child.type === "visibility") {
-          visibility = child.text;
-        }
       }
       params = paramTexts.join(", ");
-      if (!visibility) {
-      }
+      visibility = this.extractVisibility(node);
     }
     const signature = this.cleanSignature(`${fnName}(${params})`);
     const id = contract ? `${contract}.${signature}` : signature;
@@ -30039,6 +30195,29 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       },
       text: node.text
     };
+  }
+  /**
+   * Extracts visibility from a function node by checking its children.
+   * Handles various grammar structures robustly.
+   * 
+   * @param node - Function definition node
+   * @returns Visibility string or undefined if not found
+   */
+  extractVisibility(node) {
+    for (const child of node.children) {
+      if (child.type === "visibility") {
+        const text = child.text;
+        if (text === "public" || text === "external" || text === "internal" || text === "private") {
+          return text;
+        }
+      }
+    }
+    const signatureText = node.text.split("{")[0];
+    if (signatureText.includes(" external")) return "external";
+    if (signatureText.includes(" public")) return "public";
+    if (signatureText.includes(" internal")) return "internal";
+    if (signatureText.includes(" private")) return "private";
+    return void 0;
   }
 };
 
@@ -30423,7 +30602,94 @@ var TolkAdapter = class extends BaseAdapter {
   }
 };
 
-// src/mcp/tools/entrypoints.ts
+// src/languages/javascriptAdapter.ts
+init_esm_shims();
+var JS_FAMILY_QUERIES = {
+  comments: "(comment) @comment",
+  functions: `
+        (function_declaration) @function
+        (generator_function_declaration) @function
+        (method_definition) @function
+        (function_expression) @function
+        (arrow_function) @function
+    `,
+  branching: `
+        (if_statement) @branch
+        (for_statement) @branch
+        (for_in_statement) @branch
+        (for_of_statement) @branch
+        (while_statement) @branch
+        (do_statement) @branch
+        (switch_statement) @branch
+        (conditional_expression) @branch
+        (try_statement) @branch
+    `,
+  normalization: `
+        (call_expression) @norm
+        (function_declaration) @norm
+        (generator_function_declaration) @norm
+        (function_expression) @norm
+        (arrow_function) @norm
+        (method_definition) @norm
+        (array) @norm
+        (object) @norm
+    `
+};
+var JS_FAMILY_CONSTANTS = {
+  baseRateNlocPerDay: 450,
+  // Typical JS/TS code is readable but can hide complexity in callbacks and
+  // async flows; we start penalizing around moderate branch density.
+  complexityMidpoint: 12,
+  // Complexity ramps at a similar pace to Go/C++, rewarding simpler code but
+  // quickly slowing down when control flow gets tangled.
+  complexitySteepness: 9,
+  // Clear, linear code can give ~25% speedup; heavily nested/async logic can
+  // cost up to ~55% more review time.
+  complexityBenefitCap: 0.25,
+  complexityPenaltyCap: 0.55,
+  // Good inline docs for async boundaries, data shapes, and side effects help
+  // reviewers; most benefit comes around ~15% comment density.
+  commentFullBenefitDensity: 15,
+  commentBenefitCap: 0.25
+};
+var JavaScriptAdapter = class extends BaseAdapter {
+  constructor() {
+    super({
+      languageId: "javascript" /* JavaScript */,
+      queries: JS_FAMILY_QUERIES,
+      constants: JS_FAMILY_CONSTANTS
+    });
+  }
+};
+var TypeScriptAdapter = class extends BaseAdapter {
+  constructor() {
+    super({
+      languageId: "typescript" /* TypeScript */,
+      queries: JS_FAMILY_QUERIES,
+      constants: JS_FAMILY_CONSTANTS
+    });
+  }
+};
+var TsxAdapter = class extends BaseAdapter {
+  constructor() {
+    super({
+      languageId: "tsx" /* Tsx */,
+      queries: JS_FAMILY_QUERIES,
+      constants: JS_FAMILY_CONSTANTS
+    });
+  }
+};
+var FlowAdapter = class extends BaseAdapter {
+  constructor() {
+    super({
+      languageId: "flow" /* Flow */,
+      queries: JS_FAMILY_QUERIES,
+      constants: JS_FAMILY_CONSTANTS
+    });
+  }
+};
+
+// src/mcp/tools/peek.ts
 init_esm_shims();
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/index.js
@@ -30795,40 +31061,7 @@ function resolveOptions(options) {
   };
 }
 
-// src/mcp/tools/entrypoints.ts
-var entrypointsSchema = {
-  description: "List externally reachable entrypoints for a given set of files",
-  inputSchema: {
-    paths: external_exports.array(external_exports.string()).describe("File paths or glob patterns to analyze")
-  }
-};
-function createEntrypointsHandler(engine2) {
-  return async ({ paths }) => {
-    try {
-      const entrypoints = await engine2.processEntrypoints(paths);
-      const minimalEntrypoints = entrypoints.map((e) => ({
-        id: e.id,
-        visibility: e.visibility
-      }));
-      return {
-        content: [{
-          type: "text",
-          text: encode({ entrypoints: minimalEntrypoints })
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`
-        }]
-      };
-    }
-  };
-}
-
 // src/mcp/tools/peek.ts
-init_esm_shims();
 var peekSchema = {
   description: "Extract function signatures from files to understand their purpose",
   inputSchema: {
@@ -30898,33 +31131,72 @@ function createMetricsHandler(engine2) {
   };
 }
 
-// src/mcp/tools/callgraph.ts
+// src/mcp/tools/executionPaths.ts
 init_esm_shims();
-var callGraphSchema = {
-  description: "Generate a call graph for the specified files",
+var MAX_PATHS_PER_ENTRYPOINT = 5;
+var MAX_DEPTH = 10;
+var executionPathsSchema = {
+  description: "Generate linear execution paths (call chains) from public entrypoints. Useful for understanding control flow and identifying high-risk paths.",
   inputSchema: {
     paths: external_exports.array(external_exports.string()).describe("File paths or glob patterns to analyze")
   }
 };
-function createCallGraphHandler(engine2) {
+function createExecutionPathsHandler(engine2) {
   return async ({ paths }) => {
-    const graph = await engine2.processCallGraph(paths);
-    const reducedGraph = {
-      nodes: graph.nodes.map((n) => ({
-        id: n.id,
-        visibility: n.visibility
-      })),
-      edges: graph.edges
-    };
-    return {
-      content: [
-        {
+    try {
+      const graph = await engine2.processCallGraph(paths);
+      const entrypoints = graph.nodes.filter(
+        (n) => n.visibility === "public" || n.visibility === "external"
+      );
+      const allPaths = [];
+      for (const entrypoint of entrypoints) {
+        const rawPaths = resolvePaths(entrypoint.id, graph, 0, /* @__PURE__ */ new Set());
+        const stringPaths = rawPaths.map((p) => p.join(" -> "));
+        stringPaths.sort((a, b) => {
+          const lenA = a.split(" -> ").length;
+          const lenB = b.split(" -> ").length;
+          return lenB - lenA;
+        });
+        allPaths.push(...stringPaths.slice(0, MAX_PATHS_PER_ENTRYPOINT));
+      }
+      return {
+        content: [{
           type: "text",
-          text: encode({ call_graph: reducedGraph })
-        }
-      ]
-    };
+          text: encode({ execution_paths: allPaths })
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error generating execution paths: ${error instanceof Error ? error.message : String(error)}`
+        }]
+      };
+    }
   };
+}
+function resolvePaths(currentId, graph, depth, stack) {
+  if (stack.has(currentId)) {
+    return [[`${currentId} (Recursive)`]];
+  }
+  if (depth >= MAX_DEPTH) {
+    return [[`${currentId} (Max Depth)`]];
+  }
+  const outgoingEdges = graph.edges.filter((e) => e.from === currentId);
+  if (outgoingEdges.length === 0) {
+    return [[currentId]];
+  }
+  const currentStack = new Set(stack);
+  currentStack.add(currentId);
+  const paths = [];
+  outgoingEdges.sort((a, b) => a.to.localeCompare(b.to));
+  for (const edge of outgoingEdges) {
+    const tailPaths = resolvePaths(edge.to, graph, depth + 1, currentStack);
+    for (const tail of tailPaths) {
+      paths.push([currentId, ...tail]);
+    }
+  }
+  return paths;
 }
 
 // src/mcp/server.ts
@@ -30939,15 +31211,14 @@ engine.registerAdapter(new CompactAdapter());
 engine.registerAdapter(new MoveAdapter());
 engine.registerAdapter(new NoirAdapter());
 engine.registerAdapter(new TolkAdapter());
+engine.registerAdapter(new JavaScriptAdapter());
+engine.registerAdapter(new TypeScriptAdapter());
+engine.registerAdapter(new TsxAdapter());
+engine.registerAdapter(new FlowAdapter());
 var server = new McpServer({
   name: "mcp-auditor",
   version: "1.0.0"
 });
-server.registerTool(
-  "entrypoints",
-  entrypointsSchema,
-  createEntrypointsHandler(engine)
-);
 server.registerTool(
   "peek",
   peekSchema,
@@ -30959,9 +31230,9 @@ server.registerTool(
   createMetricsHandler(engine)
 );
 server.registerTool(
-  "callgraph",
-  callGraphSchema,
-  createCallGraphHandler(engine)
+  "execution_paths",
+  executionPathsSchema,
+  createExecutionPathsHandler(engine)
 );
 async function main() {
   const transport = new StdioServerTransport();

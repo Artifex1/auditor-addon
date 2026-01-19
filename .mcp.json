@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mcp-auditor": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"]
+    }
+  }
+}

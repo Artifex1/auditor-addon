@@ -1,0 +1,24 @@
+{
+  "name": "mcp-auditor-marketplace",
+  "owner": {
+    "name": "Artifex1"
+  },
+  "metadata": {
+    "description": "Security auditing, code estimation, and reporting tools for smart contracts and general codebases"
+  },
+  "plugins": [
+    {
+      "name": "mcp-auditor",
+      "version": "1.0.0",
+      "description": "MCP Auditor helps estimate and audit code and write issues",
+      "keywords": [
+        "security",
+        "audit",
+        "estimation",
+        "code-analysis"
+      ],
+      "repository": "https://github.com/Artifex1/mcp-auditor",
+      "source": "./"
+    }
+  ]
+}

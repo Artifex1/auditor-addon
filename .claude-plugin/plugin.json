@@ -1,0 +1,8 @@
+{
+  "name": "mcp-auditor",
+  "version": "1.0.0",
+  "description": "MCP Auditor helps estimate and audit code and write issues",
+  "author": {
+    "name": "Artifex1"
+  }
+}

@@ -9,63 +9,96 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
-**A powerful Model Context Protocol (MCP) server that provides structured code insights for estimation, security auditing, and professional report writing.**
+**A Gemini CLI Extension and Claude Code Plugin with Skills and Tools for code estimation, security auditing, and professional report writing.**
 
 </div>
 
+## 🎯 Skills
 
-## ✨ Features at a Glance
+Skills are structured workflows that guide the AI through multi-step processes. Each skill contains detailed instructions, phases, and best practices for specific tasks.
 
-<table>
-<tr>
-<td width="33%" align="center">
+| Skill | Purpose | Capabilities |
+|:------|:--------|:-------------|
+| 🛡️ **security-auditor** | Comprehensive security auditing | Map systems, hunt for hotspots, confirm vulnerabilities |
+| 📊 **estimator** | Project scoping and effort estimation | Discovery, exploration, metrics calculation, reporting |
+| 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
+| 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
 
-### 📊 **Estimation**
-Calculate code complexity metrics and estimate audit effort with precision
+### How Skills Work
 
-</td>
-<td width="33%" align="center">
+Skills provide complete instructions that the AI follows autonomously. When invoked, the AI loads the skill's protocol and executes it step-by-step, using the available tools as needed.
 
-### 🛡️ **Auditing**
-Map systems, identify security hotspots, and confirm vulnerabilities
+### Commands
 
-</td>
-<td width="33%" align="center">
+Commands serve as convenient aliases for invoking skills. They map to specific skill capabilities:
 
-### 📝 **Writing**
-Generate professional audit reports in OpenZeppelin style
+| Command | Skill | Action |
+|:--------|:------|:-------|
+| `/audit:map`, `/audit:hunt`, `/audit:attack` | security-auditor | Map, Hunt, Attack phases |
+| `/estimate:discovery`, `/estimate:explore`, `/estimate:metrics`, `/estimate:report` | estimator | Full estimation workflow |
+| `/design:challenge` | design-challenger | Challenge design |
+| `/write:issue`, `/write:intro` | scribe | Write findings or introductions |
 
-</td>
-</tr>
-</table>
+---
 
-### 🧠 **Design Challenge**
-Challenge overcomplicated designs and propose simpler alternatives with explicit trade-offs
+## 🧰 Tools
 
-## 🌐 Supported Languages
+Tools provide structured code analysis through Tree-sitter AST parsing. They support glob patterns for analyzing multiple files at once. Skills use these tools automatically as part of their workflows.
+
+### 👀 `peek`
+
+Extracts function and method signatures from source files without reading full implementations. The **estimator** skill uses peek to quickly understand a codebase's API surface, what functions exist, their parameters, visibility, and modifiers. This is ideal for initial exploration and building a mental map of unfamiliar code, without the need to read full files.
+
+### 📏 `metrics`
+
+The metrics tool calculates code metrics:
+
+- **Normalized Lines of Code (nLOC)**: Total lines minus blank lines, comment-only lines, and multi-line constructs normalized to single lines (e.g., a function signature spanning 3 lines counts as 1).
+- **Lines with Comments**: Count of lines containing comments, including inline comments.
+- **Comment Density**: Percentage of lines that have/are comments, indicating documentation coverage.
+- **Cognitive Complexity**: Measures control flow complexity by counting branches (if, for, while, etc.) weighted by nesting depth. Deeply nested logic scores higher than flat code.
+- **Estimated Hours**: Review time estimate based on nLOC, adjusted by complexity (penalty for high, benefit for low) and comment density (benefit for well-documented code). 
+
+The **estimator** skill uses this tool to calculate how long it takes to perform a security audit.
+
+### 🕸️ `execution_paths`
+
+Traces call chains from public entrypoints through internal function calls, producing linear execution paths. The **security-auditor** skill uses this to understand how external calls flow through a system to identify attack surfaces and trace how user input propagates through the codebase.
+
+### 🌐 Supported Languages
 
 <div align="center">
 
-| Language | Peek | Execution Paths | Metrics | Status |
-|:--------:|:-----------:|:-----------:|:-------:|:------:|
-| 🔷 **Solidity** | ✅ | ✅ | ✅ | **Full Support** |
-| 🐪 **Cairo** | ✅ | ⏳ | ✅ | Partial |
-| 📦 **Compact** | ✅ | ⏳ | ✅ | Partial |
-| 💧 **Move** | ✅ | ⏳ | ✅ | Partial |
-| 🌑 **Noir** | ✅ | ⏳ | ✅ | Partial |
-| 🧩 **Tolk** | ✅ | ⏳ | ✅ | Partial |
-| ⚡ **C++** | ✅ | ⏳ | ✅ | Partial |
-| ☕ **Java** | ✅ | ⏳ | ✅ | Partial |
-| 🐹 **Go** | ✅ | ⏳ | ✅ | Partial |
-| 🦀 **Rust** | ✅ | ⏳ | ✅ | Partial |
-| 🟨 **JavaScript** | ✅ | ⏳ | ✅ | Partial |
-| 🔷 **TypeScript** | ✅ | ⏳ | ✅ | Partial |
-| 🧩 **TSX** | ✅ | ⏳ | ✅ | Partial |
-| 🌀 **Flow** | ✅ | ⏳ | ✅ | Partial |
+| Language | Peek | Execution Paths | Metrics |
+|:--------:|:-----------:|:-----------:|:-------:|
+| 🔷 **Solidity** | ✅ | ✅ | ✅ |
+| 🐪 **Cairo** | ✅ | ⏳ | ✅ |
+| 📦 **Compact** | ✅ | ⏳ | ✅ |
+| 💧 **Move** | ✅ | ⏳ | ✅ |
+| 🌑 **Noir** | ✅ | ⏳ | ✅ |
+| 🧩 **Tolk** | ✅ | ⏳ | ✅ |
+| ⚡ **C++** | ✅ | ⏳ | ✅ |
+| ☕ **Java** | ✅ | ⏳ | ✅ |
+| 🐹 **Go** | ✅ | ⏳ | ✅ |
+| 🦀 **Rust** | ✅ | ⏳ | ✅ |
+| 🟨 **JavaScript** | ✅ | ⏳ | ✅ |
+| 🔷 **TypeScript** | ✅ | ⏳ | ✅ |
+| 🧩 **TSX** | ✅ | ⏳ | ✅ |
+| 🌀 **Flow** | ✅ | ⏳ | ✅ |
 
 </div>
 
 ## 📦 Installation
+
+### Via Claude Code Plugin
+
+```bash
+# Add the marketplace
+/plugin marketplace add <owner/repo>
+
+# Then in plugin settings, install mcp-auditor
+/plugin settings
+```
 
 ### Via Gemini CLI Extension
 
@@ -102,92 +135,6 @@ pnpm test:watch
 
 ---
 
-## 🧰 Available Tools
-
-> [!TIP]
-> All tools support **glob patterns** for the `paths` parameter, making it easy to analyze multiple files at once!
-
-<table>
-<thead>
-<tr>
-<th width="15%">Tool</th>
-<th width="20%">Inputs</th>
-<th width="20%">Output</th>
-<th width="45%">Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<tr>
-<td><code>peek</code></td>
-<td><code>paths</code> (string[])</td>
-<td><code>Signature[]</code></td>
-<td>👀 Extract function signatures for a quick codebase overview</td>
-</tr>
-<tr>
-<td><code>metrics</code></td>
-<td><code>paths</code> (string[])</td>
-<td><code>Metrics[]</code></td>
-<td>📏 Calculate NLoC, complexity, and effort estimates</td>
-</tr>
-<tr>
-<td><code>execution_paths</code></td>
-<td><code>paths</code> (string[])</td>
-<td><code>string[]</code></td>
-<td>🕸️ Generate linear execution call chains from public entrypoints</td>
-</tr>
-</tbody>
-</table>
-
----
-
-## 🔄 Command Workflows
-
-The `commands/` directory contains **TOML-based systematic prompts** for structured analysis:
-
-### 1️⃣ Estimation Workflow
-
-```
-/estimate:discovery  → Identify scope and chunk files
-/estimate:explore    → Categorize files and refine scope
-/estimate:metrics    → Calculate complexity and effort
-/estimate:report     → Generate final estimation report
-```
-
-**Perfect for:** Project scoping, effort estimation, resource planning
-
-### 2️⃣ Audit Workflow
-
-```
-/audit:map     → Build system map (contracts, invariants, flows)
-/audit:hunt    → Identify security hotspots (high recall)
-/audit:attack  → Confirm vulnerabilities (high precision)
-```
-
-**Perfect for:** Security audits, vulnerability assessment, threat modeling
-
-### 3️⃣ Design Challenge Workflow
-
-```
-/design:challenge  → Challenge design and propose simplifications
-```
-
-**Perfect for:** Overcomplication review, protocol simplification, design trade-offs
-
-### 4️⃣ Writing Workflow
-
-```
-/write:intro   → Generate professional report introduction
-/write:issue   → Write formal vulnerability descriptions
-```
-
-**Perfect for:** Audit reports, security documentation, issue tracking
-
-> [!IMPORTANT]
-> See [`GEMINI.md`](./GEMINI.md) for detailed workflow instructions, best practices, and examples.
-
----
-
 ## 🏗️ Architecture & Design
 
 ### Core Principles
@@ -195,7 +142,7 @@ The `commands/` directory contains **TOML-based systematic prompts** for structu
 - 🧩 Modular: Clear separation between MCP protocol, engine, and language adapters
 - 🔌 Extensible: Easy to add new languages via `BaseAdapter` inheritance
 - 🔄 DRY: Common logic shared via `BaseAdapter` class
-- ✅ Tested: Automated tests for all language adapters
+- ✅ Tested: Tests for all language adapters
 
 ### Technology Stack
 
@@ -207,9 +154,10 @@ The `commands/` directory contains **TOML-based systematic prompts** for structu
 
 ### Key Project Files
 
-- [`GEMINI.md`](./GEMINI.md): 🤖 AI assistant context guide with workflow instructions
+- [`.claude-plugin/`](./.claude-plugin/): 🔌 Claude Code plugin configuration
+- [`CLAUDE.md`](./CLAUDE.md): 🤖 Claude Code plugin context guide
+- [`GEMINI.md`](./GEMINI.md): 🤖 Gemini CLI extension context guide with workflow instructions
 - [`gemini-extension.json`](./gemini-extension.json): ⚙️ Gemini CLI extension configuration
+- [`skills/`](./skills/): 🎯 Skill definitions and protocols
 - [`src/languages/`](./src/languages/): 🔧 Language adapter implementations
-- [`commands/`](./commands/): 📋 TOML workflow prompts
-
----
+- [`commands/`](./commands/): 📋 Command alias definitions

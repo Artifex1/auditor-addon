@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "version": "tsx scripts/sync-version.ts && git add gemini-extension.json .claude-plugin/plugin.json"
+    "version": "tsx scripts/sync-version.ts && git add gemini-extension.json .claude-plugin/plugin.json .claude-plugin/marketplace.json"
   },
   "devDependencies": {
     "@types/node": "^20.11.25",

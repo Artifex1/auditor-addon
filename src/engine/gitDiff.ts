@@ -76,3 +76,27 @@ export function getFileStatus(file: File): 'added' | 'modified' | 'deleted' {
     if (file.type === 'delete') return 'deleted';
     return 'modified'; // 'modify', 'rename', 'copy' all count as modified
 }
+
+/**
+ * Gets file content at a specific git ref.
+ *
+ * @param ref - Git ref (commit SHA, branch, or tag)
+ * @param filePath - Path to the file
+ * @param cwd - Working directory
+ * @returns File content or null if file doesn't exist at that ref
+ */
+export function getFileAtRef(
+    ref: string,
+    filePath: string,
+    cwd: string = process.cwd()
+): string | null {
+    try {
+        return execSync(`git show ${ref}:${filePath}`, {
+            cwd,
+            encoding: 'utf-8',
+            maxBuffer: 10 * 1024 * 1024
+        });
+    } catch {
+        return null;
+    }
+}

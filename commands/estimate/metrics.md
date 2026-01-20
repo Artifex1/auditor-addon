@@ -1,5 +1,5 @@
 ---
-description: "Stage 3: Metrics - Calculate complexity and estimate effort."
+description: "Stage 3 (full flow): Metrics - Calculate complexity and estimate effort."
 ---
 
 Use the `estimator` skill to perform the **Metrics** capability.

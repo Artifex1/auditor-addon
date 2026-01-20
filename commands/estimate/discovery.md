@@ -1,5 +1,5 @@
 ---
-description: "Stage 1: Discovery - Identify and chunk files for the audit."
+description: "Stage 1 (both flows): Discovery - Identify and chunk files for the audit."
 ---
 
 Use the `estimator` skill to perform the **Discovery** capability.

@@ -25578,180 +25578,17 @@ function getFileStatus(file) {
   if (file.type === "delete") return "deleted";
   return "modified";
 }
-
-// src/engine/index.ts
-import path3 from "path";
-import fs3 from "fs/promises";
-var Engine = class {
-  adapters = /* @__PURE__ */ new Map();
-  registerAdapter(adapter) {
-    this.adapters.set(adapter.languageId, adapter);
+function getFileAtRef(ref, filePath, cwd = process.cwd()) {
+  try {
+    return execSync(`git show ${ref}:${filePath}`, {
+      cwd,
+      encoding: "utf-8",
+      maxBuffer: 10 * 1024 * 1024
+    });
+  } catch {
+    return null;
   }
-  getAdapter(languageId) {
-    return this.adapters.get(languageId);
-  }
-  detectLanguage(filePath) {
-    const ext = path3.extname(filePath).toLowerCase();
-    switch (ext) {
-      case ".sol":
-        return "solidity" /* Solidity */;
-      case ".cpp":
-      case ".hpp":
-      case ".cc":
-      case ".cxx":
-      case ".c":
-      case ".h":
-        return "cpp" /* Cpp */;
-      case ".js":
-      case ".jsx":
-      case ".mjs":
-      case ".cjs":
-        return "javascript" /* JavaScript */;
-      case ".ts":
-        return "typescript" /* TypeScript */;
-      case ".tsx":
-        return "tsx" /* Tsx */;
-      case ".flow":
-        return "flow" /* Flow */;
-      case ".java":
-        return "java" /* Java */;
-      case ".go":
-        return "go" /* Go */;
-      case ".rs":
-        return "rust" /* Rust */;
-      case ".cairo":
-        return "cairo" /* Cairo */;
-      case ".compact":
-        return "compact" /* Compact */;
-      case ".move":
-        return "move" /* Move */;
-      case ".nr":
-        return "noir" /* Noir */;
-      case ".tolk":
-        return "tolk" /* Tolk */;
-      default:
-        return void 0;
-    }
-  }
-  async processSignatures(patterns) {
-    const filePaths = await resolveFiles(patterns);
-    const files = await readFiles(filePaths);
-    const filesByLanguage = this.groupFilesByLanguage(files);
-    const allSignatures = {};
-    for (const [lang, langFiles] of filesByLanguage.entries()) {
-      const adapter = this.getAdapter(lang);
-      if (adapter) {
-        try {
-          const signatures = await adapter.extractSignatures(langFiles);
-          Object.assign(allSignatures, signatures);
-        } catch (error) {
-          console.error(`Failed to extract signatures for ${lang}:`, error);
-        }
-      }
-    }
-    return allSignatures;
-  }
-  async processMetrics(patterns) {
-    const filePaths = await resolveFiles(patterns);
-    const files = await readFiles(filePaths);
-    const filesByLanguage = this.groupFilesByLanguage(files);
-    const allMetrics = [];
-    for (const [lang, langFiles] of filesByLanguage.entries()) {
-      const adapter = this.getAdapter(lang);
-      if (adapter) {
-        try {
-          const metrics = await adapter.calculateMetrics(langFiles);
-          allMetrics.push(...metrics);
-        } catch (error) {
-          console.error(`Failed to calculate metrics for ${lang}:`, error);
-        }
-      }
-    }
-    return allMetrics;
-  }
-  async processCallGraph(patterns) {
-    const filePaths = await resolveFiles(patterns);
-    const files = await readFiles(filePaths);
-    const filesByLanguage = this.groupFilesByLanguage(files);
-    const combinedGraph = { nodes: [], edges: [] };
-    for (const [lang, langFiles] of filesByLanguage.entries()) {
-      const adapter = this.getAdapter(lang);
-      if (adapter) {
-        try {
-          const graph = await adapter.generateCallGraph(langFiles);
-          combinedGraph.nodes.push(...graph.nodes);
-          combinedGraph.edges.push(...graph.edges);
-        } catch (error) {
-          console.error(`Failed to generate call graph for ${lang}:`, error);
-        }
-      }
-    }
-    return combinedGraph;
-  }
-  groupFilesByLanguage(files) {
-    const filesByLanguage = /* @__PURE__ */ new Map();
-    for (const file of files) {
-      const lang = this.detectLanguage(file.path);
-      if (lang) {
-        if (!filesByLanguage.has(lang)) {
-          filesByLanguage.set(lang, []);
-        }
-        filesByLanguage.get(lang).push(file);
-      }
-    }
-    return filesByLanguage;
-  }
-  /**
-   * Processes diff metrics between two git refs.
-   *
-   * @param base - Base commit/branch/tag
-   * @param head - Head commit/branch/tag (defaults to HEAD)
-   * @param pathFilters - Optional glob patterns to filter files
-   * @param cwd - Working directory (defaults to process.cwd())
-   * @returns Array of diff metrics per file
-   */
-  async processDiffMetrics(base, head = "HEAD", pathFilters, cwd = process.cwd()) {
-    const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
-    const results = [];
-    for (const fileDiff of fileDiffs) {
-      const filePath = fileDiff.newPath || fileDiff.oldPath;
-      const lang = this.detectLanguage(filePath);
-      if (!lang) continue;
-      const adapter = this.getAdapter(lang);
-      if (!adapter) continue;
-      const { added, removed } = getChangedLineNumbers(fileDiff);
-      const status = getFileStatus(fileDiff);
-      let fileContent;
-      if (status === "deleted") {
-        fileContent = { path: filePath, content: "" };
-      } else {
-        try {
-          const absolutePath = path3.isAbsolute(filePath) ? filePath : path3.join(cwd, filePath);
-          const content = await fs3.readFile(absolutePath, "utf-8");
-          fileContent = { path: filePath, content };
-        } catch (error) {
-          console.error(`Failed to read file ${filePath}:`, error);
-          continue;
-        }
-      }
-      try {
-        const metrics = await adapter.calculateDiffMetrics(
-          fileContent,
-          added,
-          removed,
-          status
-        );
-        results.push(metrics);
-      } catch (error) {
-        console.error(`Failed to calculate diff metrics for ${filePath}:`, error);
-      }
-    }
-    return results;
-  }
-};
-
-// src/languages/solidityAdapter.ts
-init_esm_shims();
+}
 
 // src/languages/baseAdapter.ts
 init_esm_shims();
@@ -29732,14 +29569,14 @@ var Query = class {
 };
 
 // src/util/treeSitter.ts
-import path4 from "path";
+import path3 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import fs4 from "fs";
+import fs3 from "fs";
 var __filename2 = fileURLToPath2(import.meta.url);
-var __dirname2 = path4.dirname(__filename2);
-var BUNDLED_PATH = path4.join(__dirname2, "parsers");
-var DEV_PATH = path4.join(__dirname2, "..", "..", "dist", "mcp", "parsers");
-var PARSERS_DIR = fs4.existsSync(BUNDLED_PATH) ? BUNDLED_PATH : DEV_PATH;
+var __dirname2 = path3.dirname(__filename2);
+var BUNDLED_PATH = path3.join(__dirname2, "parsers");
+var DEV_PATH = path3.join(__dirname2, "..", "..", "dist", "mcp", "parsers");
+var PARSERS_DIR = fs3.existsSync(BUNDLED_PATH) ? BUNDLED_PATH : DEV_PATH;
 var TreeSitterService = class _TreeSitterService {
   static instance;
   initialized = false;
@@ -29771,8 +29608,8 @@ var TreeSitterService = class _TreeSitterService {
       return this.languages.get(lang);
     }
     const wasmName = this.mapLanguageToWasm(lang);
-    const wasmPath = path4.join(PARSERS_DIR, wasmName);
-    if (!fs4.existsSync(wasmPath)) {
+    const wasmPath = path3.join(PARSERS_DIR, wasmName);
+    if (!fs3.existsSync(wasmPath)) {
       throw new Error(`WASM parser not found for language ${lang} at ${wasmPath}`);
     }
     try {
@@ -30223,9 +30060,353 @@ var BaseAdapter = class {
     }
     return depth;
   }
+  /**
+   * Extracts function signatures with their line ranges.
+   * Used for mapping changed lines to affected functions.
+   *
+   * @param file - Source file to analyze
+   * @returns Array of functions with signature and line range
+   */
+  async extractSignaturesWithRanges(file) {
+    const results = [];
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage(this.languageId);
+    const parser = await service.createParser(this.languageId);
+    const query = new Query(lang, this.config.queries.functions);
+    try {
+      const tree = parser.parse(file.content);
+      if (!tree) return results;
+      const captures = query.captures(tree.rootNode);
+      for (const capture of captures) {
+        if (capture.name === "function") {
+          const node = capture.node;
+          const bodyNode = node.childForFieldName("body") || node.children.find((c) => c.type.includes("body") || c.type === "block");
+          let rawSignature = "";
+          if (bodyNode) {
+            rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
+          } else {
+            rawSignature = node.text;
+          }
+          const signature = this.cleanSignature(rawSignature);
+          const truncated = signature.length > 120 ? signature.substring(0, 117) + "..." : signature;
+          results.push({
+            signature: truncated,
+            startLine: node.startPosition.row + 1,
+            // 1-indexed
+            endLine: node.endPosition.row + 1
+          });
+        }
+      }
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error(`Error extracting signatures with ranges for ${file.path}: ${errorMessage}`);
+    }
+    return results;
+  }
+};
+
+// src/engine/index.ts
+import path4 from "path";
+import fs4 from "fs/promises";
+var Engine = class {
+  adapters = /* @__PURE__ */ new Map();
+  registerAdapter(adapter) {
+    this.adapters.set(adapter.languageId, adapter);
+  }
+  getAdapter(languageId) {
+    return this.adapters.get(languageId);
+  }
+  detectLanguage(filePath) {
+    const ext = path4.extname(filePath).toLowerCase();
+    switch (ext) {
+      case ".sol":
+        return "solidity" /* Solidity */;
+      case ".cpp":
+      case ".hpp":
+      case ".cc":
+      case ".cxx":
+      case ".c":
+      case ".h":
+        return "cpp" /* Cpp */;
+      case ".js":
+      case ".jsx":
+      case ".mjs":
+      case ".cjs":
+        return "javascript" /* JavaScript */;
+      case ".ts":
+        return "typescript" /* TypeScript */;
+      case ".tsx":
+        return "tsx" /* Tsx */;
+      case ".flow":
+        return "flow" /* Flow */;
+      case ".java":
+        return "java" /* Java */;
+      case ".go":
+        return "go" /* Go */;
+      case ".rs":
+        return "rust" /* Rust */;
+      case ".cairo":
+        return "cairo" /* Cairo */;
+      case ".compact":
+        return "compact" /* Compact */;
+      case ".move":
+        return "move" /* Move */;
+      case ".nr":
+        return "noir" /* Noir */;
+      case ".tolk":
+        return "tolk" /* Tolk */;
+      default:
+        return void 0;
+    }
+  }
+  async processSignatures(patterns) {
+    const filePaths = await resolveFiles(patterns);
+    const files = await readFiles(filePaths);
+    const filesByLanguage = this.groupFilesByLanguage(files);
+    const allSignatures = {};
+    for (const [lang, langFiles] of filesByLanguage.entries()) {
+      const adapter = this.getAdapter(lang);
+      if (adapter) {
+        try {
+          const signatures = await adapter.extractSignatures(langFiles);
+          Object.assign(allSignatures, signatures);
+        } catch (error) {
+          console.error(`Failed to extract signatures for ${lang}:`, error);
+        }
+      }
+    }
+    return allSignatures;
+  }
+  async processMetrics(patterns) {
+    const filePaths = await resolveFiles(patterns);
+    const files = await readFiles(filePaths);
+    const filesByLanguage = this.groupFilesByLanguage(files);
+    const allMetrics = [];
+    for (const [lang, langFiles] of filesByLanguage.entries()) {
+      const adapter = this.getAdapter(lang);
+      if (adapter) {
+        try {
+          const metrics = await adapter.calculateMetrics(langFiles);
+          allMetrics.push(...metrics);
+        } catch (error) {
+          console.error(`Failed to calculate metrics for ${lang}:`, error);
+        }
+      }
+    }
+    return allMetrics;
+  }
+  async processCallGraph(patterns) {
+    const filePaths = await resolveFiles(patterns);
+    const files = await readFiles(filePaths);
+    const filesByLanguage = this.groupFilesByLanguage(files);
+    const combinedGraph = { nodes: [], edges: [] };
+    for (const [lang, langFiles] of filesByLanguage.entries()) {
+      const adapter = this.getAdapter(lang);
+      if (adapter) {
+        try {
+          const graph = await adapter.generateCallGraph(langFiles);
+          combinedGraph.nodes.push(...graph.nodes);
+          combinedGraph.edges.push(...graph.edges);
+        } catch (error) {
+          console.error(`Failed to generate call graph for ${lang}:`, error);
+        }
+      }
+    }
+    return combinedGraph;
+  }
+  groupFilesByLanguage(files) {
+    const filesByLanguage = /* @__PURE__ */ new Map();
+    for (const file of files) {
+      const lang = this.detectLanguage(file.path);
+      if (lang) {
+        if (!filesByLanguage.has(lang)) {
+          filesByLanguage.set(lang, []);
+        }
+        filesByLanguage.get(lang).push(file);
+      }
+    }
+    return filesByLanguage;
+  }
+  /**
+   * Processes diff metrics between two git refs.
+   *
+   * @param base - Base commit/branch/tag
+   * @param head - Head commit/branch/tag (defaults to HEAD)
+   * @param pathFilters - Optional glob patterns to filter files
+   * @param cwd - Working directory (defaults to process.cwd())
+   * @returns Array of diff metrics per file
+   */
+  async processDiffMetrics(base, head = "HEAD", pathFilters, cwd = process.cwd()) {
+    const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
+    const results = [];
+    for (const fileDiff of fileDiffs) {
+      const filePath = fileDiff.newPath || fileDiff.oldPath;
+      const lang = this.detectLanguage(filePath);
+      if (!lang) continue;
+      const adapter = this.getAdapter(lang);
+      if (!adapter) continue;
+      const { added, removed } = getChangedLineNumbers(fileDiff);
+      const status = getFileStatus(fileDiff);
+      let fileContent;
+      if (status === "deleted") {
+        fileContent = { path: filePath, content: "" };
+      } else {
+        try {
+          const absolutePath = path4.isAbsolute(filePath) ? filePath : path4.join(cwd, filePath);
+          const content = await fs4.readFile(absolutePath, "utf-8");
+          fileContent = { path: filePath, content };
+        } catch (error) {
+          console.error(`Failed to read file ${filePath}:`, error);
+          continue;
+        }
+      }
+      try {
+        const metrics = await adapter.calculateDiffMetrics(
+          fileContent,
+          added,
+          removed,
+          status
+        );
+        results.push(metrics);
+      } catch (error) {
+        console.error(`Failed to calculate diff metrics for ${filePath}:`, error);
+      }
+    }
+    return results;
+  }
+  /**
+   * Processes diff between two git refs and returns either raw diff or signature changes.
+   *
+   * @param base - Base commit/branch/tag
+   * @param head - Head commit/branch/tag (defaults to HEAD)
+   * @param pathFilters - Optional glob patterns to filter files
+   * @param output - Output mode: 'full' for raw diff, 'signatures' for function-level changes
+   * @param cwd - Working directory (defaults to process.cwd())
+   * @returns Array of file diffs or signature changes depending on output mode
+   */
+  async processDiff(base, head = "HEAD", pathFilters, output = "full", cwd = process.cwd()) {
+    const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
+    if (output === "full") {
+      return this.processFullDiff(fileDiffs, base, head, cwd);
+    } else {
+      return this.processSignaturesDiff(fileDiffs, base, head, cwd);
+    }
+  }
+  /**
+   * Returns raw diff content per file.
+   */
+  processFullDiff(fileDiffs, _base, _head, _cwd) {
+    const results = [];
+    for (const fileDiff of fileDiffs) {
+      const filePath = fileDiff.newPath || fileDiff.oldPath;
+      const status = getFileStatus(fileDiff);
+      const diffLines = [];
+      diffLines.push(`--- a/${fileDiff.oldPath}`);
+      diffLines.push(`+++ b/${fileDiff.newPath}`);
+      for (const hunk of fileDiff.hunks) {
+        diffLines.push(hunk.content);
+        for (const change of hunk.changes) {
+          if (change.type === "insert") {
+            diffLines.push(`+${change.content}`);
+          } else if (change.type === "delete") {
+            diffLines.push(`-${change.content}`);
+          } else {
+            diffLines.push(` ${change.content}`);
+          }
+        }
+      }
+      results.push({
+        path: filePath,
+        status,
+        diff: diffLines.join("\n")
+      });
+    }
+    return results;
+  }
+  /**
+   * Returns function-level signature changes per file.
+   * Compares base and head versions to detect added/modified/removed functions.
+   */
+  async processSignaturesDiff(fileDiffs, base, _head, cwd) {
+    const results = [];
+    for (const fileDiff of fileDiffs) {
+      const filePath = fileDiff.newPath || fileDiff.oldPath;
+      const lang = this.detectLanguage(filePath);
+      if (!lang) continue;
+      const adapter = this.getAdapter(lang);
+      if (!adapter || !(adapter instanceof BaseAdapter)) continue;
+      const status = getFileStatus(fileDiff);
+      const { added: addedLines } = getChangedLineNumbers(fileDiff);
+      const changes = {
+        path: filePath,
+        status,
+        added: [],
+        modified: [],
+        removed: []
+      };
+      if (status === "added") {
+        const headContent = await this.readFileFromFs(filePath, cwd);
+        if (headContent) {
+          const headFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: headContent });
+          changes.added = headFunctions.map((f) => f.signature);
+        }
+      } else if (status === "deleted") {
+        const baseContent = getFileAtRef(base, fileDiff.oldPath, cwd);
+        if (baseContent) {
+          const baseFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: baseContent });
+          changes.removed = baseFunctions.map((f) => f.signature);
+        }
+      } else {
+        const baseContent = getFileAtRef(base, fileDiff.oldPath || filePath, cwd);
+        const headContent = await this.readFileFromFs(fileDiff.newPath || filePath, cwd);
+        if (baseContent && headContent) {
+          const baseFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: baseContent });
+          const headFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: headContent });
+          const baseSignatures = new Set(baseFunctions.map((f) => f.signature));
+          const headSignatures = new Set(headFunctions.map((f) => f.signature));
+          for (const f of headFunctions) {
+            if (!baseSignatures.has(f.signature)) {
+              changes.added.push(f.signature);
+            }
+          }
+          for (const f of baseFunctions) {
+            if (!headSignatures.has(f.signature)) {
+              changes.removed.push(f.signature);
+            }
+          }
+          for (const f of headFunctions) {
+            if (baseSignatures.has(f.signature)) {
+              const hasChanges = addedLines.some(
+                (line) => line >= f.startLine && line <= f.endLine
+              );
+              if (hasChanges) {
+                changes.modified.push(f.signature);
+              }
+            }
+          }
+        }
+      }
+      if (changes.added.length > 0 || changes.modified.length > 0 || changes.removed.length > 0) {
+        results.push(changes);
+      }
+    }
+    return results;
+  }
+  /**
+   * Reads file content from filesystem.
+   */
+  async readFileFromFs(filePath, cwd) {
+    try {
+      const absolutePath = path4.isAbsolute(filePath) ? filePath : path4.join(cwd, filePath);
+      return await fs4.readFile(absolutePath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
 };
 
 // src/languages/solidityAdapter.ts
+init_esm_shims();
 var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   // Tree-sitter query strings
   static QUERIES = {
@@ -32123,6 +32304,43 @@ function createDiffMetricsHandler(engine2) {
   };
 }
 
+// src/mcp/tools/diff.ts
+init_esm_shims();
+var diffSchema = {
+  description: "Get diff between two git refs. Returns either raw diff content or function-level signature changes.",
+  inputSchema: {
+    base: external_exports.string().describe("Base git ref (commit SHA, branch, or tag)"),
+    head: external_exports.string().optional().describe("Head git ref (defaults to HEAD)"),
+    paths: external_exports.array(external_exports.string()).optional().describe("Optional file paths or glob patterns to filter"),
+    output: external_exports.enum(["full", "signatures"]).optional().describe("Output mode: 'full' for raw diff, 'signatures' for function-level changes (default: full)")
+  }
+};
+function createDiffHandler(engine2) {
+  return async ({ base, head, paths, output }) => {
+    try {
+      const result = await engine2.processDiff(
+        base,
+        head || "HEAD",
+        paths,
+        output || "full"
+      );
+      return {
+        content: [{
+          type: "text",
+          text: encode(result)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`
+        }]
+      };
+    }
+  };
+}
+
 // src/mcp/server.ts
 var engine = new Engine();
 engine.registerAdapter(new SolidityAdapter());
@@ -32162,6 +32380,11 @@ server.registerTool(
   "diff_metrics",
   diffMetricsSchema,
   createDiffMetricsHandler(engine)
+);
+server.registerTool(
+  "diff",
+  diffSchema,
+  createDiffHandler(engine)
 );
 async function main() {
   const transport = new StdioServerTransport();

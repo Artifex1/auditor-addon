@@ -584,4 +584,60 @@ export abstract class BaseAdapter implements LanguageAdapter {
 
         return depth;
     }
+
+    /**
+     * Extracts function signatures with their line ranges.
+     * Used for mapping changed lines to affected functions.
+     *
+     * @param file - Source file to analyze
+     * @returns Array of functions with signature and line range
+     */
+    async extractSignaturesWithRanges(
+        file: FileContent
+    ): Promise<Array<{ signature: string; startLine: number; endLine: number }>> {
+        const results: Array<{ signature: string; startLine: number; endLine: number }> = [];
+
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(this.languageId);
+        const parser = await service.createParser(this.languageId);
+        const query = new Query(lang, this.config.queries.functions);
+
+        try {
+            const tree = parser.parse(file.content);
+            if (!tree) return results;
+
+            const captures = query.captures(tree.rootNode);
+
+            for (const capture of captures) {
+                if (capture.name === 'function') {
+                    const node = capture.node;
+                    const bodyNode = node.childForFieldName('body') ||
+                        node.children.find(c => c.type.includes('body') || c.type === 'block');
+
+                    let rawSignature = '';
+                    if (bodyNode) {
+                        rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
+                    } else {
+                        rawSignature = node.text;
+                    }
+
+                    const signature = this.cleanSignature(rawSignature);
+                    const truncated = signature.length > 120
+                        ? signature.substring(0, 117) + '...'
+                        : signature;
+
+                    results.push({
+                        signature: truncated,
+                        startLine: node.startPosition.row + 1, // 1-indexed
+                        endLine: node.endPosition.row + 1
+                    });
+                }
+            }
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            console.error(`Error extracting signatures with ranges for ${file.path}: ${errorMessage}`);
+        }
+
+        return results;
+    }
 }

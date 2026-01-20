@@ -1,9 +1,24 @@
 import { SupportedLanguage, FileContent, CallGraph, FileMetrics, DiffFileMetrics, LanguageAdapter } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
-import { getGitDiff, getChangedLineNumbers, getFileStatus } from "./gitDiff.js";
+import { getGitDiff, getChangedLineNumbers, getFileStatus, getFileAtRef } from "./gitDiff.js";
+import { BaseAdapter } from "../languages/baseAdapter.js";
 import path from "path";
 import fs from "fs/promises";
 export * from "./types.js";
+
+export interface FileDiff {
+    path: string;
+    status: 'added' | 'modified' | 'deleted';
+    diff: string;
+}
+
+export interface FileSignatureChanges {
+    path: string;
+    status: 'added' | 'modified' | 'deleted';
+    added: string[];
+    modified: string[];
+    removed: string[];
+}
 
 export class Engine {
     private adapters: Map<SupportedLanguage, LanguageAdapter> = new Map();
@@ -197,5 +212,184 @@ export class Engine {
         }
 
         return results;
+    }
+
+    /**
+     * Processes diff between two git refs and returns either raw diff or signature changes.
+     *
+     * @param base - Base commit/branch/tag
+     * @param head - Head commit/branch/tag (defaults to HEAD)
+     * @param pathFilters - Optional glob patterns to filter files
+     * @param output - Output mode: 'full' for raw diff, 'signatures' for function-level changes
+     * @param cwd - Working directory (defaults to process.cwd())
+     * @returns Array of file diffs or signature changes depending on output mode
+     */
+    async processDiff(
+        base: string,
+        head: string = 'HEAD',
+        pathFilters?: string[],
+        output: 'full' | 'signatures' = 'full',
+        cwd: string = process.cwd()
+    ): Promise<FileDiff[] | FileSignatureChanges[]> {
+        const fileDiffs = getGitDiff(base, head, pathFilters, cwd);
+
+        if (output === 'full') {
+            return this.processFullDiff(fileDiffs, base, head, cwd);
+        } else {
+            return this.processSignaturesDiff(fileDiffs, base, head, cwd);
+        }
+    }
+
+    /**
+     * Returns raw diff content per file.
+     */
+    private processFullDiff(
+        fileDiffs: ReturnType<typeof getGitDiff>,
+        _base: string,
+        _head: string,
+        _cwd: string
+    ): FileDiff[] {
+        const results: FileDiff[] = [];
+
+        for (const fileDiff of fileDiffs) {
+            const filePath = fileDiff.newPath || fileDiff.oldPath;
+            const status = getFileStatus(fileDiff);
+
+            // Reconstruct diff from hunks
+            const diffLines: string[] = [];
+            diffLines.push(`--- a/${fileDiff.oldPath}`);
+            diffLines.push(`+++ b/${fileDiff.newPath}`);
+
+            for (const hunk of fileDiff.hunks) {
+                diffLines.push(hunk.content); // @@ -x,y +a,b @@
+                for (const change of hunk.changes) {
+                    if (change.type === 'insert') {
+                        diffLines.push(`+${change.content}`);
+                    } else if (change.type === 'delete') {
+                        diffLines.push(`-${change.content}`);
+                    } else {
+                        diffLines.push(` ${change.content}`);
+                    }
+                }
+            }
+
+            results.push({
+                path: filePath,
+                status,
+                diff: diffLines.join('\n')
+            });
+        }
+
+        return results;
+    }
+
+    /**
+     * Returns function-level signature changes per file.
+     * Compares base and head versions to detect added/modified/removed functions.
+     */
+    private async processSignaturesDiff(
+        fileDiffs: ReturnType<typeof getGitDiff>,
+        base: string,
+        _head: string,
+        cwd: string
+    ): Promise<FileSignatureChanges[]> {
+        const results: FileSignatureChanges[] = [];
+
+        for (const fileDiff of fileDiffs) {
+            const filePath = fileDiff.newPath || fileDiff.oldPath;
+            const lang = this.detectLanguage(filePath);
+
+            if (!lang) continue;
+
+            const adapter = this.getAdapter(lang);
+            if (!adapter || !(adapter instanceof BaseAdapter)) continue;
+
+            const status = getFileStatus(fileDiff);
+            const { added: addedLines } = getChangedLineNumbers(fileDiff);
+
+            const changes: FileSignatureChanges = {
+                path: filePath,
+                status,
+                added: [],
+                modified: [],
+                removed: []
+            };
+
+            if (status === 'added') {
+                // All functions in the new file are "added"
+                const headContent = await this.readFileFromFs(filePath, cwd);
+                if (headContent) {
+                    const headFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: headContent });
+                    changes.added = headFunctions.map(f => f.signature);
+                }
+            } else if (status === 'deleted') {
+                // All functions in the old file are "removed"
+                const baseContent = getFileAtRef(base, fileDiff.oldPath, cwd);
+                if (baseContent) {
+                    const baseFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: baseContent });
+                    changes.removed = baseFunctions.map(f => f.signature);
+                }
+            } else {
+                // Modified: compare base and head versions
+                const baseContent = getFileAtRef(base, fileDiff.oldPath || filePath, cwd);
+                const headContent = await this.readFileFromFs(fileDiff.newPath || filePath, cwd);
+
+                if (baseContent && headContent) {
+                    const baseFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: baseContent });
+                    const headFunctions = await adapter.extractSignaturesWithRanges({ path: filePath, content: headContent });
+
+                    const baseSignatures = new Set(baseFunctions.map(f => f.signature));
+                    const headSignatures = new Set(headFunctions.map(f => f.signature));
+
+                    // Functions only in head = added
+                    for (const f of headFunctions) {
+                        if (!baseSignatures.has(f.signature)) {
+                            changes.added.push(f.signature);
+                        }
+                    }
+
+                    // Functions only in base = removed
+                    for (const f of baseFunctions) {
+                        if (!headSignatures.has(f.signature)) {
+                            changes.removed.push(f.signature);
+                        }
+                    }
+
+                    // Functions in both but with changed lines = modified
+                    for (const f of headFunctions) {
+                        if (baseSignatures.has(f.signature)) {
+                            // Check if any added lines fall within this function's range
+                            const hasChanges = addedLines.some(
+                                line => line >= f.startLine && line <= f.endLine
+                            );
+                            if (hasChanges) {
+                                changes.modified.push(f.signature);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Only include files with actual function changes
+            if (changes.added.length > 0 || changes.modified.length > 0 || changes.removed.length > 0) {
+                results.push(changes);
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Reads file content from filesystem.
+     */
+    private async readFileFromFs(filePath: string, cwd: string): Promise<string | null> {
+        try {
+            const absolutePath = path.isAbsolute(filePath)
+                ? filePath
+                : path.join(cwd, filePath);
+            return await fs.readFile(absolutePath, 'utf-8');
+        } catch {
+            return null;
+        }
     }
 }

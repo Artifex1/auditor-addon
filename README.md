@@ -20,7 +20,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | Skill | Purpose | Capabilities |
 |:------|:--------|:-------------|
 | 🛡️ **security-auditor** | Comprehensive security auditing | Map systems, hunt for hotspots, confirm vulnerabilities |
-| 📊 **estimator** | Project scoping and effort estimation | Discovery, exploration, metrics calculation, reporting |
+| 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Diff Metrics, Review, Report) |
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
 
@@ -35,7 +35,10 @@ Commands serve as convenient aliases for invoking skills. They map to specific s
 | Command | Skill | Action |
 |:--------|:------|:-------|
 | `/audit:map`, `/audit:hunt`, `/audit:attack` | security-auditor | Map, Hunt, Attack phases |
-| `/estimate:discovery`, `/estimate:explore`, `/estimate:metrics`, `/estimate:report` | estimator | Full estimation workflow |
+| `/estimate:discovery` | estimator | Stage 1 (both flows): Discover and chunk files |
+| `/estimate:explore`, `/estimate:metrics` | estimator | Stages 2-3 (full flow): Categorize files, calculate metrics |
+| `/estimate:diff-metrics`, `/estimate:review` | estimator | Stages 2-3 (diff flow): Calculate diff metrics, review changes |
+| `/estimate:report` | estimator | Stage 4 (both flows): Generate estimation report |
 | `/design:challenge` | design-challenger | Challenge design |
 | `/write:issue`, `/write:intro` | scribe | Write findings or introductions |
 
@@ -71,6 +74,19 @@ Calculates metrics for code changes between two git refs (commits, branches, or 
 - **Estimated Hours**: Review time for the diff, using the same estimation formula as `metrics`
 
 Deleted files are considered "free" (zero effort) since they reduce attack surface.
+
+### 🔍 `diff`
+
+Returns the actual diff content between two git refs, with two output modes:
+
+- **`full`**: Raw unified diff per file - useful for deep inspection during security audits
+- **`signatures`**: Function-level changes (added/modified/removed) - useful for understanding structural changes
+
+The signatures mode compares function signatures between base and head versions:
+
+- **Added**: Functions that exist only in head (new code to review)
+- **Modified**: Functions that exist in both but contain changed lines
+- **Removed**: Functions that existed in base but are gone (verify intentional, check for lost validation)
 
 ### 🕸️ `execution_paths`
 

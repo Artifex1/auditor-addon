@@ -16,6 +16,7 @@ import { createPeekHandler, peekSchema } from "./tools/peek.js";
 import { createMetricsHandler, metricsSchema } from "./tools/metrics.js";
 import { createExecutionPathsHandler, executionPathsSchema } from "./tools/executionPaths.js";
 import { createDiffMetricsHandler, diffMetricsSchema } from "./tools/diffMetrics.js";
+import { createDiffHandler, diffSchema } from "./tools/diff.js";
 
 // Create and configure engine
 const engine = new Engine();
@@ -62,6 +63,12 @@ server.registerTool(
     "diff_metrics",
     diffMetricsSchema,
     createDiffMetricsHandler(engine)
+);
+
+server.registerTool(
+    "diff",
+    diffSchema,
+    createDiffHandler(engine)
 );
 
 async function main() {

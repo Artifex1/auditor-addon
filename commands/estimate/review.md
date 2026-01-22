@@ -1,7 +1,7 @@
 ---
-description: "Stage 3 (diff flow): Review - Understand changes and filter diff scope."
+description: "Stage 2 (diff flow): Review - Categorize changes, calculate metrics, and determine scope."
 ---
 
 Use the `estimator` skill to perform the **Review** capability.
 
-Task: Review diff results and refine scope. $ARGUMENTS
+Task: Review changes and determine scope. $ARGUMENTS

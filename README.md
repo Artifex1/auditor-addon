@@ -20,7 +20,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | Skill | Purpose | Capabilities |
 |:------|:--------|:-------------|
 | 🛡️ **security-auditor** | Comprehensive security auditing | Map systems, hunt for hotspots, confirm vulnerabilities |
-| 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Diff Metrics, Review, Report) |
+| 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Review, Report) |
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
 
@@ -37,8 +37,8 @@ Commands serve as convenient aliases for invoking skills. They map to specific s
 | `/audit:map`, `/audit:hunt`, `/audit:attack` | security-auditor | Map, Hunt, Attack phases |
 | `/estimate:discovery` | estimator | Stage 1 (both flows): Discover and chunk files |
 | `/estimate:explore`, `/estimate:metrics` | estimator | Stages 2-3 (full flow): Categorize files, calculate metrics |
-| `/estimate:diff-metrics`, `/estimate:review` | estimator | Stages 2-3 (diff flow): Calculate diff metrics, review changes |
-| `/estimate:report` | estimator | Stage 4 (both flows): Generate estimation report |
+| `/estimate:review` | estimator | Stage 2 (diff flow): Categorize changes, calculate metrics, determine scope |
+| `/estimate:report` | estimator | Final stage (both flows): Generate estimation report |
 | `/design:challenge` | design-challenger | Challenge design |
 | `/write:issue`, `/write:intro` | scribe | Write findings or introductions |
 

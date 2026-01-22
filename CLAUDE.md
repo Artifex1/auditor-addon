@@ -22,7 +22,7 @@ Skills provide complete instructions for structured workflows. The agent should 
 | Skill | Purpose | Capabilities |
 | :--- | :--- | :--- |
 | `security-auditor` | Comprehensive security auditing | Map, Hunt, Attack |
-| `estimator` | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Diff Metrics, Review, Report) |
+| `estimator` | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Review, Report) |
 | `design-challenger` | Challenge overcomplicated designs | Challenge |
 | `scribe` | Report writing and finding generation | Issue, Intro |
 
@@ -37,7 +37,7 @@ Commands are human-friendly shortcuts for triggering specific capabilities. They
 | `/audit:map`, `/audit:hunt`, `/audit:attack` | `security-auditor` |
 | `/estimate:discovery` | `estimator` (Stage 1, both flows) |
 | `/estimate:explore`, `/estimate:metrics` | `estimator` (Stages 2-3, full flow) |
-| `/estimate:diff-metrics`, `/estimate:review` | `estimator` (Stages 2-3, diff flow) |
-| `/estimate:report` | `estimator` (Stage 4, both flows) |
+| `/estimate:review` | `estimator` (Stage 2, diff flow) |
+| `/estimate:report` | `estimator` (Final stage, both flows) |
 | `/write:issue`, `/write:intro` | `scribe` |
 | `/design:challenge` | `design-challenger` |

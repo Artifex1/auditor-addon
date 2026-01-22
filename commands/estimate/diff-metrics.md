@@ -1,7 +1,0 @@
----
-description: "Stage 2 (diff flow): Diff Metrics - Calculate metrics for changes between git refs."
----
-
-Use the `estimator` skill to perform the **Diff Metrics** capability.
-
-Task: Calculate diff metrics for the specified git refs. $ARGUMENTS

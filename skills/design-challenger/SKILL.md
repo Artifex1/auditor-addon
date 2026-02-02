@@ -1,6 +1,11 @@
 ---
 name: design-challenger
 description: Evaluate high-level protocol or system designs for overcomplication, then propose simpler, more structured alternatives with explicit trade-offs.
+argument-hint: "<design description>"
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
 ---
 
 # Design Challenger

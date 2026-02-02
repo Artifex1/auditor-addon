@@ -1,6 +1,16 @@
 ---
 name: estimator
 description: Conducting project scoping and estimation using logical chunking and metric analysis.
+argument-hint: "<scope file or base..head>"
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - mcp__mcp-auditor__peek
+  - mcp__mcp-auditor__metrics
+  - mcp__mcp-auditor__diff_metrics
+  - mcp__mcp-auditor__diff
+  - mcp__mcp-auditor__execution_paths
 ---
 
 # Estimator
@@ -102,7 +112,7 @@ Reason: <justification>
 **Instructions**:
 1.  **Get file structure**: Immediately check the scope.
     - If user provided a scope file, read it.
-    - Otherwise, run `tree` or `ls -R` to get the structure.
+    - Otherwise, use `Glob` with patterns like `**/*.sol`, `**/*.ts`, etc. to discover files.
 2.  **Chunk files**: Group files into logical chunks based on cohesion.
     - **Target size**: Aim for 5-15 files per chunk. Smaller chunks are easier to review incrementally.
     - **Boundaries**: Prefer directory boundaries when cohesion is unclear. If a directory has a clear purpose, it's likely a good chunk.

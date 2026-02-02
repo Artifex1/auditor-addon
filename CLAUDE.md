@@ -30,7 +30,7 @@ Refer to the `SKILL.md` files in `skills/` for detailed protocols.
 
 ## Commands
 
-Commands are human-friendly shortcuts for triggering specific capabilities. They point to a skill but don't load its instructions. **The agent should use the skill directly instead.**
+**IMPORTANT: Commands are user shorthand only. Claude Code must NOT use commands. Always invoke the corresponding skill directly.**
 
 | Command | Maps to |
 | :--- | :--- |

@@ -26,21 +26,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 
 ### How Skills Work
 
-Skills provide complete instructions that the AI follows autonomously. When invoked, the AI loads the skill's protocol and executes it step-by-step, using the available tools as needed.
-
-### Commands
-
-Commands serve as convenient aliases for invoking skills. They map to specific skill capabilities:
-
-| Command | Skill | Action |
-|:--------|:------|:-------|
-| `/audit:map`, `/audit:hunt`, `/audit:attack` | security-auditor | Map, Hunt, Attack phases |
-| `/estimate:discovery` | estimator | Stage 1 (both flows): Discover and chunk files |
-| `/estimate:explore`, `/estimate:metrics` | estimator | Stages 2-3 (full flow): Categorize files, calculate metrics |
-| `/estimate:review` | estimator | Stage 2 (diff flow): Categorize changes, calculate metrics, determine scope |
-| `/estimate:report` | estimator | Final stage (both flows): Generate estimation report |
-| `/design:challenge` | design-challenger | Challenge design |
-| `/write:issue`, `/write:intro` | scribe | Write findings or introductions |
+Skills provide complete workflows that the AI follows autonomously. When invoked, the AI loads the skill's protocol and executes it step-by-step, using the available tools as needed. Each skill can be invoked through its respective slash command (e.g., `/security-auditor`, `/estimator`).
 
 ---
 
@@ -187,4 +173,4 @@ pnpm test:watch
 - [`gemini-extension.json`](./gemini-extension.json): ⚙️ Gemini CLI extension configuration
 - [`skills/`](./skills/): 🎯 Skill definitions and protocols
 - [`src/languages/`](./src/languages/): 🔧 Language adapter implementations
-- [`commands/`](./commands/): 📋 Command alias definitions
+- [`commands/`](./commands/): 📋 Command alias definitions for Gemini CLI

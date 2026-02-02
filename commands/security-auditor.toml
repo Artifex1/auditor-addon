@@ -1,0 +1,7 @@
+description = "Comprehensive security auditing using Map-Hunt-Attack methodology."
+
+prompt = """
+Use the `security-auditor` skill.
+
+Task: {{args}}
+"""

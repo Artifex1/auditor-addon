@@ -1,0 +1,7 @@
+description = "Technical writing for formal security audit reports."
+
+prompt = """
+Use the `scribe` skill.
+
+Task: {{args}}
+"""

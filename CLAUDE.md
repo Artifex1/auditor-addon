@@ -27,17 +27,3 @@ Skills provide complete instructions for structured workflows. The agent should 
 | `scribe` | Report writing and finding generation | Issue, Intro |
 
 Refer to the `SKILL.md` files in `skills/` for detailed protocols.
-
-## Commands
-
-**IMPORTANT: Commands are user shorthand only. Claude Code must NOT use commands. Always invoke the corresponding skill directly.**
-
-| Command | Maps to |
-| :--- | :--- |
-| `/audit:map`, `/audit:hunt`, `/audit:attack` | `security-auditor` |
-| `/estimate:discovery` | `estimator` (Stage 1, both flows) |
-| `/estimate:explore`, `/estimate:metrics` | `estimator` (Stages 2-3, full flow) |
-| `/estimate:review` | `estimator` (Stage 2, diff flow) |
-| `/estimate:report` | `estimator` (Final stage, both flows) |
-| `/write:issue`, `/write:intro` | `scribe` |
-| `/design:challenge` | `design-challenger` |

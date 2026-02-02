@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Technical writer specializing in OpenZeppelin-style security audit reports.
+description: Technical writing for formal security audit reports.
 argument-hint: "<issue details>"
 allowed-tools:
   - Read

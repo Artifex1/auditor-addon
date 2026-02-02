@@ -1,0 +1,7 @@
+description = "Project scoping and estimation using logical chunking and metric analysis."
+
+prompt = """
+Use the `estimator` skill.
+
+Task: {{args}}
+"""

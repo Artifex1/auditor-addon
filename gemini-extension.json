@@ -1,6 +1,6 @@
 {
   "name": "mcp-auditor",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "MCP Auditor helps estimate and audit code and write issues",
   "contextFileName": "GEMINI.md",
   "mcpServers": {

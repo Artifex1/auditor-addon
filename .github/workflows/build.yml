@@ -9,6 +9,9 @@ on:
       - 'pnpm-lock.yaml'
       - 'tsup.config.ts'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest

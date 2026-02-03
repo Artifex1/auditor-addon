@@ -106,11 +106,16 @@ Traces call chains from public entrypoints through internal function calls, prod
 ### Via Claude Code Plugin
 
 ```bash
-# Add the marketplace
-/plugin marketplace add <owner/repo>
+# 1. Start Claude Code
+claude
 
-# Then in plugin settings, install auditor-addon
-/plugin settings
+# 2. Go to plugins
+/plugin
+
+# 3. Navigate to Marketplaces tab
+# 4. <enter> on "+ Add Marketplace"
+# 5. Paste this repo's link, <enter>
+# 6. Hit <space> and <i>
 ```
 
 ### Via Gemini CLI Extension

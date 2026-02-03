@@ -1,10 +1,10 @@
 {
-  "name": "mcp-auditor",
+  "name": "auditor-addon",
   "version": "1.0.3",
-  "description": "MCP Auditor helps estimate and audit code and write issues",
+  "description": "Auditor Addon helps estimate and audit code and write issues",
   "contextFileName": "GEMINI.md",
   "mcpServers": {
-    "mcp-auditor": {
+    "auditor-addon": {
       "command": "node",
       "args": [
         "${extensionPath}${/}dist${/}mcp${/}server.js"

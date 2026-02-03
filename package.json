@@ -1,7 +1,7 @@
 {
-  "name": "mcp-server-example",
+  "name": "auditor-addon",
   "version": "1.0.3",
-  "description": "Example MCP Server for Gemini CLI Extension",
+  "description": "MCP server for code estimation, security auditing, and reporting",
   "type": "module",
   "main": "dist/mcp/server.js",
   "scripts": {

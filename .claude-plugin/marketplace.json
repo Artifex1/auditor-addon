@@ -1,5 +1,5 @@
 {
-  "name": "mcp-auditor-marketplace",
+  "name": "auditor-addon-marketplace",
   "owner": {
     "name": "Artifex1"
   },
@@ -8,16 +8,16 @@
   },
   "plugins": [
     {
-      "name": "mcp-auditor",
+      "name": "auditor-addon",
       "version": "1.0.3",
-      "description": "MCP Auditor helps estimate and audit code and write issues",
+      "description": "Auditor Addon helps estimate and audit code and write issues",
       "keywords": [
         "security",
         "audit",
         "estimation",
         "code-analysis"
       ],
-      "repository": "https://github.com/Artifex1/mcp-auditor",
+      "repository": "https://github.com/Artifex1/auditor-addon",
       "source": "./"
     }
   ]

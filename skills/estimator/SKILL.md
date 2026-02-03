@@ -6,11 +6,11 @@ allowed-tools:
   - Read
   - Glob
   - Grep
-  - mcp__mcp-auditor__peek
-  - mcp__mcp-auditor__metrics
-  - mcp__mcp-auditor__diff_metrics
-  - mcp__mcp-auditor__diff
-  - mcp__mcp-auditor__execution_paths
+  - mcp__auditor-addon__peek
+  - mcp__auditor-addon__metrics
+  - mcp__auditor-addon__diff_metrics
+  - mcp__auditor-addon__diff
+  - mcp__auditor-addon__execution_paths
 ---
 
 # Estimator

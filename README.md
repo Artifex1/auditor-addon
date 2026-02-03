@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./logo.svg" alt="MCP Auditor Logo" width="400">
+<img src="./logo.svg" alt="Auditor Addon Logo" width="400">
 
 ### *The LLM Multi Tool for Code Auditing*
 
@@ -109,7 +109,7 @@ Traces call chains from public entrypoints through internal function calls, prod
 # Add the marketplace
 /plugin marketplace add <owner/repo>
 
-# Then in plugin settings, install mcp-auditor
+# Then in plugin settings, install auditor-addon
 /plugin settings
 ```
 
@@ -131,7 +131,7 @@ gemini extensions list
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd mcp-auditor
+cd auditor-addon
 
 # Install dependencies
 pnpm install

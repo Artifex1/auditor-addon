@@ -32358,7 +32358,7 @@ engine.registerAdapter(new TypeScriptAdapter());
 engine.registerAdapter(new TsxAdapter());
 engine.registerAdapter(new FlowAdapter());
 var server = new McpServer({
-  name: "mcp-auditor",
+  name: "auditor-addon",
   version: "1.0.0"
 });
 server.registerTool(
@@ -32389,7 +32389,7 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("MCP Auditor Server running on stdio");
+  console.error("Auditor Addon Server running on stdio");
 }
 main().catch((error) => {
   console.error("Fatal error in main():", error);

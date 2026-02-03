@@ -37,7 +37,7 @@ engine.registerAdapter(new FlowAdapter());
 
 // Create server instance
 const server = new McpServer({
-    name: "mcp-auditor",
+    name: "auditor-addon",
     version: "1.0.0",
 });
 
@@ -74,7 +74,7 @@ server.registerTool(
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("MCP Auditor Server running on stdio");
+    console.error("Auditor Addon Server running on stdio");
 }
 
 main().catch((error) => {

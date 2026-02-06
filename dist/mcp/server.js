@@ -29660,6 +29660,8 @@ var TreeSitterService = class _TreeSitterService {
         return "tree-sitter-noir.wasm";
       case "tolk" /* Tolk */:
         return "tree-sitter-tolk.wasm";
+      case "masm" /* Masm */:
+        return "tree-sitter-masm.wasm";
       default:
         console.warn(`No explicit WASM mapping for ${lang}, falling back to convention.`);
         return `tree-sitter-${lang.toLowerCase()}.wasm`;
@@ -30155,6 +30157,8 @@ var Engine = class {
         return "noir" /* Noir */;
       case ".tolk":
         return "tolk" /* Tolk */;
+      case ".masm":
+        return "masm" /* Masm */;
       default:
         return void 0;
     }
@@ -31731,6 +31735,47 @@ var FlowAdapter = class extends BaseAdapter {
   }
 };
 
+// src/languages/masmAdapter.ts
+init_esm_shims();
+var MasmAdapter = class extends BaseAdapter {
+  constructor() {
+    super({
+      languageId: "masm" /* Masm */,
+      queries: {
+        comments: `
+                    (comment) @comment
+                    (doc_comment) @comment
+                    (moduledoc) @comment
+                `,
+        functions: `
+                    (procedure) @function
+                    (entrypoint) @function
+                `,
+        branching: `
+                    (if) @branch
+                    (while) @branch
+                    (repeat) @branch
+                `,
+        normalization: `
+                    (invoke) @norm
+                    (procedure) @norm
+                    (entrypoint) @norm
+                `
+      },
+      constants: {
+        baseRateNlocPerDay: 350,
+        // Stack-based assembly requires careful review but procedures are straightforward
+        complexityMidpoint: 10,
+        complexitySteepness: 7,
+        complexityBenefitCap: 0.3,
+        complexityPenaltyCap: 0.6,
+        commentFullBenefitDensity: 20,
+        commentBenefitCap: 0.3
+      }
+    });
+  }
+};
+
 // src/mcp/tools/peek.ts
 init_esm_shims();
 
@@ -32353,6 +32398,7 @@ engine.registerAdapter(new CompactAdapter());
 engine.registerAdapter(new MoveAdapter());
 engine.registerAdapter(new NoirAdapter());
 engine.registerAdapter(new TolkAdapter());
+engine.registerAdapter(new MasmAdapter());
 engine.registerAdapter(new JavaScriptAdapter());
 engine.registerAdapter(new TypeScriptAdapter());
 engine.registerAdapter(new TsxAdapter());

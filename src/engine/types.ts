@@ -13,6 +13,7 @@ export enum SupportedLanguage {
     Move = "move",
     Noir = "noir",
     Tolk = "tolk",
+    Masm = "masm",
 }
 
 export interface FileContent {

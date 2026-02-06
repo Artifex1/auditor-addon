@@ -70,6 +70,8 @@ export class Engine {
                 return SupportedLanguage.Noir;
             case ".tolk":
                 return SupportedLanguage.Tolk;
+            case ".masm":
+                return SupportedLanguage.Masm;
             default:
                 return undefined;
         }

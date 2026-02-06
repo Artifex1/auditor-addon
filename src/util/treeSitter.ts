@@ -106,6 +106,8 @@ export class TreeSitterService {
                 return 'tree-sitter-noir.wasm';
             case SupportedLanguage.Tolk:
                 return 'tree-sitter-tolk.wasm';
+            case SupportedLanguage.Masm:
+                return 'tree-sitter-masm.wasm';
             default:
                 console.warn(`No explicit WASM mapping for ${lang}, falling back to convention.`);
                 return `tree-sitter-${(lang as string).toLowerCase()}.wasm`;

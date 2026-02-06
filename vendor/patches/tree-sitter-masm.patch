@@ -1,0 +1,13 @@
+diff --git a/grammar.js b/grammar.js
+index bd82913..93ec464 100644
+--- a/grammar.js
++++ b/grammar.js
+@@ -489,7 +489,7 @@ module.exports = grammar({
+     _imm_decimal: ($) => choice($.decimal, $.const_ident),
+     _imm_string: ($) => choice($.string, $.const_ident),
+ 
+-    whitespace: ($) => /[\r\f\t\v ]*/,
++    whitespace: ($) => /[\r\f\t\v ]+/,
+     newline: ($) => token("\n"),
+   },
+ });

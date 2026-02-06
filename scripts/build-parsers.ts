@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const ROOT_DIR = path.join(__dirname, '..');
 const GRAMMARS_DIR = path.join(ROOT_DIR, 'vendor', 'grammars');
+const PATCHES_DIR = path.join(ROOT_DIR, 'vendor', 'patches');
 const PARSERS_DIR = path.join(ROOT_DIR, 'dist', 'mcp', 'parsers');
 
 // Use the host project's CLI to avoid version conflicts within submodules
@@ -96,16 +97,29 @@ for (const vendorName of vendorDirs) {
         console.log(`Processing ${langName}...`);
 
         try {
+            // Apply vendor patch if one exists (e.g. vendor/patches/tree-sitter-masm.patch)
+            let patched = false;
+            const patchFile = path.join(PATCHES_DIR, `${vendorName}.patch`);
+            if (fs.existsSync(patchFile)) {
+                console.log(`  Applying patch ${vendorName}.patch...`);
+                execSync(`git apply "${patchFile}"`, {
+                    cwd: vendorPath,
+                    stdio: ['ignore', 'inherit', 'inherit']
+                });
+                patched = true;
+            }
+
             // CHECK: Does src/parser.c exist?
             // If missing, we generate it (fixes 'tolk').
-            // If present, we skip 'generate' to avoid 'emcc' errors (fixes 'javascript').
+            // If patched, we must regenerate since the grammar changed.
+            // If present and unpatched, we skip 'generate' to avoid 'emcc' errors (fixes 'javascript').
             const parserCPath = path.join(target.path, 'src', 'parser.c');
-            
-            if (!fs.existsSync(parserCPath)) {
-                console.log(`  ! src/parser.c missing. Running 'generate'...`);
+
+            if (!fs.existsSync(parserCPath) || patched) {
+                console.log(`  ${patched ? 'Patch applied.' : '! src/parser.c missing.'} Running 'generate'...`);
                 execSync(`"${TREE_SITTER_CLI}" generate`, {
                     cwd: target.path,
-                    stdio: ['ignore', 'inherit', 'inherit'] 
+                    stdio: ['ignore', 'inherit', 'inherit']
                 });
             }
 
@@ -130,6 +144,11 @@ for (const vendorName of vendorDirs) {
 
         } catch (error) {
             console.error(`  ✗ Failed to build ${langName}`);
+        } finally {
+            // Revert any applied patches so the submodule stays pristine
+            if (fs.existsSync(path.join(PATCHES_DIR, `${vendorName}.patch`))) {
+                execSync('git checkout -- .', { cwd: vendorPath, stdio: 'ignore' });
+            }
         }
     }
 }

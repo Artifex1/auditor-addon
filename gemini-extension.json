@@ -1,6 +1,6 @@
 {
   "name": "auditor-addon",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Auditor Addon helps estimate and audit code and write issues",
   "contextFileName": "GEMINI.md",
   "mcpServers": {

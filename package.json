@@ -1,6 +1,6 @@
 {
   "name": "auditor-addon",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "MCP server for code estimation, security auditing, and reporting",
   "type": "module",
   "main": "dist/mcp/server.js",

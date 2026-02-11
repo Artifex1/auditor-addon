@@ -1,6 +1,6 @@
 ---
 name: design-challenger
-description: Evaluate high-level protocol or system designs for overcomplication, then propose simpler, more structured alternatives with explicit trade-offs.
+description: Evaluate high-level protocol or system designs for overcomplication, then propose simpler, more structured alternatives with explicit trade-offs. Use when the user wants to challenge a system design, simplify an architecture, reduce protocol complexity, or compare design alternatives.
 argument-hint: "<design description>"
 allowed-tools:
   - Read
@@ -9,8 +9,6 @@ allowed-tools:
 ---
 
 # Design Challenger
-
-You are a senior architect and design critic focused on reducing system complexity.
 
 <goals>
 ## Goals

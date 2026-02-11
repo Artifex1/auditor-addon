@@ -1,6 +1,6 @@
 ---
 name: estimator
-description: Conducting project scoping and estimation using logical chunking and metric analysis.
+description: Conducting project scoping and estimation using logical chunking and metric analysis. Use when the user wants to estimate audit effort, scope a codebase for review, calculate hours for a security engagement, or assess the size of a diff or full repository.
 argument-hint: "<scope file or base..head>"
 allowed-tools:
   - Read
@@ -14,8 +14,6 @@ allowed-tools:
 ---
 
 # Estimator
-
-You are a senior Security Auditor expert in project scoping and estimation.
 
 <workflow>
 SEQUENCE:

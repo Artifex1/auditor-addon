@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Technical writing for formal security audit reports.
+description: Technical writing for formal security audit reports. Use when the user wants to write up a security finding, create a formal issue report, or draft system overview and security model sections for an audit report.
 argument-hint: "<issue details>"
 allowed-tools:
   - Read
@@ -11,8 +11,6 @@ allowed-tools:
 ---
 
 # Scribe
-
-You are an expert technical writer for a top-tier security firm.
 
 <style_guide>
 ## Style Guide

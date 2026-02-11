@@ -19,7 +19,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 
 | Skill | Purpose | Capabilities |
 |:------|:--------|:-------------|
-| 🛡️ **security-auditor** | Comprehensive security auditing | Map systems, hunt for hotspots, confirm vulnerabilities |
+| 🛡️ **security-auditor** | Interactive security auditing with Map & Probe methodology | Map (structural inventory) → Checklist (optional, standard-specific) → Probe (per-path vulnerability analysis) |
 | 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Review, Report) |
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
@@ -27,6 +27,15 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 ### How Skills Work
 
 Skills provide complete workflows that the AI follows autonomously. When invoked, the AI loads the skill's protocol and executes it step-by-step, using the available tools as needed. Each skill can be invoked through its respective slash command (e.g., `/security-auditor`, `/estimator`).
+
+> [!NOTE]
+> **Model Performance**: Skills perform differently across AI models. Depending on your needs, you may want to adjust the model for optimal results:
+> - **Speed**: Lighter models (e.g., Claude Haiku, Gemini Flash) execute faster but may miss subtle issues
+> - **Reasoning Effort**: More capable models (e.g., Claude Sonnet/Opus, Gemini Pro) provide deeper analysis and better edge case detection
+> - **Thoroughness**: Higher-tier models tend to be more comprehensive in their exploration and validation
+> - **Verbosity**: Models with higher reasoning capabilities can be less verbose in their thinking process
+>
+> Experiment with different models to find the right balance for your use case.
 
 ---
 

@@ -72,6 +72,9 @@ export class Engine {
                 return SupportedLanguage.Tolk;
             case ".masm":
                 return SupportedLanguage.Masm;
+            case ".py":
+            case ".pyw":
+                return SupportedLanguage.Python;
             default:
                 return undefined;
         }

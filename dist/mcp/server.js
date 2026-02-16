@@ -407,7 +407,7 @@ var require_codegen = __commonJS({
       AND: new code_1._Code("&&"),
       ADD: new code_1._Code("+")
     };
-    var Node6 = class {
+    var Node7 = class {
       optimizeNodes() {
         return this;
       }
@@ -415,7 +415,7 @@ var require_codegen = __commonJS({
         return this;
       }
     };
-    var Def = class extends Node6 {
+    var Def = class extends Node7 {
       constructor(varKind, name2, rhs) {
         super();
         this.varKind = varKind;
@@ -438,7 +438,7 @@ var require_codegen = __commonJS({
         return this.rhs instanceof code_1._CodeOrName ? this.rhs.names : {};
       }
     };
-    var Assign = class extends Node6 {
+    var Assign = class extends Node7 {
       constructor(lhs, rhs, sideEffects) {
         super();
         this.lhs = lhs;
@@ -468,7 +468,7 @@ var require_codegen = __commonJS({
         return `${this.lhs} ${this.op}= ${this.rhs};` + _n;
       }
     };
-    var Label = class extends Node6 {
+    var Label = class extends Node7 {
       constructor(label) {
         super();
         this.label = label;
@@ -478,7 +478,7 @@ var require_codegen = __commonJS({
         return `${this.label}:` + _n;
       }
     };
-    var Break = class extends Node6 {
+    var Break = class extends Node7 {
       constructor(label) {
         super();
         this.label = label;
@@ -489,7 +489,7 @@ var require_codegen = __commonJS({
         return `break${label};` + _n;
       }
     };
-    var Throw = class extends Node6 {
+    var Throw = class extends Node7 {
       constructor(error) {
         super();
         this.error = error;
@@ -501,7 +501,7 @@ var require_codegen = __commonJS({
         return this.error.names;
       }
     };
-    var AnyCode = class extends Node6 {
+    var AnyCode = class extends Node7 {
       constructor(code) {
         super();
         this.code = code;
@@ -520,7 +520,7 @@ var require_codegen = __commonJS({
         return this.code instanceof code_1._CodeOrName ? this.code.names : {};
       }
     };
-    var ParentNode = class extends Node6 {
+    var ParentNode = class extends Node7 {
       constructor(nodes = []) {
         super();
         this.nodes = nodes;
@@ -31783,7 +31783,99 @@ var MasmAdapter = class extends BaseAdapter {
 
 // src/languages/pythonAdapter.ts
 init_esm_shims();
-var PythonAdapter = class extends BaseAdapter {
+var PythonAdapter = class _PythonAdapter extends BaseAdapter {
+  static QUERIES = {
+    CLASSES: `
+            (class_definition) @class
+        `,
+    INHERITANCE: `
+            (class_definition superclasses: (argument_list (identifier) @parent))
+        `,
+    FUNCTIONS: `
+            (function_definition) @function
+        `,
+    SIMPLE_CALL: `
+            (call function: (identifier) @FUNC)
+        `,
+    ATTRIBUTE_CALL: `
+            (call function: (attribute attribute: (identifier) @FUNC))
+        `,
+    SUPER_CALL: `
+            (call function: (attribute object: (call function: (identifier) @super_call (#eq? @super_call "super")) attribute: (identifier) @FUNC))
+        `
+  };
+  static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set([
+    "print",
+    "len",
+    "range",
+    "int",
+    "str",
+    "float",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "type",
+    "isinstance",
+    "issubclass",
+    "hasattr",
+    "getattr",
+    "setattr",
+    "super",
+    "property",
+    "staticmethod",
+    "classmethod",
+    "enumerate",
+    "zip",
+    "map",
+    "filter",
+    "sorted",
+    "reversed",
+    "min",
+    "max",
+    "sum",
+    "abs",
+    "round",
+    "open",
+    "input",
+    "bool",
+    "bytes",
+    "bytearray",
+    "memoryview",
+    "object",
+    "id",
+    "hash",
+    "repr",
+    "format",
+    "vars",
+    "dir",
+    "callable",
+    "iter",
+    "next",
+    "slice",
+    "frozenset",
+    "chr",
+    "ord",
+    "hex",
+    "oct",
+    "bin",
+    "pow",
+    "divmod",
+    "any",
+    "all",
+    "breakpoint",
+    "compile",
+    "eval",
+    "exec",
+    "globals",
+    "locals",
+    "help",
+    "ascii"
+  ]);
+  symbolTable = /* @__PURE__ */ new Map();
+  symbolsByLabel = /* @__PURE__ */ new Map();
+  symbolsByClass = /* @__PURE__ */ new Map();
+  inheritanceGraph = /* @__PURE__ */ new Map();
   constructor() {
     super({
       languageId: "python" /* Python */,
@@ -31824,6 +31916,250 @@ var PythonAdapter = class extends BaseAdapter {
         commentBenefitCap: 0.25
       }
     });
+  }
+  async generateCallGraph(files) {
+    this.resetState();
+    const edges = [];
+    await this.buildSymbolTable(files);
+    await this.identifyCalls(edges, files);
+    const nodes = Array.from(this.symbolTable.values());
+    return { nodes, edges };
+  }
+  resetState() {
+    this.symbolTable.clear();
+    this.symbolsByLabel.clear();
+    this.symbolsByClass.clear();
+    this.inheritanceGraph.clear();
+  }
+  indexSymbol(node) {
+    this.symbolTable.set(node.id, node);
+    const labelNodes = this.symbolsByLabel.get(node.label) || [];
+    labelNodes.push(node);
+    this.symbolsByLabel.set(node.label, labelNodes);
+    if (node.contract) {
+      const classNodes = this.symbolsByClass.get(node.contract) || [];
+      classNodes.push(node);
+      this.symbolsByClass.set(node.contract, classNodes);
+    }
+  }
+  async buildSymbolTable(files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("python" /* Python */);
+    const parser = await service.createParser("python" /* Python */);
+    const classQuery = new Query(lang, _PythonAdapter.QUERIES.CLASSES);
+    const inheritanceQuery = new Query(lang, _PythonAdapter.QUERIES.INHERITANCE);
+    const functionQuery = new Query(lang, _PythonAdapter.QUERIES.FUNCTIONS);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const classCaptures = classQuery.captures(tree.rootNode);
+      for (const capture of classCaptures) {
+        const classNode = capture.node;
+        const className = classNode.childForFieldName("name")?.text ?? "unknown";
+        const parentCaptures = inheritanceQuery.captures(classNode);
+        const parents = parentCaptures.filter((c) => c.name === "parent").map((c) => c.node.text);
+        if (parents.length > 0) {
+          this.inheritanceGraph.set(className, parents);
+        }
+        const bodyNode = classNode.childForFieldName("body");
+        if (!bodyNode) continue;
+        const methodCaptures = functionQuery.captures(bodyNode);
+        for (const methodCapture of methodCaptures) {
+          if (this.isNestedFunction(methodCapture.node, bodyNode)) continue;
+          const node = this.createMethodNode(methodCapture.node, file.path, className);
+          this.indexSymbol(node);
+        }
+      }
+      const funcCaptures = functionQuery.captures(tree.rootNode);
+      for (const capture of funcCaptures) {
+        if (this.isInsideClass(capture.node, classCaptures)) continue;
+        if (this.isNestedInFunction(capture.node, tree.rootNode)) continue;
+        const node = this.createFunctionNode(capture.node, file.path);
+        this.indexSymbol(node);
+      }
+    }
+  }
+  isNestedFunction(funcNode, classBody) {
+    let current = funcNode.parent;
+    while (current && current.id !== classBody.id) {
+      if (current.type === "function_definition" && current.id !== funcNode.id) {
+        return true;
+      }
+      current = current.parent;
+    }
+    return false;
+  }
+  isInsideClass(funcNode, classCaptures) {
+    for (const classCapture of classCaptures) {
+      const classNode = classCapture.node;
+      if (funcNode.startIndex >= classNode.startIndex && funcNode.endIndex <= classNode.endIndex) {
+        return true;
+      }
+    }
+    return false;
+  }
+  isNestedInFunction(funcNode, root) {
+    let current = funcNode.parent;
+    while (current && current.id !== root.id) {
+      if (current.type === "function_definition") {
+        return true;
+      }
+      if (current.type === "class_definition") {
+        return false;
+      }
+      current = current.parent;
+    }
+    return false;
+  }
+  createFunctionNode(node, file) {
+    const nameNode = node.childForFieldName("name");
+    const fnName = nameNode?.text ?? "unknown";
+    const visibility = this.extractVisibility(fnName);
+    const id = fnName;
+    return {
+      id,
+      label: fnName,
+      file,
+      visibility,
+      range: {
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+      },
+      text: node.text
+    };
+  }
+  createMethodNode(node, file, className) {
+    const nameNode = node.childForFieldName("name");
+    const fnName = nameNode?.text ?? "unknown";
+    const visibility = this.extractVisibility(fnName);
+    const id = `${className}.${fnName}`;
+    return {
+      id,
+      label: fnName,
+      file,
+      contract: className,
+      visibility,
+      range: {
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+      },
+      text: node.text
+    };
+  }
+  extractVisibility(name2) {
+    if (name2.length === 0) return "private";
+    if (name2.startsWith("__") && name2.endsWith("__")) return "public";
+    if (name2.startsWith("_")) return "private";
+    return "public";
+  }
+  findInClass(className, methodName) {
+    const methods = this.symbolsByClass.get(className);
+    return methods?.find((n) => n.label === methodName);
+  }
+  resolveInheritedCall(name2, className, visited = /* @__PURE__ */ new Set()) {
+    if (visited.has(className)) return void 0;
+    visited.add(className);
+    const parents = this.inheritanceGraph.get(className);
+    if (!parents) return void 0;
+    for (const parent of parents) {
+      const func2 = this.findInClass(parent, name2);
+      if (func2) return func2;
+      const inherited = this.resolveInheritedCall(name2, parent, visited);
+      if (inherited) return inherited;
+    }
+    return void 0;
+  }
+  async identifyCalls(edges, files) {
+    const service = TreeSitterService.getInstance();
+    const lang = await service.getLanguage("python" /* Python */);
+    const parser = await service.createParser("python" /* Python */);
+    const functionQuery = new Query(lang, _PythonAdapter.QUERIES.FUNCTIONS);
+    const simpleCallQuery = new Query(lang, _PythonAdapter.QUERIES.SIMPLE_CALL);
+    const attributeCallQuery = new Query(lang, _PythonAdapter.QUERIES.ATTRIBUTE_CALL);
+    const superCallQuery = new Query(lang, _PythonAdapter.QUERIES.SUPER_CALL);
+    for (const file of files) {
+      const tree = parser.parse(file.content);
+      if (!tree) continue;
+      const funcCaptures = functionQuery.captures(tree.rootNode);
+      for (const capture of funcCaptures) {
+        const functionNode = capture.node;
+        const symbol = this.findSymbolAtNode(functionNode, file.path);
+        if (!symbol) continue;
+        this.processCallsInFunction(functionNode, symbol, edges, simpleCallQuery, attributeCallQuery, superCallQuery);
+      }
+    }
+  }
+  processCallsInFunction(functionNode, caller, edges, simpleCallQuery, attributeCallQuery, superCallQuery) {
+    const superCaptures = superCallQuery.captures(functionNode);
+    const superMethodNames = /* @__PURE__ */ new Set();
+    for (const capture of superCaptures) {
+      if (capture.name !== "FUNC") continue;
+      const methodName = capture.node.text;
+      superMethodNames.add(methodName);
+      const callee = this.resolveSuperCall(methodName, caller);
+      if (callee && callee.id !== caller.id) {
+        this.addEdge(edges, caller.id, callee.id);
+      }
+    }
+    const simpleCaptures = simpleCallQuery.captures(functionNode);
+    for (const capture of simpleCaptures) {
+      if (capture.name !== "FUNC") continue;
+      const callName = capture.node.text;
+      if (_PythonAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
+      const callee = this.resolveSimpleCall(callName, caller);
+      if (callee && callee.id !== caller.id) {
+        this.addEdge(edges, caller.id, callee.id);
+      }
+    }
+    const attrCaptures = attributeCallQuery.captures(functionNode);
+    for (const capture of attrCaptures) {
+      if (capture.name !== "FUNC") continue;
+      const methodName = capture.node.text;
+      if (_PythonAdapter.BUILTIN_FUNCTIONS.has(methodName)) continue;
+      const callee = this.resolveAttributeCall(methodName, caller);
+      if (callee && callee.id !== caller.id) {
+        this.addEdge(edges, caller.id, callee.id);
+      }
+    }
+  }
+  addEdge(edges, from, to) {
+    const exists = edges.some((e) => e.from === from && e.to === to);
+    if (!exists) {
+      edges.push({ from, to, kind: "internal" });
+    }
+  }
+  resolveSuperCall(name2, caller) {
+    if (!caller.contract) return void 0;
+    return this.resolveInheritedCall(name2, caller.contract);
+  }
+  resolveSimpleCall(callName, caller) {
+    if (caller.contract) {
+      const local = this.findInClass(caller.contract, callName);
+      if (local) return local;
+      const inherited = this.resolveInheritedCall(callName, caller.contract);
+      if (inherited) return inherited;
+    }
+    const candidates = this.symbolsByLabel.get(callName);
+    const freeFunc = candidates?.find((n) => !n.contract);
+    if (freeFunc) return freeFunc;
+    return candidates?.[0];
+  }
+  resolveAttributeCall(methodName, caller) {
+    if (caller.contract) {
+      const local = this.findInClass(caller.contract, methodName);
+      if (local) return local;
+      const inherited = this.resolveInheritedCall(methodName, caller.contract);
+      if (inherited) return inherited;
+    }
+    const candidates = this.symbolsByLabel.get(methodName);
+    return candidates?.find((n) => !!n.contract);
+  }
+  findSymbolAtNode(node, filePath) {
+    const line = node.startPosition.row + 1;
+    const col = node.startPosition.column;
+    return Array.from(this.symbolTable.values()).find(
+      (s) => s.file === filePath && s.range?.start.line === line && s.range?.start.column === col
+    );
   }
 };
 

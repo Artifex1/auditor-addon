@@ -462,7 +462,7 @@ export class SolidityAdapter extends BaseAdapter {
                 if (bodyNode) {
                     const functions = functionQuery.captures(bodyNode);
                     for (const fnCapture of functions) {
-                        this.indexSymbol(await this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
+                        this.indexSymbol(this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
                     }
                 }
             }
@@ -470,7 +470,7 @@ export class SolidityAdapter extends BaseAdapter {
             // 2. Find free functions (not inside a container)
             for (const child of tree.rootNode.children) {
                 if (child.type === 'function_definition' || child.type === 'fallback_receive_definition') {
-                    this.indexSymbol(await this.createFunctionNode(child, file.path));
+                    this.indexSymbol(this.createFunctionNode(child, file.path));
                 }
             }
         }
@@ -486,7 +486,7 @@ export class SolidityAdapter extends BaseAdapter {
      * @param contract - Name of the containing contract
      * @returns GraphNode representing this function
      */
-    private async createFunctionNode(node: Node, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string): Promise<GraphNode> {
+    private createFunctionNode(node: Node, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string): GraphNode {
         let fnName = 'unknown';
         let params = '';
         let visibility: Visibility | undefined;

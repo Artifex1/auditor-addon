@@ -126,7 +126,7 @@ export class RustAdapter extends BaseAdapter {
                     const funcCaptures = functionQuery.captures(bodyNode);
                     for (const funcCapture of funcCaptures) {
                         if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                        const node = await this.createFunctionNode(
+                        const node = this.createFunctionNode(
                             funcCapture.node,
                             file.path,
                             containerName
@@ -148,7 +148,7 @@ export class RustAdapter extends BaseAdapter {
                     });
 
                     if (!isInImpl) {
-                        const node = await this.createFunctionNode(child, file.path);
+                        const node = this.createFunctionNode(child, file.path);
                         this.indexSymbol(node);
                     }
                 }
@@ -169,7 +169,7 @@ export class RustAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(bodyNode);
             for (const funcCapture of funcCaptures) {
                 if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                const node = await this.createFunctionNode(
+                const node = this.createFunctionNode(
                     funcCapture.node,
                     filePath,
                     modName
@@ -203,11 +203,11 @@ export class RustAdapter extends BaseAdapter {
         return 'unknown';
     }
 
-    private async createFunctionNode(
+    private createFunctionNode(
         node: Node,
         file: string,
         container?: string
-    ): Promise<GraphNode> {
+    ): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
 

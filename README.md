@@ -96,11 +96,13 @@ Traces call chains from public entrypoints through internal function calls, prod
 | 🔷 **Solidity** | ✅ | ✅ | ✅ |
 | 🦀 **Rust** | ✅ | ✅ | ✅ |
 | 🐹 **Go** | ✅ | ✅ | ✅ |
+| 🐍 **Python** | ✅ | ✅ | ✅ |
 | 🐪 **Cairo** | ✅ | ⏳ | ✅ |
 | 📦 **Compact** | ✅ | ⏳ | ✅ |
 | 💧 **Move** | ✅ | ⏳ | ✅ |
 | 🌑 **Noir** | ✅ | ⏳ | ✅ |
 | 🧩 **Tolk** | ✅ | ⏳ | ✅ |
+| ⚙️ **Masm** | ✅ | ⏳ | ✅ |
 | ⚡ **C++** | ✅ | ⏳ | ✅ |
 | ☕ **Java** | ✅ | ⏳ | ✅ |
 | 🟨 **JavaScript** | ✅ | ⏳ | ✅ |

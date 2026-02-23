@@ -30765,13 +30765,13 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         if (bodyNode) {
           const functions = functionQuery.captures(bodyNode);
           for (const fnCapture of functions) {
-            this.indexSymbol(await this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
+            this.indexSymbol(this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
           }
         }
       }
       for (const child of tree.rootNode.children) {
         if (child.type === "function_definition" || child.type === "fallback_receive_definition") {
-          this.indexSymbol(await this.createFunctionNode(child, file.path));
+          this.indexSymbol(this.createFunctionNode(child, file.path));
         }
       }
     }
@@ -30786,7 +30786,7 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
    * @param contract - Name of the containing contract
    * @returns GraphNode representing this function
    */
-  async createFunctionNode(node, file, containerKind, contract) {
+  createFunctionNode(node, file, containerKind, contract) {
     let fnName = "unknown";
     let params = "";
     let visibility;
@@ -31293,7 +31293,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
           const funcCaptures = functionQuery.captures(bodyNode);
           for (const funcCapture of funcCaptures) {
             if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-            const node = await this.createFunctionNode(
+            const node = this.createFunctionNode(
               funcCapture.node,
               file.path,
               containerName
@@ -31309,7 +31309,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
             return body2 && child.startIndex >= body2.startIndex && child.endIndex <= body2.endIndex;
           });
           if (!isInImpl) {
-            const node = await this.createFunctionNode(child, file.path);
+            const node = this.createFunctionNode(child, file.path);
             this.indexSymbol(node);
           }
         }
@@ -31326,7 +31326,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(bodyNode);
       for (const funcCapture of funcCaptures) {
         if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-        const node = await this.createFunctionNode(
+        const node = this.createFunctionNode(
           funcCapture.node,
           filePath,
           modName
@@ -31354,7 +31354,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
     }
     return "unknown";
   }
-  async createFunctionNode(node, file, container) {
+  createFunctionNode(node, file, container) {
     const nameNode = node.childForFieldName("name");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(node);

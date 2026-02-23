@@ -251,6 +251,40 @@ describe('RustAdapter Call Graph', () => {
         expect(edges.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('should attribute nested fn calls to the enclosing method', async () => {
+        const code = `
+            fn free_func() {}
+
+            struct MyStruct;
+
+            impl MyStruct {
+                fn process(&self) {
+                    fn helper() {
+                        free_func();
+                    }
+                    self.target();
+                }
+
+                fn target(&self) {}
+            }
+        `;
+        const files: FileContent[] = [{ path: '/test.rs', content: code }];
+        const graph = await adapter.generateCallGraph(files);
+
+        // helper is not a node — nested fns are not indexed as struct methods
+        expect(graph.nodes.find(n => n.label === 'helper')).toBeUndefined();
+        expect(graph.nodes).toHaveLength(3); // free_func, process, target
+
+        const process = graph.nodes.find(n => n.label === 'process');
+        const target = graph.nodes.find(n => n.label === 'target');
+        const freeFunc = graph.nodes.find(n => n.label === 'free_func');
+
+        // free_func() call inside helper is attributed to process
+        expect(graph.edges.find(e => e.from === process?.id && e.to === freeFunc?.id)).toBeDefined();
+        // self.target() call in process is also present
+        expect(graph.edges.find(e => e.from === process?.id && e.to === target?.id)).toBeDefined();
+    });
+
     it('should handle closure-containing functions', async () => {
         const code = `
             fn process() {

@@ -304,9 +304,9 @@ describe('GoAdapter Call Graph', () => {
         expect(process).toBeDefined();
         expect(helper).toBeDefined();
 
-        // The call to helper is inside an anonymous function within process
-        // We may or may not capture this depending on implementation
-        // At minimum, process should exist without errors
+        // the call to helper inside the anonymous function is attributed to process
+        const edge = graph.edges.find(e => e.from === process?.id && e.to === helper?.id);
+        expect(edge).toBeDefined();
     });
 
     it('should handle generic functions', async () => {

@@ -125,6 +125,7 @@ export class RustAdapter extends BaseAdapter {
                 if (bodyNode) {
                     const funcCaptures = functionQuery.captures(bodyNode);
                     for (const funcCapture of funcCaptures) {
+                        if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
                         const node = await this.createFunctionNode(
                             funcCapture.node,
                             file.path,
@@ -167,6 +168,7 @@ export class RustAdapter extends BaseAdapter {
         if (bodyNode && modName) {
             const funcCaptures = functionQuery.captures(bodyNode);
             for (const funcCapture of funcCaptures) {
+                if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
                 const node = await this.createFunctionNode(
                     funcCapture.node,
                     filePath,
@@ -175,6 +177,15 @@ export class RustAdapter extends BaseAdapter {
                 this.indexSymbol(node);
             }
         }
+    }
+
+    private isNestedFunction(funcNode: Node, containerBody: Node): boolean {
+        let current = funcNode.parent;
+        while (current && current.id !== containerBody.id) {
+            if (current.type === 'function_item') return true;
+            current = current.parent;
+        }
+        return false;
     }
 
     private extractImplTypeName(implNode: Node): string {

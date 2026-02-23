@@ -31292,6 +31292,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
         if (bodyNode) {
           const funcCaptures = functionQuery.captures(bodyNode);
           for (const funcCapture of funcCaptures) {
+            if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
             const node = await this.createFunctionNode(
               funcCapture.node,
               file.path,
@@ -31324,6 +31325,7 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
     if (bodyNode && modName) {
       const funcCaptures = functionQuery.captures(bodyNode);
       for (const funcCapture of funcCaptures) {
+        if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
         const node = await this.createFunctionNode(
           funcCapture.node,
           filePath,
@@ -31332,6 +31334,14 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
         this.indexSymbol(node);
       }
     }
+  }
+  isNestedFunction(funcNode, containerBody) {
+    let current = funcNode.parent;
+    while (current && current.id !== containerBody.id) {
+      if (current.type === "function_item") return true;
+      current = current.parent;
+    }
+    return false;
   }
   extractImplTypeName(implNode) {
     const typeNode = implNode.childForFieldName("type");

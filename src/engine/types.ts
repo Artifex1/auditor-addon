@@ -14,6 +14,7 @@ export enum SupportedLanguage {
     Noir = "noir",
     Tolk = "tolk",
     Masm = "masm",
+    Python = "python",
 }
 
 export interface FileContent {

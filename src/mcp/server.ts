@@ -13,6 +13,7 @@ import { NoirAdapter } from "../languages/noirAdapter.js";
 import { TolkAdapter } from "../languages/tolkAdapter.js";
 import { FlowAdapter, JavaScriptAdapter, TsxAdapter, TypeScriptAdapter } from "../languages/javascriptAdapter.js";
 import { MasmAdapter } from "../languages/masmAdapter.js";
+import { PythonAdapter } from "../languages/pythonAdapter.js";
 import { createPeekHandler, peekSchema } from "./tools/peek.js";
 import { createMetricsHandler, metricsSchema } from "./tools/metrics.js";
 import { createExecutionPathsHandler, executionPathsSchema } from "./tools/executionPaths.js";
@@ -36,6 +37,7 @@ engine.registerAdapter(new JavaScriptAdapter());
 engine.registerAdapter(new TypeScriptAdapter());
 engine.registerAdapter(new TsxAdapter());
 engine.registerAdapter(new FlowAdapter());
+engine.registerAdapter(new PythonAdapter());
 
 // Create server instance
 const server = new McpServer({

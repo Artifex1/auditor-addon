@@ -5,7 +5,6 @@ import { Query, Node } from "web-tree-sitter";
 
 type Visibility = 'public' | 'external' | 'internal' | 'private';
 
-// TODO: Test peek
 export class PythonAdapter extends BaseAdapter {
     private static readonly QUERIES = {
         CLASSES: `
@@ -110,73 +109,69 @@ export class PythonAdapter extends BaseAdapter {
     }
 
     private indexSymbol(node: GraphNode) {
-        this.symbolTable.set(node.id, node); // Set the node in the symbol table
+        this.symbolTable.set(node.id, node);
 
-        const labelNodes = this.symbolsByLabel.get(node.label) || []; // Register this node under the function name 
+        const labelNodes = this.symbolsByLabel.get(node.label) || [];
         labelNodes.push(node);
         this.symbolsByLabel.set(node.label, labelNodes);
 
-        if (node.contract) {  // Node.contract is set if this node is a method within a class
-            const classNodes = this.symbolsByClass.get(node.contract) || []; // If it is, push this method within the nodes of this class
+        if (node.contract) {
+            const classNodes = this.symbolsByClass.get(node.contract) || [];
             classNodes.push(node);
             this.symbolsByClass.set(node.contract, classNodes);
         }
     }
 
     private async buildSymbolTable(files: FileContent[]) {
-        // Set up TreeSitter, choose language, create parser
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Python);
         const parser = await service.createParser(SupportedLanguage.Python);
 
-        // Set up Queries to run on TreeSitter
         const classQuery = new Query(lang, PythonAdapter.QUERIES.CLASSES);
         const inheritanceQuery = new Query(lang, PythonAdapter.QUERIES.INHERITANCE);
         const functionQuery = new Query(lang, PythonAdapter.QUERIES.FUNCTIONS);
 
-        for (const file of files) { // For each file
-            const tree = parser.parse(file.content); // Parse it into an Abstract Syntax Tree, and return if it failed
+        for (const file of files) {
+            const tree = parser.parse(file.content);
             if (!tree) continue;
 
             // 1. Find all classes, their methods, and inheritance relationships
-            const classCaptures = classQuery.captures(tree.rootNode); // Find all the classes within the AST
-            for (const capture of classCaptures) { // For each class
+            const classCaptures = classQuery.captures(tree.rootNode);
+            for (const capture of classCaptures) {
                 const classNode = capture.node;
                 const className = classNode.childForFieldName('name')?.text ?? 'unknown';
 
                 // Extract parent classes
-                const parentCaptures = inheritanceQuery.captures(classNode); // Capture all the parents of this class
+                const parentCaptures = inheritanceQuery.captures(classNode);
                 const parents = parentCaptures
                     .filter(c => c.name === 'parent')
                     .map(c => c.node.text);
-                if (parents.length > 0) { // If any parents, add them to the inheritance graph
+                if (parents.length > 0) {
                     this.inheritanceGraph.set(className, parents);
                 }
 
                 // Find methods inside this class
-                const bodyNode = classNode.childForFieldName('body'); // Get the body of the class
+                const bodyNode = classNode.childForFieldName('body');
                 if (!bodyNode) continue;
 
-                const methodCaptures = functionQuery.captures(bodyNode); // Get all methods within the class 
-                for (const methodCapture of methodCaptures) { // For each method
+                const methodCaptures = functionQuery.captures(bodyNode);
+                for (const methodCapture of methodCaptures) {
                     // Skip nested functions (functions defined inside other functions within the class)
-                    // TODO: why skip nested functions?
                     if (this.isNestedFunction(methodCapture.node, bodyNode)) continue;
 
-                    const node = this.createMethodNode(methodCapture.node, file.path, className); // Record it as a method, within that class and within that file
-                    this.indexSymbol(node); // Register it as a symbol
+                    const node = this.createMethodNode(methodCapture.node, file.path, className);
+                    this.indexSymbol(node);
                 }
             }
 
             // 2. Find top-level functions (not inside a class)
-            const funcCaptures = functionQuery.captures(tree.rootNode); // Captures functions within the whole file
-            for (const capture of funcCaptures) { // For each file
-                if (this.isInsideClass(capture.node, classCaptures)) continue; // Skip it if it is inside a class
-                // Skip nested functions (functions inside other functions)
-                if (this.isNestedInFunction(capture.node, tree.rootNode)) continue; // Skip it if it is nested
+            const funcCaptures = functionQuery.captures(tree.rootNode);
+            for (const capture of funcCaptures) {
+                if (this.isInsideClass(capture.node, classCaptures)) continue;
+                if (this.isNestedInFunction(capture.node, tree.rootNode)) continue;
 
-                const node = this.createFunctionNode(capture.node, file.path); // Record it as a function, within that class and within that file
-                this.indexSymbol(node); // Register it as a symbol
+                const node = this.createFunctionNode(capture.node, file.path);
+                this.indexSymbol(node);
             }
         }
     }

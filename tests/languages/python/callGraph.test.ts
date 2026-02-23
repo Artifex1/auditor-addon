@@ -342,25 +342,30 @@ describe('PythonAdapter Call Graph', () => {
         expect(edge2?.to).toBe(internal?.id);
     });
 
-    it('should skip nested functions (closures)', async () => {
+    it('should attribute nested function calls to the enclosing function', async () => {
         const code = `
             def outer():
                 def inner():
-                    pass
+                    target()
                 inner()
 
-            def standalone():
+            def target():
                 pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
         const graph = await adapter.generateCallGraph(files);
 
-        // TODOD - Add tests and logic for inner functions as well
-        // Only outer and standalone should be in the symbol table, not inner
+        // inner is not a node — nested functions are not indexed as separate symbols
         expect(graph.nodes).toHaveLength(2);
         expect(graph.nodes.find(n => n.label === 'outer')).toBeDefined();
-        expect(graph.nodes.find(n => n.label === 'standalone')).toBeDefined();
+        expect(graph.nodes.find(n => n.label === 'target')).toBeDefined();
         expect(graph.nodes.find(n => n.label === 'inner')).toBeUndefined();
+
+        // the call to target() inside inner is attributed to outer
+        const outer = graph.nodes.find(n => n.label === 'outer');
+        const target = graph.nodes.find(n => n.label === 'target');
+        const edge = graph.edges.find(e => e.from === outer?.id && e.to === target?.id);
+        expect(edge).toBeDefined();
     });
 
     it('should handle deep inheritance chains', async () => {

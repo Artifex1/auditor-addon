@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "auditor-addon",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "description": "Auditor Addon helps estimate and audit code and write issues",
       "keywords": [
         "security",

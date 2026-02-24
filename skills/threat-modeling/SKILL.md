@@ -1,125 +1,195 @@
 ---
 name: threat-modeling
-description: Analyzes smart contract codebases to identify potential threats. Generates a Threat Modeling report in the root of the codebase.
+description: Analyzing codebases to systematically identify and categorize potential security threats, producing a threat model report before code-level auditing. Use when starting an engagement and wanting to map the attack surface, identify high-value assets, and enumerate threat agents before diving into code-level analysis.
+argument-hint: "<files or scope>"
 allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash
-  - Write
+  - mcp__auditor-addon__peek
+  - mcp__auditor-addon__execution_paths
 ---
 
 # Threat Modeling
 
-Systematically identify all **potential threats** in a smart contract codebase.
+You are a senior security researcher with expertise in threat modeling and adversarial thinking across multiple domains.
 
-## 1. Analyze the Codebase
+> **Scope boundary**: This skill produces a threat inventory — potential threats enumerated regardless of whether they are confirmed in code. It does not validate findings against the implementation. For code-level confirmation of specific vulnerabilities, use the `security-auditor` skill afterward.
 
-Take your time to analyze and understand the codebase. Gather all the context that any team member working on or around this codebase would have, including developers, system architects, and business stakeholders.
+<workflow>
+SEQUENCE (no checkpoints — runs to completion):
+1. ANALYZE: Understand the codebase structure, behavior, and trust boundaries
+2. DIAGRAM: Generate an architectural diagram
+3. ATTACKERS: Identify all threat agents
+4. ASSETS: Identify valuable assets
+5. THREATS: Map how attackers can compromise assets
+6. REPORT: Output the threat model report in chat
+</workflow>
 
-## 2. Generate an Architectural Diagram
+---
 
-Generate a Mermaid architectural diagram to be included in the output replacing the <architectural_diagram> in the structure template. Do not get into details, identify the following components
- - Components: smart contracts, do not display inheritances emulate as if the system would be deployed on-chain.
- - Business core functionalities: the most important functions of a smart contract that are used in the main business and data flows.
- - Roles: all users participating in the system with various rights (governance, owner, user, team member, etc.).
+<phase_instructions>
 
-Keep it simple.
+<analyze_instructions>
+### ANALYZE
 
-## 3. Determine Potential Attackers
+**Goal:** Build a thorough understanding of the codebase before threat modeling begins.
 
-Think about possible attack vectors and threats.
-  - Where can they come from? 
-  - From which side can the component be attacked?
-  - What roles are there in the system?
-  - Who potentially might not want you to succeed?
-  - Which role do most people have access to?
+- Use `peek` to survey function signatures and understand the full API surface
+- Use `execution_paths` to trace how components interact and how external inputs flow through the system
+- Read key files: entry points, access control, value-handling logic, external integrations
+- Scan for documentation (README, docs/, specs/) and load anything relevant to the scope
+- Identify:
+  - Major components and their responsibilities
+  - Privileged roles and their capabilities
+  - External dependencies: third-party services, APIs, libraries, data feeds
+  - **Trust boundaries**: places where data or control crosses between trust zones (network perimeter, authentication layer, inter-service calls, external integrations). Threats concentrate here.
+</analyze_instructions>
 
-The shorthand term might be to consider everyone as threat agents. Any privileged account that can be compromised impose security risks, and we don’t estimate the probability of it yet.
+---
 
-## 4. Identify Potential Assets That an Attacker May Want to Compromise
+<diagram_instructions>
+### DIAGRAM
 
-  - Steal users’ funds?
-  - Make the project unavailable?
-  - Read some secret data?
-  - Harm the reputation of the project?
-  - What from the project has value in the market?
-  - What’s the worst that could happen to the project?
-  - In what case the project or/and the users are going to lose money?
+**Goal:** Generate a Mermaid architectural diagram representing the system as deployed or operated.
 
-Determine the key assets of the protect.
+Include:
+- **Components**: major modules, services, or packages — show runtime topology, not inheritance hierarchies
+- **Core flows**: the most important data and control flows between components
+- **Roles**: all participants with distinct privilege levels (admin, owner, user, operator, etc.)
+- **Trust boundaries**: mark where trust zones change (e.g., as subgraph borders or annotated edges)
 
-## 5. Identify How Attackers Can Compromise the Assets
+Keep it simple. Omit implementation details. The diagram should be legible to a business stakeholder.
+</diagram_instructions>
 
-It’s time to play the hacker and think about how you would try to achieve the goals set in the previous point.
-  - Which functions handle token transfer?
-  - Do we check who is calling the functions?
-  - What if the component we integrate with starts sending incorrect data?
-  - Are we sure about the arithmetic operation result?
-  - What if the user has a significant amount of tokens?
-  - Can I call functions in a different order than expected?
-  - What if the private key of one of the team members is compromised?
+---
 
-Make this brainstorm on every component and every function and add it to attack trees. Do not check whether these possible threats are real and reflected in the code. In the worst case, you’ll expand your database of known security threats.
+<attackers_instructions>
+### ATTACKERS
 
-## 6. Generate a Report Following the Output Format
+**Goal:** Identify all plausible threat agents.
 
-Use the Output Format to generate a easy readable threat modeling of the codebase.
+Consider:
+- Who can interact with the system, and from which entry point?
+- Which roles have elevated access that, if compromised, would cause harm?
+- Who is motivated to attack (financial gain, disruption, reputational damage, competitive sabotage)?
+- Which role is most accessible to external actors?
+- Which external systems or dependencies could be compromised and used as an attack vector (supply chain, third-party services, data feeds)?
+
+**Threat model assumption**: All roles — including privileged ones such as admins and owners — are treated as potential threat agents. A compromised key or a malicious insider is a realistic attack vector. This is intentionally broader than the `security-auditor` skill, which assumes honest privileged roles.
+</attackers_instructions>
+
+---
+
+<assets_instructions>
+### ASSETS
+
+**Goal:** Identify what an attacker would want to compromise.
+
+Ask:
+- What holds monetary or economic value in this system?
+- What private or sensitive data exists (credentials, PII, proprietary logic)?
+- What would make the system unavailable or unusable?
+- What would corrupt the integrity of system state or audit trails?
+- What would cause the most reputational damage to the project?
+- In what scenario do users or the operator lose funds, data, or rights?
+
+Document each asset with a description and the trust level required to access or compromise it.
+</assets_instructions>
+
+---
+
+<threats_instructions>
+### THREATS
+
+**Goal:** For each asset, enumerate how a threat agent could compromise it using the STRIDE framework as a systematic lens. Do not validate these against the implementation — the goal is exhaustive breadth, not confirmed exploitability.
+
+Use `execution_paths` to trace actual call chains and ground the enumeration in real execution flows rather than speculation alone.
+
+For each major component, work through each STRIDE category:
+
+- **Spoofing** — Can an actor impersonate another user, service, or data source? Are callers validated at every trust boundary?
+- **Tampering** — Can an actor modify data, state, or messages in transit or at rest? What if an external dependency sends malformed data?
+- **Repudiation** — Can an actor deny having performed an action? Are audit logs complete, tamper-evident, and attributed?
+- **Information Disclosure** — Can an actor read data they should not? Are there leaks through error messages, logs, side channels, or over-permissioned APIs?
+- **Denial of Service** — Can an actor make the system unavailable? Are there unbounded loops, resource exhaustion paths, or mandatory external calls that can be made to fail?
+- **Elevation of Privilege** — Can an actor gain capabilities beyond their role? Could functions be called out of order, or a privileged key be compromised?
+
+Additionally consider:
+- What if a user with significant resources or permissions acts against the system's interests?
+- What operational or configuration mistakes could create vulnerabilities?
+- What if a third-party dependency or external service is compromised?
+
+Organize threats by STRIDE category within each component. Do not filter out threats that seem unlikely — breadth matters more than certainty at this stage.
+</threats_instructions>
+
+---
+
+<report_instructions>
+### REPORT
+
+**Goal:** Output the complete threat model as a chat report using the output format below.
+
+Priority is based on potential impact if the threat were realized, not on confirmed exploitability — that assessment belongs to the `security-auditor` phase.
+</report_instructions>
+
+</phase_instructions>
+
+---
 
 ## Output Format
- 
-Generate and save in the root of the codebase a markdown report named `threat-modeling.md` with this structure:
-```markdown
-# Threat Modeling
 
-## Architectural Diagram
+### Architectural Diagram
 
-<architectural_diagram>
+<mermaid diagram>
 
 ---
 
-## Roles
+### Roles
 
-### Administrative Roles
+#### Administrative Roles
 
 | Role | Privileges | Risk Level |
 |------|------------|------------|
-| **Admin** | Upgrade implementations, list markets, set collateral factors, modify protocol parameters | Critical |
+| **Role** | Description of privileges | Critical / High / Medium |
 
-### User Roles
+#### User Roles
 
 | Role | Actions | Risk Exposure |
 |------|---------|---------------|
-| **Supplier** | Deposit assets, earn interest, redeem cTokens | Loss of funds if protocol is compromised |
-| **Borrower** | Borrow against collateral, repay loans | Liquidation risk if undercollateralized |
+| **Role** | Description of actions | Description of exposure |
+
+#### External Systems
+
+| System | Integration Point | Risk Level |
+|--------|------------------|------------|
+| **System** | How it connects and what it provides | Critical / High / Medium |
 
 ---
 
-## Assets
+### Assets
 
-| Asset | Description | Trust Levels |
-|------|---------|---------------|
-| **Asset1** | Super important asset  |  The level of access required to gain the asset control |
+| Asset | Description | Trust Levels Required |
+|-------|-------------|-----------------------|
+| **Asset** | What it is and why it has value | Who can access or compromise it |
 
---- 
+---
 
-## Security Threats Categorization
+### Security Threats
 
-### 1. Category 1
+#### 1. <Component Name>
 
-| Threat | Description | Affected Components | Priority |
-| **Whitelist Bypass** | Circumventing whitelist restrictions | WhitelistAccess, CToken | HIGH |
+| STRIDE | Threat | Description | Affected Surface | Priority |
+|--------|--------|-------------|------------------|----------|
+| Spoofing | **Threat Name** | How the threat manifests | Entry point / function | HIGH / MEDIUM / LOW |
+| Tampering | ... | | | |
+| Repudiation | ... | | | |
+| Information Disclosure | ... | | | |
+| Denial of Service | ... | | | |
+| Elevation of Privilege | ... | | | |
 
-## Recommendations
+---
 
-```
+### Recommendations
 
-## Analysis Guidelines
-
-1. **Be thorough**: Don't skip files. Every file that is a smart contract in the codebase matters.
-2. **Be conservative**: When uncertain about a specific threat author, flag for review rather than miscategorize.
-3. **Think like a security researcher**: Use security researcher experience to identify potential threats.
-4. **Think like a developer**: Use codebase developer experience to identify potential threats.
-5. **Think like an architect**: Use system architect knowledge to identify potential threats.
-6. **Think like a business people**: Use business specific knowledge to identify potential threats.
-
+- ...

@@ -20,6 +20,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | Skill | Purpose | Capabilities |
 |:------|:--------|:-------------|
 | 🛡️ **security-auditor** | Interactive security auditing with Map & Probe methodology | Map (structural inventory) → Checklist (optional, standard-specific) → Probe (per-path vulnerability analysis) |
+| 🔍 **threat-modeling** | Systematic threat enumeration before code-level auditing | Analyze → Diagram → Attackers → Assets → Threats (STRIDE) → Report |
 | 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Review, Report) |
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |

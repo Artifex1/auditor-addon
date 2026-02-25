@@ -8,7 +8,7 @@
 | :--- | :--- | :--- | :--- |
 | `peek` | `paths` (str[]) | `Signature[]` | Extract function signatures for quick overview. |
 | `metrics` | `paths` (str[]) | `Metrics[]` | Calculate NLoC, complexity, and effort estimates. |
-| `execution_paths` | `paths` (str[]) | `string[]` | Generate linear execution call chains from public entrypoints. |
+| `call_chains` | `paths` (str[]) | `{ call_chains: Record<root, string[]>, hotspots: string[] }` | Generate call chains from root functions (called by nothing), grouped by root and sorted longest-first. Includes a hotspot summary of functions appearing across the most chains. |
 | `diff_metrics` | `base` (str), `head?` (str), `paths?` (str[]) | `DiffMetrics[]` | Calculate metrics for changes between git refs. |
 | `diff` | `base` (str), `head?` (str), `paths?` (str[]), `output?` ('full'\|'signatures') | `FileDiff[]` or `FileSignatureChanges[]` | Get raw diff or function-level signature changes. |
 

@@ -1,20 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { MoveAdapter } from '../../src/languages/moveAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { TolkAdapter } from '../../../src/languages/tolkAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
-describe('MoveAdapter Metrics', () => {
-    const adapter = new MoveAdapter();
+describe('TolkAdapter Metrics', () => {
+    const adapter = new TolkAdapter();
 
     it('should calculate metrics correctly', async () => {
         const file: FileContent = {
-            path: 'main.move',
+            path: 'main.tolk',
             content: `
-                module 0x1::M {
-                    fun main() {
-                        // comment
-                        if (true) {
-                            let x = 1;
-                        };
+                fun main() {
+                    // comment
+                    if (true) {
+                        let x = 1;
                     }
                 }
             `

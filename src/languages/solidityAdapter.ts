@@ -1,4 +1,4 @@
-import { FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -17,7 +17,6 @@ enum CallType {
     Super
 }
 
-type Visibility = 'public' | 'external' | 'internal' | 'private';
 
 /**
  * Language adapter for Solidity smart contracts.
@@ -99,76 +98,45 @@ export class SolidityAdapter extends BaseAdapter {
         });
     }
 
-    private symbolTable: Map<string, GraphNode> = new Map();
     private inheritanceGraph: Map<string, string[]> = new Map(); // child -> parents
     private usingForMap: Map<string, string[]> = new Map(); // contract -> libraries
 
     // Optimization: Index symbols for faster lookups
     private symbolsByContract: Map<string, GraphNode[]> = new Map();
-    private symbolsByLabel: Map<string, GraphNode[]> = new Map();
 
     private static readonly BUILTIN_FUNCTIONS = new Set(['require', 'assert', 'revert', 'emit']);
-
-    /**
-     * Generates a complete call graph for Solidity contracts.
-     * Includes nodes for all functions and edges representing function calls.
-     * Handles inheritance, super calls, library usage, and assembly calls.
-     * 
-     * @param files - Array of Solidity source files to analyze
-     * @returns Call graph with nodes and edges
-     */
-    async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        this.resetState();
-        const edges: GraphEdge[] = [];
-
-        // Phase 1: Symbol Table & Inheritance Generation
-        await this.buildSymbolTable(files);
-
-        // Phase 2: Call Identification
-        await this.identifyCalls(edges, files);
-
-        // Return nodes
-        const nodes: GraphNode[] = Array.from(this.symbolTable.values());
-
-        return { nodes, edges };
-    }
 
     /**
      * Resets all internal state (symbol table, inheritance graph, etc.).
      * Called at the start of each analysis operation.
      */
-    private resetState() {
-        this.symbolTable.clear();
+    protected override resetState(): void {
+        super.resetState();
         this.inheritanceGraph.clear();
         this.usingForMap.clear();
         this.symbolsByContract.clear();
-        this.symbolsByLabel.clear();
     }
 
     /**
      * Indexes a symbol in the symbol table and optimization indices.
-     * 
+     *
      * @param node - GraphNode to index
      */
-    private indexSymbol(node: GraphNode) {
-        this.symbolTable.set(node.id, node);
+    protected override indexSymbol(node: GraphNode): void {
+        super.indexSymbol(node);
 
         if (node.contract) {
-            const nodes = this.symbolsByContract.get(node.contract) || [];
+            const nodes = this.symbolsByContract.get(node.contract) ?? [];
             nodes.push(node);
             this.symbolsByContract.set(node.contract, nodes);
         }
-
-        const nodes = this.symbolsByLabel.get(node.label) || [];
-        nodes.push(node);
-        this.symbolsByLabel.set(node.label, nodes);
     }
 
     private findInContract(contract: string, label: string): GraphNode | undefined {
         return this.symbolsByContract.get(contract)?.find(n => n.label === label);
     }
 
-    private async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);
@@ -212,24 +180,6 @@ export class SolidityAdapter extends BaseAdapter {
                 await this.processAssemblyCalls(functionNode, symbol, edges);
             }
         }
-    }
-
-    /**
-     * Finds a GraphNode in the symbol table matching a tree-sitter node's position.
-     * 
-     * @param node - Tree-sitter node to locate
-     * @param filePath - File path containing the node
-     * @returns Matching GraphNode or undefined
-     */
-    private findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
-        const line = node.startPosition.row + 1;
-        const col = node.startPosition.column;
-
-        return Array.from(this.symbolTable.values()).find(s =>
-            s.file === filePath &&
-            s.range?.start.line === line &&
-            s.range?.start.column === col
-        );
     }
 
     /**
@@ -342,7 +292,6 @@ export class SolidityAdapter extends BaseAdapter {
             case CallType.Simple:
                 return this.resolveLocalOrInheritedCall(name, caller);
         }
-        return undefined;
     }
 
     private resolveSuperCall(name: string, caller: GraphNode): GraphNode | undefined {
@@ -413,7 +362,7 @@ export class SolidityAdapter extends BaseAdapter {
      * 
      * @param files - Array of Solidity source files to analyze
      */
-    private async buildSymbolTable(files: FileContent[]) {
+    protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);

@@ -32,13 +32,15 @@ export interface Range {
     end: Position;
 }
 
+export type Visibility = 'public' | 'external' | 'internal' | 'private';
+
 export interface GraphNode {
     id: string; // Fully qualified signature (e.g., "MyContract.myFunc(uint256)")
     label: string; // Function name
     file: string;
     contract?: string;
     range?: Range;
-    visibility: 'public' | 'external' | 'internal' | 'private';
+    visibility: Visibility;
     text?: string;
     containerKind?: 'contract' | 'interface' | 'library';
 }

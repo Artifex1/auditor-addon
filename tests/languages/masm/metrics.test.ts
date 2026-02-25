@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { MasmAdapter } from '../../src/languages/masmAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { MasmAdapter } from '../../../src/languages/masmAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
 describe('MasmAdapter Metrics', () => {
     const adapter = new MasmAdapter();

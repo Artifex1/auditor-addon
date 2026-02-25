@@ -1,20 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { JavaAdapter } from '../../src/languages/javaAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { CppAdapter } from '../../../src/languages/cppAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
-describe('JavaAdapter Metrics', () => {
-    const adapter = new JavaAdapter();
+describe('CppAdapter Metrics', () => {
+    const adapter = new CppAdapter();
 
     it('should calculate metrics correctly', async () => {
         const file: FileContent = {
-            path: 'Test.java',
+            path: 'test.cpp',
             content: `
-                public class Test {
-                    /* Block comment */
-                    public void main() {
-                        for (int i=0; i<10; i++) {
-                            System.out.println(i);
-                        }
+                #include <iostream>
+                
+                // This is a comment
+                void main() {
+                    if (true) {
+                        std::cout << "Hello";
                     }
                 }
             `

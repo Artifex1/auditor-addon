@@ -84,9 +84,9 @@ The signatures mode compares function signatures between base and head versions:
 - **Modified**: Functions that exist in both but contain changed lines
 - **Removed**: Functions that existed in base but are gone (verify intentional, check for lost validation)
 
-### 🕸️ `execution_paths`
+### ⛓️ `call_chains`
 
-Traces call chains from public entrypoints through internal function calls, producing linear execution paths. The **security-auditor** skill uses this to understand how external calls flow through a system to identify attack surfaces and trace how user input propagates through the codebase.
+Traces call chains from root functions (functions nothing else calls) through the full call graph, grouped by root and sorted longest-first. The **security-auditor** skill uses this to understand how execution flows through a system and to identify attack surfaces. A hotspot summary highlights functions appearing across the most chains, giving an immediate prioritization signal for where to focus the audit.
 
 ### 🌐 Supported Languages
 
@@ -98,18 +98,18 @@ Traces call chains from public entrypoints through internal function calls, prod
 | 🦀 **Rust** | ✅ | ✅ | ✅ |
 | 🐹 **Go** | ✅ | ✅ | ✅ |
 | 🐍 **Python** | ✅ | ✅ | ✅ |
-| 🐪 **Cairo** | ✅ | ⏳ | ✅ |
-| 📦 **Compact** | ✅ | ⏳ | ✅ |
-| 💧 **Move** | ✅ | ⏳ | ✅ |
-| 🌑 **Noir** | ✅ | ⏳ | ✅ |
+| 🐪 **Cairo** | ✅ | ✅ | ✅ |
+| 📦 **Compact** | ✅ | ✅ | ✅ |
+| 💧 **Move** | ✅ | ✅ | ✅ |
+| 🌑 **Noir** | ✅ | ✅ | ✅ |
 | 🧩 **Tolk** | ✅ | ⏳ | ✅ |
-| ⚙️ **Masm** | ✅ | ⏳ | ✅ |
+| ⚙️ **Masm** | ✅ | ✅ | ✅ |
 | ⚡ **C++** | ✅ | ⏳ | ✅ |
 | ☕ **Java** | ✅ | ⏳ | ✅ |
-| 🟨 **JavaScript** | ✅ | ⏳ | ✅ |
-| 🔷 **TypeScript** | ✅ | ⏳ | ✅ |
-| 🧩 **TSX** | ✅ | ⏳ | ✅ |
-| 🌀 **Flow** | ✅ | ⏳ | ✅ |
+| 🟨 **JavaScript** | ✅ | ✅ | ✅ |
+| 🔷 **TypeScript** | ✅ | ✅ | ✅ |
+| 🧩 **TSX** | ✅ | ✅ | ✅ |
+| 🌀 **Flow** | ✅ | ✅ | ✅ |
 
 </div>
 

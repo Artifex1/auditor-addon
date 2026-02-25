@@ -1,7 +1,25 @@
-import { SupportedLanguage } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
+import { TreeSitterService } from "../util/treeSitter.js";
+import { Query, Node } from "web-tree-sitter";
+
 
 export class CairoAdapter extends BaseAdapter {
+    private static readonly QUERIES = {
+        IMPL_BLOCKS: `(impl_item) @impl`,
+        FUNCTIONS: `
+            (function_item) @function
+            (external_function_item) @function
+        `,
+        // Cairo: call_expression has a 'function' field containing identifier or scoped_identifier
+        SIMPLE_CALL: `(call_expression function: (identifier) @FUNC)`,
+        SCOPED_CALL: `(call_expression (scoped_identifier) @FUNC)`,
+        // Method calls: self.method() → field_expression with field_identifier
+        METHOD_CALL: `(call_expression (field_expression (field_identifier) @FUNC))`
+    } as const;
+
+    private symbolsByContainer: Map<string, GraphNode[]> = new Map();
+
     constructor() {
         super({
             languageId: SupportedLanguage.Cairo,
@@ -27,7 +45,7 @@ export class CairoAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 350, // Cairo is similar to Rust, maybe slightly slower due to ZK/Cairo specificities
+                baseRateNlocPerDay: 350,
                 complexityMidpoint: 12,
                 complexitySteepness: 8,
                 complexityBenefitCap: 0.3,
@@ -37,4 +55,227 @@ export class CairoAdapter extends BaseAdapter {
             }
         });
     }
+
+    protected override resetState(): void {
+        super.resetState();
+        this.symbolsByContainer.clear();
+    }
+
+    protected override indexSymbol(node: GraphNode): void {
+        super.indexSymbol(node);
+        if (node.contract) {
+            const containerNodes = this.symbolsByContainer.get(node.contract) ?? [];
+            containerNodes.push(node);
+            this.symbolsByContainer.set(node.contract, containerNodes);
+        }
+    }
+
+    protected override async buildSymbolTable(files: FileContent[]) {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Cairo);
+        const parser = await service.createParser(SupportedLanguage.Cairo);
+
+        const implQuery = new Query(lang, CairoAdapter.QUERIES.IMPL_BLOCKS);
+        const functionQuery = new Query(lang, CairoAdapter.QUERIES.FUNCTIONS);
+
+        for (const file of files) {
+            const tree = parser.parse(file.content);
+            if (!tree) continue;
+
+            // 1. Find all impl blocks and index their functions
+            const implCaptures = implQuery.captures(tree.rootNode);
+            for (const capture of implCaptures) {
+                const implNode = capture.node;
+                const containerName = this.extractImplName(implNode);
+
+                // Body is in declaration_list (Cairo grammar specific)
+                const bodyNode = implNode.children.find(c =>
+                    c.type === 'declaration_list' || c.type === 'body'
+                );
+                if (!bodyNode) continue;
+
+                const funcCaptures = functionQuery.captures(bodyNode);
+                for (const funcCapture of funcCaptures) {
+                    if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
+                    const node = this.createFunctionNode(funcCapture.node, file.path, containerName);
+                    this.indexSymbol(node);
+                }
+            }
+
+            // 2. Find free functions (not inside impl blocks)
+            const allFuncCaptures = functionQuery.captures(tree.rootNode);
+            for (const capture of allFuncCaptures) {
+                const funcNode = capture.node;
+                const isInImpl = implCaptures.some(c => {
+                    const body = c.node.children.find(ch =>
+                        ch.type === 'declaration_list' || ch.type === 'body'
+                    );
+                    return body &&
+                        funcNode.startIndex >= body.startIndex &&
+                        funcNode.endIndex <= body.endIndex;
+                });
+
+                if (!isInImpl) {
+                    this.indexSymbol(this.createFunctionNode(funcNode, file.path));
+                }
+            }
+        }
+    }
+
+    /**
+     * Extracts the impl block name from an impl_item node.
+     * Cairo syntax: impl FooImpl of FooTrait { ... }
+     * The first identifier is the impl name.
+     */
+    private extractImplName(implNode: Node): string {
+        // First identifier child = impl name (e.g., "FooImpl")
+        const nameNode = implNode.children.find(c => c.type === 'identifier');
+        return nameNode?.text ?? 'unknown';
+    }
+
+    private isNestedFunction(funcNode: Node, containerBody: Node): boolean {
+        let current = funcNode.parent;
+        while (current && current.id !== containerBody.id) {
+            if (current.type === 'function_item' || current.type === 'external_function_item') return true;
+            current = current.parent;
+        }
+        return false;
+    }
+
+    /**
+     * Extracts the function name from a function_item node.
+     * Cairo grammar: function_item → function child → identifier
+     */
+    private extractFunctionName(node: Node): string {
+        // Cairo: function_item has a 'function' child (signature node) containing the identifier
+        const funcChild = node.children.find(c => c.type === 'function');
+        if (funcChild) {
+            const nameNode = funcChild.children.find(c => c.type === 'identifier');
+            if (nameNode) return nameNode.text;
+        }
+        // Fallback: try direct identifier child or name field
+        return node.childForFieldName('name')?.text ??
+            node.children.find(c => c.type === 'identifier')?.text ??
+            'unknown';
+    }
+
+    private createFunctionNode(node: Node, file: string, container?: string): GraphNode {
+        const fnName = this.extractFunctionName(node);
+        const visibility = this.extractVisibility(node);
+        const id = container ? `${container}::${fnName}` : fnName;
+
+        return {
+            id,
+            label: fnName,
+            file,
+            contract: container,
+            visibility,
+            range: {
+                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
+            },
+            text: node.text
+        };
+    }
+
+    private extractVisibility(node: Node): Visibility {
+        // Check for pub modifier in children
+        for (const child of node.children) {
+            if (child.type === 'visibility_modifier') return 'public';
+            if (child.text === 'pub') return 'public';
+        }
+        // Check function signature child for pub
+        const funcChild = node.children.find(c => c.type === 'function');
+        if (funcChild) {
+            for (const child of funcChild.children) {
+                if (child.type === 'visibility_modifier') return 'public';
+                if (child.text === 'pub') return 'public';
+            }
+        }
+        if (node.type === 'external_function_item') return 'external';
+        return 'private';
+    }
+
+    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Cairo);
+        const parser = await service.createParser(SupportedLanguage.Cairo);
+
+        const functionQuery = new Query(lang, CairoAdapter.QUERIES.FUNCTIONS);
+        const simpleCallQuery = new Query(lang, CairoAdapter.QUERIES.SIMPLE_CALL);
+        const scopedCallQuery = new Query(lang, CairoAdapter.QUERIES.SCOPED_CALL);
+
+        let methodCallQuery: Query | null = null;
+        try {
+            methodCallQuery = new Query(lang, CairoAdapter.QUERIES.METHOD_CALL);
+        } catch {
+            // Method call query not supported in this grammar version
+        }
+
+        for (const file of files) {
+            const tree = parser.parse(file.content);
+            if (!tree) continue;
+
+            const funcCaptures = functionQuery.captures(tree.rootNode);
+            for (const capture of funcCaptures) {
+                const functionNode = capture.node;
+                const symbol = this.findSymbolAtNode(functionNode, file.path);
+                if (!symbol) continue;
+
+                this.processCallQuery(simpleCallQuery, functionNode, symbol, edges, 'simple');
+                this.processCallQuery(scopedCallQuery, functionNode, symbol, edges, 'scoped');
+                if (methodCallQuery) {
+                    this.processCallQuery(methodCallQuery, functionNode, symbol, edges, 'method');
+                }
+            }
+        }
+    }
+
+    private processCallQuery(
+        query: Query,
+        functionNode: Node,
+        caller: GraphNode,
+        edges: GraphEdge[],
+        callType: 'simple' | 'scoped' | 'method'
+    ) {
+        const captures = query.captures(functionNode);
+        for (const capture of captures) {
+            if (capture.name !== 'FUNC') continue;
+
+            const callText = capture.node.text;
+            const callee = this.resolveCall(callText, callType, caller);
+            if (callee && callee.id !== caller.id) {
+                this.addEdge(edges, caller.id, callee.id);
+            }
+        }
+    }
+
+    private resolveCall(callText: string, callType: 'simple' | 'scoped' | 'method', caller: GraphNode): GraphNode | undefined {
+        if (callType === 'scoped') {
+            // "module::func" → extract func name
+            const parts = callText.split('::');
+            const funcName = parts[parts.length - 1];
+            const containerName = parts.slice(0, -1).join('::');
+
+            const containerFuncs = this.symbolsByContainer.get(containerName);
+            const match = containerFuncs?.find(n => n.label === funcName);
+            if (match) return match;
+
+            return this.symbolsByLabel.get(funcName)?.[0];
+        }
+
+        // simple or method call
+        if (caller.contract) {
+            const containerFuncs = this.symbolsByContainer.get(caller.contract);
+            const match = containerFuncs?.find(n => n.label === callText);
+            if (match) return match;
+        }
+
+        const freeFuncs = this.symbolsByLabel.get(callText);
+        const free = freeFuncs?.find(n => !n.contract);
+        if (free) return free;
+
+        return this.symbolsByLabel.get(callText)?.[0];
+    }
+
 }

@@ -1,9 +1,8 @@
-import { FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
-type Visibility = 'public' | 'external' | 'internal' | 'private';
 
 export class PythonAdapter extends BaseAdapter {
     private static readonly QUERIES = {
@@ -40,8 +39,6 @@ export class PythonAdapter extends BaseAdapter {
         'exec', 'globals', 'locals', 'help', 'ascii'
     ]);
 
-    private symbolTable: Map<string, GraphNode> = new Map();
-    private symbolsByLabel: Map<string, GraphNode[]> = new Map();
     private symbolsByClass: Map<string, GraphNode[]> = new Map();
     private inheritanceGraph: Map<string, string[]> = new Map();
 
@@ -87,42 +84,22 @@ export class PythonAdapter extends BaseAdapter {
         });
     }
 
-    async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        this.resetState();
-        const edges: GraphEdge[] = [];
-
-        // Phase 1: Build symbol table (including inheritance map)
-        await this.buildSymbolTable(files);
-
-        // Phase 2: Identify calls
-        await this.identifyCalls(edges, files);
-
-        const nodes: GraphNode[] = Array.from(this.symbolTable.values());
-        return { nodes, edges };
-    }
-
-    private resetState() {
-        this.symbolTable.clear();
-        this.symbolsByLabel.clear();
+    protected override resetState(): void {
+        super.resetState();
         this.symbolsByClass.clear();
         this.inheritanceGraph.clear();
     }
 
-    private indexSymbol(node: GraphNode) {
-        this.symbolTable.set(node.id, node);
-
-        const labelNodes = this.symbolsByLabel.get(node.label) || [];
-        labelNodes.push(node);
-        this.symbolsByLabel.set(node.label, labelNodes);
-
+    protected override indexSymbol(node: GraphNode): void {
+        super.indexSymbol(node);
         if (node.contract) {
-            const classNodes = this.symbolsByClass.get(node.contract) || [];
+            const classNodes = this.symbolsByClass.get(node.contract) ?? [];
             classNodes.push(node);
             this.symbolsByClass.set(node.contract, classNodes);
         }
     }
 
-    private async buildSymbolTable(files: FileContent[]) {
+    protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Python);
         const parser = await service.createParser(SupportedLanguage.Python);
@@ -285,7 +262,7 @@ export class PythonAdapter extends BaseAdapter {
         return undefined;
     }
 
-    private async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Python);
         const parser = await service.createParser(SupportedLanguage.Python);
@@ -363,13 +340,6 @@ export class PythonAdapter extends BaseAdapter {
         }
     }
 
-    private addEdge(edges: GraphEdge[], from: string, to: string) {
-        const exists = edges.some(e => e.from === from && e.to === to);
-        if (!exists) {
-            edges.push({ from, to, kind: 'internal' });
-        }
-    }
-
     private resolveSuperCall(name: string, caller: GraphNode): GraphNode | undefined {
         if (!caller.contract) return undefined;
         return this.resolveInheritedCall(name, caller.contract);
@@ -411,14 +381,4 @@ export class PythonAdapter extends BaseAdapter {
         return candidates?.find(n => !!n.contract);
     }
 
-    private findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
-        const line = node.startPosition.row + 1;
-        const col = node.startPosition.column;
-
-        return Array.from(this.symbolTable.values()).find(s =>
-            s.file === filePath &&
-            s.range?.start.line === line &&
-            s.range?.start.column === col
-        );
-    }
 }

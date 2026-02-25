@@ -1,18 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { NoirAdapter } from '../../src/languages/noirAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { MoveAdapter } from '../../../src/languages/moveAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
-describe('NoirAdapter Metrics', () => {
-    const adapter = new NoirAdapter();
+describe('MoveAdapter Metrics', () => {
+    const adapter = new MoveAdapter();
 
     it('should calculate metrics correctly', async () => {
         const file: FileContent = {
-            path: 'main.nr',
+            path: 'main.move',
             content: `
-                fn main() {
-                    // comment
-                    if true {
-                        let x = 1;
+                module 0x1::M {
+                    fun main() {
+                        // comment
+                        if (true) {
+                            let x = 1;
+                        };
                     }
                 }
             `

@@ -16,7 +16,7 @@ import { MasmAdapter } from "../languages/masmAdapter.js";
 import { PythonAdapter } from "../languages/pythonAdapter.js";
 import { createPeekHandler, peekSchema } from "./tools/peek.js";
 import { createMetricsHandler, metricsSchema } from "./tools/metrics.js";
-import { createExecutionPathsHandler, executionPathsSchema } from "./tools/executionPaths.js";
+import { createCallChainsHandler, callChainsSchema } from "./tools/callChains.js";
 import { createDiffMetricsHandler, diffMetricsSchema } from "./tools/diffMetrics.js";
 import { createDiffHandler, diffSchema } from "./tools/diff.js";
 
@@ -58,9 +58,9 @@ server.registerTool(
 );
 
 server.registerTool(
-    "execution_paths",
-    executionPathsSchema,
-    createExecutionPathsHandler(engine)
+    "call_chains",
+    callChainsSchema,
+    createCallChainsHandler(engine)
 );
 
 server.registerTool(

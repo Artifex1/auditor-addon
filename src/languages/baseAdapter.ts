@@ -1,4 +1,4 @@
-import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics } from "../engine/types.js";
+import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics, GraphNode, GraphEdge } from "../engine/types.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
@@ -55,6 +55,9 @@ export abstract class BaseAdapter implements LanguageAdapter {
         this.config = config;
     }
 
+    protected symbolTable: Map<string, GraphNode> = new Map();
+    protected symbolsByLabel: Map<string, GraphNode[]> = new Map();
+
     /**
      * Normalizes a function signature by cleaning up whitespace.
      * Converts multi-line signatures to single line with consistent spacing.
@@ -72,14 +75,50 @@ export abstract class BaseAdapter implements LanguageAdapter {
 
     /**
      * Generates a call graph for the source files.
-     * Default implementation returns empty graph - override in language-specific adapters.
-     * 
+     * Template method: resets state, builds symbol table, identifies calls.
+     * Override buildSymbolTable and identifyCalls in language-specific adapters.
+     *
      * @param files - Array of source files to analyze
      * @returns Call graph with nodes and edges
      */
     async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        return { nodes: [], edges: [] };
+        this.resetState();
+        const edges: GraphEdge[] = [];
+        await this.buildSymbolTable(files);
+        await this.identifyCalls(edges, files);
+        return { nodes: Array.from(this.symbolTable.values()), edges };
     }
+
+    protected resetState(): void {
+        this.symbolTable.clear();
+        this.symbolsByLabel.clear();
+    }
+
+    protected indexSymbol(node: GraphNode): void {
+        this.symbolTable.set(node.id, node);
+        const labelNodes = this.symbolsByLabel.get(node.label) ?? [];
+        labelNodes.push(node);
+        this.symbolsByLabel.set(node.label, labelNodes);
+    }
+
+    protected addEdge(edges: GraphEdge[], from: string, to: string): void {
+        if (!edges.some(e => e.from === from && e.to === to)) {
+            edges.push({ from, to, kind: 'internal' });
+        }
+    }
+
+    protected findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
+        const line = node.startPosition.row + 1;
+        const col = node.startPosition.column;
+        return Array.from(this.symbolTable.values()).find(s =>
+            s.file === filePath &&
+            s.range?.start.line === line &&
+            s.range?.start.column === col
+        );
+    }
+
+    protected async buildSymbolTable(_files: FileContent[]): Promise<void> {}
+    protected async identifyCalls(_edges: GraphEdge[], _files: FileContent[]): Promise<void> {}
 
     /**
      * Extracts function signatures from source files.
@@ -182,7 +221,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
             // 3. Calculate NLoC with normalization
             const blankLines = lines.filter(line => line.trim() === '').length;
             const normalizationAdjustment = normQuery
-                ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode, file.content)
+                ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode)
                 : 0;
 
             const nloc = Math.max(0, totalLines - blankLines - onlyCommentLinesCount - normalizationAdjustment);
@@ -300,8 +339,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
      */
     private calculateNormalizationAdjustment(
         normQuery: Query,
-        rootNode: Node,
-        fileContent: string
+        rootNode: Node
     ): number {
         const normCaptures = normQuery.captures(rootNode);
         const allConstructs = normCaptures.map(c => ({ node: c.node, name: c.name }));

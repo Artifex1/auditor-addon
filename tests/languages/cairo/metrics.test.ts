@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { CairoAdapter } from '../../src/languages/cairoAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { CairoAdapter } from '../../../src/languages/cairoAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
 describe('CairoAdapter Metrics', () => {
     const adapter = new CairoAdapter();

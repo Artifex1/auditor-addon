@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { CompactAdapter } from '../../src/languages/compactAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { CompactAdapter } from '../../../src/languages/compactAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
 describe('CompactAdapter Metrics', () => {
     const adapter = new CompactAdapter();

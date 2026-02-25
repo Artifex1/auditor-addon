@@ -10,7 +10,7 @@ allowed-tools:
   - mcp__auditor-addon__metrics
   - mcp__auditor-addon__diff_metrics
   - mcp__auditor-addon__diff
-  - mcp__auditor-addon__execution_paths
+  - mcp__auditor-addon__call_chains
 ---
 
 # Estimator
@@ -245,7 +245,7 @@ For each changed file, determine scope and adjust estimates. Assume **no prior a
 
 **Scope:** Apply categories and scope defaults (see references).
 
-**Context burden:** Use `execution_paths` to see where touched functions appear in call chains:
+**Context burden:** Use `call_chains` to see where touched functions appear in call chains:
 - *Isolated* (leaf node, minimal callers, self-contained) → no adjustment
 - *Integrated* (multiple paths, shared state, affects invariants) → increase estimate
 - *Escalate*: If paths are insufficient, read unchanged files to understand context surface

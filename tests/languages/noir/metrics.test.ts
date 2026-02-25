@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { TolkAdapter } from '../../src/languages/tolkAdapter.js';
-import { FileContent } from '../../src/engine/types.js';
+import { NoirAdapter } from '../../../src/languages/noirAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
 
-describe('TolkAdapter Metrics', () => {
-    const adapter = new TolkAdapter();
+describe('NoirAdapter Metrics', () => {
+    const adapter = new NoirAdapter();
 
     it('should calculate metrics correctly', async () => {
         const file: FileContent = {
-            path: 'main.tolk',
+            path: 'main.nr',
             content: `
-                fun main() {
+                fn main() {
                     // comment
-                    if (true) {
+                    if true {
                         let x = 1;
                     }
                 }

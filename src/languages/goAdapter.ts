@@ -1,9 +1,8 @@
-import { FileContent, SupportedLanguage, CallGraph, GraphNode, GraphEdge } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
-type Visibility = 'public' | 'external' | 'internal' | 'private';
 
 export class GoAdapter extends BaseAdapter {
     private static readonly QUERIES = {
@@ -27,8 +26,6 @@ export class GoAdapter extends BaseAdapter {
         'min', 'max', 'clear'
     ]);
 
-    private symbolTable: Map<string, GraphNode> = new Map();
-    private symbolsByLabel: Map<string, GraphNode[]> = new Map();
     private symbolsByReceiver: Map<string, GraphNode[]> = new Map();
 
     constructor() {
@@ -66,41 +63,21 @@ export class GoAdapter extends BaseAdapter {
         });
     }
 
-    async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        this.resetState();
-        const edges: GraphEdge[] = [];
-
-        // Phase 1: Build symbol table
-        await this.buildSymbolTable(files);
-
-        // Phase 2: Identify calls
-        await this.identifyCalls(edges, files);
-
-        const nodes: GraphNode[] = Array.from(this.symbolTable.values());
-        return { nodes, edges };
-    }
-
-    private resetState() {
-        this.symbolTable.clear();
-        this.symbolsByLabel.clear();
+    protected override resetState(): void {
+        super.resetState();
         this.symbolsByReceiver.clear();
     }
 
-    private indexSymbol(node: GraphNode) {
-        this.symbolTable.set(node.id, node);
-
-        const labelNodes = this.symbolsByLabel.get(node.label) || [];
-        labelNodes.push(node);
-        this.symbolsByLabel.set(node.label, labelNodes);
-
+    protected override indexSymbol(node: GraphNode): void {
+        super.indexSymbol(node);
         if (node.contract) {
-            const receiverNodes = this.symbolsByReceiver.get(node.contract) || [];
+            const receiverNodes = this.symbolsByReceiver.get(node.contract) ?? [];
             receiverNodes.push(node);
             this.symbolsByReceiver.set(node.contract, receiverNodes);
         }
     }
 
-    private async buildSymbolTable(files: FileContent[]) {
+    protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Go);
         const parser = await service.createParser(SupportedLanguage.Go);
@@ -192,7 +169,7 @@ export class GoAdapter extends BaseAdapter {
             : 'private';
     }
 
-    private async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Go);
         const parser = await service.createParser(SupportedLanguage.Go);
@@ -243,7 +220,7 @@ export class GoAdapter extends BaseAdapter {
             const callName = capture.node.text;
             if (GoAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
 
-            const callee = this.resolveSimpleCall(callName, caller);
+            const callee = this.resolveSimpleCall(callName);
             if (callee && callee.id !== caller.id) {
                 this.addEdge(edges, caller.id, callee.id);
             }
@@ -262,14 +239,7 @@ export class GoAdapter extends BaseAdapter {
         }
     }
 
-    private addEdge(edges: GraphEdge[], from: string, to: string) {
-        const exists = edges.some(e => e.from === from && e.to === to);
-        if (!exists) {
-            edges.push({ from, to, kind: 'internal' });
-        }
-    }
-
-    private resolveSimpleCall(callName: string, caller: GraphNode): GraphNode | undefined {
+    private resolveSimpleCall(callName: string): GraphNode | undefined {
         // 1. Try same package (all functions without receiver)
         const packageFuncs = this.symbolsByLabel.get(callName);
         const packageFunc = packageFuncs?.find(n => !n.contract);
@@ -293,14 +263,4 @@ export class GoAdapter extends BaseAdapter {
         return methods?.[0];
     }
 
-    private findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
-        const line = node.startPosition.row + 1;
-        const col = node.startPosition.column;
-
-        return Array.from(this.symbolTable.values()).find(s =>
-            s.file === filePath &&
-            s.range?.start.line === line &&
-            s.range?.start.column === col
-        );
-    }
 }

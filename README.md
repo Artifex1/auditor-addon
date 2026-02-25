@@ -92,7 +92,7 @@ Traces call chains from root functions (functions nothing else calls) through th
 
 <div align="center">
 
-| Language | Peek | Execution Paths | Metrics |
+| Language | Peek | Call Chains | Metrics |
 |:--------:|:-----------:|:-----------:|:-------:|
 | 🔷 **Solidity** | ✅ | ✅ | ✅ |
 | 🦀 **Rust** | ✅ | ✅ | ✅ |

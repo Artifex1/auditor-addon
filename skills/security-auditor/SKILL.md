@@ -82,7 +82,7 @@ List 3-10 invariants that should hold assuming honest privileged roles. Referenc
 
 Mark any that depend on out-of-scope assumptions as **uncertain**.
 
-#### 3. Execution Paths
+#### 3. Call Chains
 
 From `call_chains` output, list each path:
 - `<Path String>`

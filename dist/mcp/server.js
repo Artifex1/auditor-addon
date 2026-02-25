@@ -30855,6 +30855,8 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     SCOPED_CALL: `(call_expression function: (qualified_identifier name: (identifier) @FUNC))`
   };
   symbolsByClass = /* @__PURE__ */ new Map();
+  // Visibility declared in class body (covers forward-declaration-only classes)
+  declaredVisibility = /* @__PURE__ */ new Map();
   constructor() {
     super({
       languageId: "cpp" /* Cpp */,
@@ -30899,6 +30901,7 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
   resetState() {
     super.resetState();
     this.symbolsByClass.clear();
+    this.declaredVisibility.clear();
   }
   indexSymbol(node) {
     super.indexSymbol(node);
@@ -30930,6 +30933,11 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
           } else if (child.type === "function_definition") {
             const node = this.createMethodNode(child, file.path, className, currentVisibility);
             if (node) this.indexSymbol(node);
+          } else if (child.type === "field_declaration") {
+            const nameNode = child.childForFieldName("declarator")?.children.find((c) => c.type === "field_identifier");
+            if (nameNode) {
+              this.declaredVisibility.set(`${className}::${nameNode.text}`, currentVisibility);
+            }
           }
         }
       }
@@ -30937,8 +30945,34 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       for (const capture of funcCaptures) {
         const funcNode = capture.node;
         if (this.isInsideClass(funcNode, classCaptures)) continue;
-        const node = this.createFreeFunctionNode(funcNode, file.path);
-        if (node) this.indexSymbol(node);
+        const declarator = funcNode.childForFieldName("declarator");
+        const qualifiedId = declarator?.children.find((c) => c.type === "qualified_identifier");
+        if (qualifiedId) {
+          const className = qualifiedId.children.find((c) => c.type === "namespace_identifier")?.text;
+          const methodName = qualifiedId.children.find((c) => c.type === "identifier")?.text;
+          if (className && methodName) {
+            const key = `${className}::${methodName}`;
+            const existing = this.symbolsByClass.get(className)?.find((n) => n.label === methodName);
+            if (!existing) {
+              const visibility = this.declaredVisibility.get(key) ?? "public";
+              this.indexSymbol({
+                id: key,
+                label: methodName,
+                file: file.path,
+                contract: className,
+                visibility,
+                range: {
+                  start: { line: funcNode.startPosition.row + 1, column: funcNode.startPosition.column },
+                  end: { line: funcNode.endPosition.row + 1, column: funcNode.endPosition.column }
+                },
+                text: funcNode.text
+              });
+            }
+          }
+        } else {
+          const node = this.createFreeFunctionNode(funcNode, file.path);
+          if (node) this.indexSymbol(node);
+        }
       }
     }
   }
@@ -31000,7 +31034,6 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("cpp" /* Cpp */);
     const parser = await service.createParser("cpp" /* Cpp */);
-    const classQuery = new Query(lang, _CppAdapter.QUERIES.CLASSES);
     const functionQuery = new Query(lang, _CppAdapter.QUERIES.FUNCTIONS);
     const simpleCallQuery = new Query(lang, _CppAdapter.QUERIES.SIMPLE_CALL);
     const fieldCallQuery = new Query(lang, _CppAdapter.QUERIES.FIELD_CALL);
@@ -31008,7 +31041,6 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
-      const classCaptures = classQuery.captures(tree.rootNode);
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const funcNode = capture.node;

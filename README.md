@@ -102,10 +102,10 @@ Traces call chains from root functions (functions nothing else calls) through th
 | 📦 **Compact** | ✅ | ✅ | ✅ |
 | 💧 **Move** | ✅ | ✅ | ✅ |
 | 🌑 **Noir** | ✅ | ✅ | ✅ |
-| 🧩 **Tolk** | ✅ | ⏳ | ✅ |
+| 🧩 **Tolk** | ✅ | ✅ | ✅ |
 | ⚙️ **Masm** | ✅ | ✅ | ✅ |
-| ⚡ **C++** | ✅ | ⏳ | ✅ |
-| ☕ **Java** | ✅ | ⏳ | ✅ |
+| ⚡ **C++** | ✅ | ✅ | ✅ |
+| ☕ **Java** | ✅ | ✅ | ✅ |
 | 🟨 **JavaScript** | ✅ | ✅ | ✅ |
 | 🔷 **TypeScript** | ✅ | ✅ | ✅ |
 | 🧩 **TSX** | ✅ | ✅ | ✅ |

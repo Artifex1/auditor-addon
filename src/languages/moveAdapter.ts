@@ -36,11 +36,11 @@ export class MoveAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 350,
+                baseRateNlocPerDay: 200,
                 complexityMidpoint: 12,
                 complexitySteepness: 8,
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.6,
+                complexityPenaltyCap: 1.0,
                 commentFullBenefitDensity: 20,
                 commentBenefitCap: 0.3
             }

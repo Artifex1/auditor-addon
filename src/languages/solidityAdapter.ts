@@ -76,7 +76,7 @@ export class SolidityAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 250,
+                baseRateNlocPerDay: 150,
                 // Smart contracts should be structurally simple. Even moderate CC
                 // density is already risky, so the neutral point is low.
                 complexityMidpoint: 11,
@@ -85,10 +85,10 @@ export class SolidityAdapter extends BaseAdapter {
                 // impact audit time.
                 complexitySteepness: 8,
                 // Complex Solidity (value transfers, reentrancy, upgradeability,
-                // gas edge cases) can easily cost up to ~75% more review time.
-                // Simplicity helps, but we cap its benefit at ~25%.
+                // gas edge cases) can cost up to ~150% more review time at extreme
+                // complexity. Simplicity helps, but we cap its benefit at ~25%.
                 complexityBenefitCap: 0.25,
-                complexityPenaltyCap: 0.75,
+                complexityPenaltyCap: 1.5,
                 // NatSpec-style docs and invariants/role explanations are highly
                 // valuable. Rich documentation can improve throughput by up to ~35%,
                 // especially for protocol-level contracts.

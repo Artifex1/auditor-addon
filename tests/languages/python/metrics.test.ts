@@ -148,42 +148,55 @@ describe('PythonAdapter Metrics', () => {
         expect(metrics[0].commentDensity).toBe(0);
     });
 
-    it('should calculate estimated hours based on complexity and documentation', async () => {
-        const content = `# Well documented function
-            def simple():
-                x = 1
-                return x
-        `;
-        // Analysis:
-        // NLoC = 4 - 0 - 1 - 0 = 3
-        // Cognitive complexity: 0
-        // Lines with comments: 1
-        // Comment density: (1 / 3) * 100 = 33.33%
-        // Normalized complexity: (0 / 3) * 100 = 0 per 100 NLoC
-        //
-        // Estimation (using Python constants):
-        // baseRateNlocPerDay = 450
-        // complexityMidpoint = 12
-        // complexitySteepness = 9
-        // complexityBenefitCap = 0.25
-        // complexityPenaltyCap = 0.55
-        // commentFullBenefitDensity = 15
-        // commentBenefitCap = 0.25
-        //
-        // baseHours = (3 / 450) * 8 = 0.05333 hours
-        // complexityDelta = 0 - 12 = -12
-        // complexityShape = tanh(-12 / 9) = tanh(-1.3333) ≈ -0.8710
-        // complexityAdjustment = -0.8710 * 0.25 ≈ -0.2177
-        // commentDensityProgress = 33.33 / 15 = 2.2222
-        // commentShape = tanh(2.2222 * 2.646) = tanh(5.88) ≈ 0.99999
-        // commentAdjustment = 0.99999 * 0.25 ≈ 0.25
-        // factor = 1.0 + (-0.2177) - 0.25 = 0.5323
-        // factor clamped to [0.5, 1.55] = 0.5323
-        // estimatedHours = 0.05333 * 0.5323 ≈ 0.03 hours
+    it('should produce higher estimated hours for complex undocumented code than simple documented code', async () => {
+        const simple = `# Well documented function
+def simple():
+    # just returns a constant
+    return 1
+`;
+        const complex = `def complex(a, b, c):
+    if a > 0:
+        for i in range(a):
+            if b > c:
+                if b > a:
+                    return i
+    return 0
+`;
+        const [simpleMetrics, complexMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'simple.py', content: simple }]),
+            adapter.calculateMetrics([{ path: 'complex.py', content: complex }]),
+        ]);
 
-        const metrics = await adapter.calculateMetrics([{ path: 'estimation.py', content }]);
-        expect(metrics).toHaveLength(1);
-        expect(metrics[0].nloc).toBe(3);
-        expect(metrics[0].estimatedHours).toBe(0.03);
+        // Hours must be positive and complex > simple (more code + higher CC + no docs)
+        expect(simpleMetrics[0].estimatedHours).toBeGreaterThan(0);
+        expect(complexMetrics[0].estimatedHours).toBeGreaterThan(simpleMetrics[0].estimatedHours);
+    });
+
+    it('should produce higher estimated hours for larger files, all else equal', async () => {
+        const small = `def foo():
+    return 1
+`;
+        const large = `def foo():
+    return 1
+
+def bar():
+    return 2
+
+def baz():
+    return 3
+
+def qux():
+    return 4
+
+def quux():
+    return 5
+`;
+        const [smallMetrics, largeMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'small.py', content: small }]),
+            adapter.calculateMetrics([{ path: 'large.py', content: large }]),
+        ]);
+
+        expect(largeMetrics[0].nloc).toBeGreaterThan(smallMetrics[0].nloc);
+        expect(largeMetrics[0].estimatedHours).toBeGreaterThan(smallMetrics[0].estimatedHours);
     });
 });

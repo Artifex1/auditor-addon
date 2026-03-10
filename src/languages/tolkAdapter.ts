@@ -31,11 +31,11 @@ export class TolkAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 300, // Tolk is low-level, similar to C++ in audit effort
+                baseRateNlocPerDay: 150, // Tolk is low-level, similar to C++ in audit effort
                 complexityMidpoint: 15,
                 complexitySteepness: 9,
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.6,
+                complexityPenaltyCap: 1.2,
                 commentFullBenefitDensity: 18,
                 commentBenefitCap: 0.3
             }

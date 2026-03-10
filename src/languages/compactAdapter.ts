@@ -23,15 +23,14 @@ export class CompactAdapter extends BaseAdapter {
                 `,
                 normalization: `
                     (function_call_term) @norm
-                    (cdefn) @norm
                 `
             },
             constants: {
-                baseRateNlocPerDay: 300,
+                baseRateNlocPerDay: 150,
                 complexityMidpoint: 10,
                 complexitySteepness: 7,
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.6,
+                complexityPenaltyCap: 1.5,
                 commentFullBenefitDensity: 20,
                 commentBenefitCap: 0.3
             }

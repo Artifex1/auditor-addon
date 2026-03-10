@@ -67,15 +67,15 @@ export class PythonAdapter extends BaseAdapter {
             },
             constants: {
                 // Python is highly readable; review throughput is similar to JS/TS.
-                baseRateNlocPerDay: 450,
+                baseRateNlocPerDay: 275,
                 // Moderate complexity threshold — Python's indentation-based scoping
                 // makes nesting very visible, but deeply nested code is still costly.
                 complexityMidpoint: 12,
                 complexitySteepness: 9,
                 // Simple, flat Python code can speed up review by ~25%; heavy nesting
-                // and complex control flow can cost up to ~55% more.
+                // and complex control flow can cost up to ~90% more.
                 complexityBenefitCap: 0.25,
-                complexityPenaltyCap: 0.55,
+                complexityPenaltyCap: 0.9,
                 // Docstrings and inline comments are idiomatic Python; most benefit
                 // is realized around ~15% comment density.
                 commentFullBenefitDensity: 15,

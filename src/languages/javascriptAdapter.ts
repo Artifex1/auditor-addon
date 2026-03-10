@@ -37,7 +37,7 @@ const JS_FAMILY_QUERIES = {
 };
 
 const JS_FAMILY_CONSTANTS = {
-    baseRateNlocPerDay: 450,
+    baseRateNlocPerDay: 275,
     // Typical JS/TS code is readable but can hide complexity in callbacks and
     // async flows; we start penalizing around moderate branch density.
     complexityMidpoint: 12,
@@ -45,9 +45,9 @@ const JS_FAMILY_CONSTANTS = {
     // quickly slowing down when control flow gets tangled.
     complexitySteepness: 9,
     // Clear, linear code can give ~25% speedup; heavily nested/async logic can
-    // cost up to ~55% more review time.
+    // cost up to ~90% more review time.
     complexityBenefitCap: 0.25,
-    complexityPenaltyCap: 0.55,
+    complexityPenaltyCap: 0.9,
     // Good inline docs for async boundaries, data shapes, and side effects help
     // reviewers; most benefit comes around ~15% comment density.
     commentFullBenefitDensity: 15,

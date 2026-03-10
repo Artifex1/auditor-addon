@@ -54,11 +54,11 @@ export class RustAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 400,
+                baseRateNlocPerDay: 225,
                 complexityMidpoint: 16,
                 complexitySteepness: 10,
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.7,
+                complexityPenaltyCap: 1.2,
                 commentFullBenefitDensity: 18,
                 commentBenefitCap: 0.35
             }

@@ -31,16 +31,14 @@ export class MasmAdapter extends BaseAdapter {
                 `,
                 normalization: `
                     (invoke) @norm
-                    (procedure) @norm
-                    (entrypoint) @norm
                 `
             },
             constants: {
-                baseRateNlocPerDay: 350,
+                baseRateNlocPerDay: 150,
                 complexityMidpoint: 10,
                 complexitySteepness: 7,
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.6,
+                complexityPenaltyCap: 1.5,
                 commentFullBenefitDensity: 20,
                 commentBenefitCap: 0.3
             }

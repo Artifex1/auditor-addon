@@ -39,18 +39,18 @@ export class CppAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 400,
+                baseRateNlocPerDay: 225,
                 // Moderate structural complexity is "normal" C++: branches, loops,
                 // RAII, exceptions, templates, etc. We only start penalizing above that.
                 complexityMidpoint: 15,
                 // Complexity ramp is gradual. You need to be ~10–20 CC above/below
                 // the midpoint before you hit most of the penalty/benefit.
                 complexitySteepness: 9,
-                // High complexity can slow review down by up to ~60% (1.6x time),
+                // High complexity can slow review down by up to ~120% (2.2x time),
                 // while very simple code can at best give ~30% speedup. In security
                 // audits, complexity hurts more than simplicity helps.
                 complexityBenefitCap: 0.3,
-                complexityPenaltyCap: 0.6,
+                complexityPenaltyCap: 1.2,
                 // Slightly higher "normal" comment density to explain invariants,
                 // ownership rules, perf hacks. Around 18%+ unlocks most of the
                 // documentation benefit (up to ~30%).

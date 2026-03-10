@@ -90,4 +90,76 @@ func withSwitch(x int) int {
         expect(metrics).toHaveLength(1);
         expect(metrics[0].cognitiveComplexity).toBeGreaterThan(0);
     });
+
+    it('should produce higher estimated hours for complex undocumented code than simple documented code', async () => {
+        const simple = `package main
+
+// SimpleFunc is a well documented function
+func SimpleFunc() int {
+    // just returns a constant
+    return 1
+}
+`;
+        const complex = `package main
+
+func complex(a int, b int, c int) int {
+    if a > 0 {
+        for i := 0; i < a; i++ {
+            if b > c {
+                if b > a {
+                    return i
+                }
+            }
+        }
+    }
+    return 0
+}
+`;
+        const [simpleMetrics, complexMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'simple.go', content: simple }]),
+            adapter.calculateMetrics([{ path: 'complex.go', content: complex }]),
+        ]);
+
+        // Hours must be positive and complex > simple (more code + higher CC + no docs)
+        expect(simpleMetrics[0].estimatedHours).toBeGreaterThan(0);
+        expect(complexMetrics[0].estimatedHours).toBeGreaterThan(simpleMetrics[0].estimatedHours);
+    });
+
+    it('should produce higher estimated hours for larger files, all else equal', async () => {
+        const small = `package main
+
+func foo() int {
+    return 1
+}
+`;
+        const large = `package main
+
+func foo() int {
+    return 1
+}
+
+func bar() int {
+    return 2
+}
+
+func baz() int {
+    return 3
+}
+
+func qux() int {
+    return 4
+}
+
+func quux() int {
+    return 5
+}
+`;
+        const [smallMetrics, largeMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'small.go', content: small }]),
+            adapter.calculateMetrics([{ path: 'large.go', content: large }]),
+        ]);
+
+        expect(largeMetrics[0].nloc).toBeGreaterThan(smallMetrics[0].nloc);
+        expect(largeMetrics[0].estimatedHours).toBeGreaterThan(smallMetrics[0].estimatedHours);
+    });
 });

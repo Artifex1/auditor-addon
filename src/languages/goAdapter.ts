@@ -52,11 +52,11 @@ export class GoAdapter extends BaseAdapter {
                 `
             },
             constants: {
-                baseRateNlocPerDay: 400,
+                baseRateNlocPerDay: 250,
                 complexityMidpoint: 12,
                 complexitySteepness: 9,
                 complexityBenefitCap: 0.25,
-                complexityPenaltyCap: 0.50,
+                complexityPenaltyCap: 0.9,
                 commentFullBenefitDensity: 15,
                 commentBenefitCap: 0.25
             }

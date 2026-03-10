@@ -30502,7 +30502,7 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 250,
+        baseRateNlocPerDay: 150,
         // Smart contracts should be structurally simple. Even moderate CC
         // density is already risky, so the neutral point is low.
         complexityMidpoint: 11,
@@ -30511,10 +30511,10 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         // impact audit time.
         complexitySteepness: 8,
         // Complex Solidity (value transfers, reentrancy, upgradeability,
-        // gas edge cases) can easily cost up to ~75% more review time.
-        // Simplicity helps, but we cap its benefit at ~25%.
+        // gas edge cases) can cost up to ~150% more review time at extreme
+        // complexity. Simplicity helps, but we cap its benefit at ~25%.
         complexityBenefitCap: 0.25,
-        complexityPenaltyCap: 0.75,
+        complexityPenaltyCap: 1.5,
         // NatSpec-style docs and invariants/role explanations are highly
         // valuable. Rich documentation can improve throughput by up to ~35%,
         // especially for protocol-level contracts.
@@ -30878,18 +30878,18 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 400,
+        baseRateNlocPerDay: 225,
         // Moderate structural complexity is "normal" C++: branches, loops,
         // RAII, exceptions, templates, etc. We only start penalizing above that.
         complexityMidpoint: 15,
         // Complexity ramp is gradual. You need to be ~10–20 CC above/below
         // the midpoint before you hit most of the penalty/benefit.
         complexitySteepness: 9,
-        // High complexity can slow review down by up to ~60% (1.6x time),
+        // High complexity can slow review down by up to ~120% (2.2x time),
         // while very simple code can at best give ~30% speedup. In security
         // audits, complexity hurts more than simplicity helps.
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.2,
         // Slightly higher "normal" comment density to explain invariants,
         // ownership rules, perf hacks. Around 18%+ unlocks most of the
         // documentation benefit (up to ~30%).
@@ -31136,17 +31136,17 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 400,
+        baseRateNlocPerDay: 250,
         //  Java tends to be verbose but structurally simpler than C++/Rust.
         //  We expect slightly lower CC density before considering it "complex."
         complexityMidpoint: 13,
         //  Once Java control flow gets significantly more tangled than normal
         //  business logic, we ramp penalties a bit faster.
         complexitySteepness: 9,
-        //  Deep OO / branching can add up to ~55% extra review time, while
+        //  Deep OO / branching can add up to ~90% extra review time, while
         //  simple Java can give ~25% speedup at best.
         complexityBenefitCap: 0.25,
-        complexityPenaltyCap: 0.55,
+        complexityPenaltyCap: 0.9,
         //  Many Java codebases rely on readable code plus moderate Javadoc.
         //  Around 25% comments unlocks most of the doc benefit (up to ~25%).
         commentFullBenefitDensity: 25,
@@ -31333,11 +31333,11 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 400,
+        baseRateNlocPerDay: 250,
         complexityMidpoint: 12,
         complexitySteepness: 9,
         complexityBenefitCap: 0.25,
-        complexityPenaltyCap: 0.5,
+        complexityPenaltyCap: 0.9,
         commentFullBenefitDensity: 15,
         commentBenefitCap: 0.25
       }
@@ -31539,11 +31539,11 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 400,
+        baseRateNlocPerDay: 225,
         complexityMidpoint: 16,
         complexitySteepness: 10,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.7,
+        complexityPenaltyCap: 1.2,
         commentFullBenefitDensity: 18,
         commentBenefitCap: 0.35
       }
@@ -31796,11 +31796,11 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 350,
+        baseRateNlocPerDay: 200,
         complexityMidpoint: 12,
         complexitySteepness: 8,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.2,
         commentFullBenefitDensity: 20,
         commentBenefitCap: 0.3
       }
@@ -31999,15 +31999,14 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
                 `,
         normalization: `
                     (function_call_term) @norm
-                    (cdefn) @norm
                 `
       },
       constants: {
-        baseRateNlocPerDay: 300,
+        baseRateNlocPerDay: 150,
         complexityMidpoint: 10,
         complexitySteepness: 7,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.5,
         commentFullBenefitDensity: 20,
         commentBenefitCap: 0.3
       }
@@ -32122,11 +32121,11 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 350,
+        baseRateNlocPerDay: 200,
         complexityMidpoint: 12,
         complexitySteepness: 8,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1,
         commentFullBenefitDensity: 20,
         commentBenefitCap: 0.3
       }
@@ -32306,11 +32305,11 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 300,
+        baseRateNlocPerDay: 150,
         complexityMidpoint: 10,
         complexitySteepness: 7,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.5,
         commentFullBenefitDensity: 20,
         commentBenefitCap: 0.3
       }
@@ -32438,12 +32437,12 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
                 `
       },
       constants: {
-        baseRateNlocPerDay: 300,
+        baseRateNlocPerDay: 150,
         // Tolk is low-level, similar to C++ in audit effort
         complexityMidpoint: 15,
         complexitySteepness: 9,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.2,
         commentFullBenefitDensity: 18,
         commentBenefitCap: 0.3
       }
@@ -32543,7 +32542,7 @@ var JS_FAMILY_QUERIES = {
     `
 };
 var JS_FAMILY_CONSTANTS = {
-  baseRateNlocPerDay: 450,
+  baseRateNlocPerDay: 275,
   // Typical JS/TS code is readable but can hide complexity in callbacks and
   // async flows; we start penalizing around moderate branch density.
   complexityMidpoint: 12,
@@ -32551,9 +32550,9 @@ var JS_FAMILY_CONSTANTS = {
   // quickly slowing down when control flow gets tangled.
   complexitySteepness: 9,
   // Clear, linear code can give ~25% speedup; heavily nested/async logic can
-  // cost up to ~55% more review time.
+  // cost up to ~90% more review time.
   complexityBenefitCap: 0.25,
-  complexityPenaltyCap: 0.55,
+  complexityPenaltyCap: 0.9,
   // Good inline docs for async boundaries, data shapes, and side effects help
   // reviewers; most benefit comes around ~15% comment density.
   commentFullBenefitDensity: 15,
@@ -32836,16 +32835,14 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
                 `,
         normalization: `
                     (invoke) @norm
-                    (procedure) @norm
-                    (entrypoint) @norm
                 `
       },
       constants: {
-        baseRateNlocPerDay: 350,
+        baseRateNlocPerDay: 150,
         complexityMidpoint: 10,
         complexitySteepness: 7,
         complexityBenefitCap: 0.3,
-        complexityPenaltyCap: 0.6,
+        complexityPenaltyCap: 1.5,
         commentFullBenefitDensity: 20,
         commentBenefitCap: 0.3
       }
@@ -33068,15 +33065,15 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
       },
       constants: {
         // Python is highly readable; review throughput is similar to JS/TS.
-        baseRateNlocPerDay: 450,
+        baseRateNlocPerDay: 275,
         // Moderate complexity threshold — Python's indentation-based scoping
         // makes nesting very visible, but deeply nested code is still costly.
         complexityMidpoint: 12,
         complexitySteepness: 9,
         // Simple, flat Python code can speed up review by ~25%; heavy nesting
-        // and complex control flow can cost up to ~55% more.
+        // and complex control flow can cost up to ~90% more.
         complexityBenefitCap: 0.25,
-        complexityPenaltyCap: 0.55,
+        complexityPenaltyCap: 0.9,
         // Docstrings and inline comments are idiomatic Python; most benefit
         // is realized around ~15% comment density.
         commentFullBenefitDensity: 15,

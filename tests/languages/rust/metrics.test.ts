@@ -72,4 +72,68 @@ describe('RustAdapter Metrics', () => {
         expect(metrics).toHaveLength(1);
         expect(metrics[0].cognitiveComplexity).toBeGreaterThan(0);
     });
+
+    it('should produce higher estimated hours for complex undocumented code than simple documented code', async () => {
+        const simple = `/// Well documented function
+fn simple() -> i32 {
+    // just returns a constant
+    1
+}
+`;
+        const complex = `fn complex(a: i32, b: i32, c: i32) -> i32 {
+    if a > 0 {
+        for i in 0..a {
+            if b > c {
+                if b > a {
+                    return i;
+                }
+            }
+        }
+    }
+    0
+}
+`;
+        const [simpleMetrics, complexMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'simple.rs', content: simple }]),
+            adapter.calculateMetrics([{ path: 'complex.rs', content: complex }]),
+        ]);
+
+        // Hours must be positive and complex > simple (more code + higher CC + no docs)
+        expect(simpleMetrics[0].estimatedHours).toBeGreaterThan(0);
+        expect(complexMetrics[0].estimatedHours).toBeGreaterThan(simpleMetrics[0].estimatedHours);
+    });
+
+    it('should produce higher estimated hours for larger files, all else equal', async () => {
+        const small = `fn foo() -> i32 {
+    1
+}
+`;
+        const large = `fn foo() -> i32 {
+    1
+}
+
+fn bar() -> i32 {
+    2
+}
+
+fn baz() -> i32 {
+    3
+}
+
+fn qux() -> i32 {
+    4
+}
+
+fn quux() -> i32 {
+    5
+}
+`;
+        const [smallMetrics, largeMetrics] = await Promise.all([
+            adapter.calculateMetrics([{ path: 'small.rs', content: small }]),
+            adapter.calculateMetrics([{ path: 'large.rs', content: large }]),
+        ]);
+
+        expect(largeMetrics[0].nloc).toBeGreaterThan(smallMetrics[0].nloc);
+        expect(largeMetrics[0].estimatedHours).toBeGreaterThan(smallMetrics[0].estimatedHours);
+    });
 });

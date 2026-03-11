@@ -56,9 +56,21 @@ function findGrammarPaths(dir: string): GrammarTarget[] {
 
 // Optimization: We scan ALL vendor dirs first, then filter by the Resolved Name later.
 // This allows filtering for 'tsx' even if it lives inside 'tree-sitter-typescript'.
-const vendorDirs = fs.readdirSync(GRAMMARS_DIR).filter(name => 
+const vendorDirs = fs.readdirSync(GRAMMARS_DIR).filter(name =>
     fs.statSync(path.join(GRAMMARS_DIR, name)).isDirectory()
 );
+
+// Auto-initialize any uninitialized submodules (empty directories)
+for (const vendorName of vendorDirs) {
+    const vendorPath = path.join(GRAMMARS_DIR, vendorName);
+    if (fs.readdirSync(vendorPath).length === 0) {
+        console.log(`Initializing submodule: ${vendorName}...`);
+        execSync(`git submodule update --init "${vendorPath}"`, {
+            cwd: ROOT_DIR,
+            stdio: ['ignore', 'inherit', 'inherit']
+        });
+    }
+}
 
 console.log(`Scanning ${vendorDirs.length} vendor folders...`);
 

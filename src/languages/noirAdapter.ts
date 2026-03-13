@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -60,8 +63,8 @@ export class NoirAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 if (this.isNestedFunction(capture.node)) continue;
-                const node = this.createFunctionNode(capture.node, file.path);
-                this.indexSymbol(node);
+                const entry = this.createFunctionNode(capture.node, file.path);
+                this.indexSymbol(entry);
             }
         }
     }
@@ -75,22 +78,18 @@ export class NoirAdapter extends BaseAdapter {
         return false;
     }
 
-    private createFunctionNode(node: Node, file: string): GraphNode {
+    private createFunctionNode(node: Node, file: string): SymbolEntry {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const visibility = this.extractVisibility(node);
 
-        return {
-            id: fnName,
+        return this.createEntry({
+            qualifiedName: fnName,
             label: fnName,
             file,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+        });
     }
 
     private extractVisibility(node: Node): Visibility {
@@ -102,7 +101,77 @@ export class NoirAdapter extends BaseAdapter {
         return 'private';
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_item';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'function_item') {
+            return node.childForFieldName('name')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        return this.extractVisibility(node) === 'public';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_expression';
+    }
+
+    override isStateWrite(node: Node): boolean {
+        return node.type === 'assignment_expression';
+    }
+
+    override isStateRead(node: Node): boolean {
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment_expression'
+                && parent.childForFieldName('left')?.id === node.id) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expression') return null;
+        const func = node.childForFieldName('function');
+        if (func?.type === 'identifier') return func.text;
+        if (func?.type === 'scoped_identifier') {
+            const parts = func.text.split('::');
+            return parts[parts.length - 1];
+        }
+        return null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression') return null;
+        return node.childForFieldName('left')?.text ?? null;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        return null;
+    }
+
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Noir);
         const parser = await service.createParser(SupportedLanguage.Noir);
@@ -136,8 +205,8 @@ export class NoirAdapter extends BaseAdapter {
                     if (callCapture.name !== 'FUNC') continue;
                     const callName = callCapture.node.text;
                     const callee = this.symbolsByLabel.get(callName)?.[0];
-                    if (callee && callee.id !== symbol.id) {
-                        this.addEdge(edges, symbol.id, callee.id);
+                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
                     }
                 }
 
@@ -151,8 +220,8 @@ export class NoirAdapter extends BaseAdapter {
                             ? callText.split('::').pop()!
                             : callText;
                         const callee = this.symbolsByLabel.get(funcName)?.[0];
-                        if (callee && callee.id !== symbol.id) {
-                            this.addEdge(edges, symbol.id, callee.id);
+                        if (callee && callee.qualifiedName !== symbol.qualifiedName) {
+                            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
                         }
                     }
                 }

@@ -1,15 +1,11 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
-/**
- * Represents the type of function call being analyzed.
- * - Simple: Direct function call (e.g., `foo()`)
- * - Member: Member access call (e.g., `obj.foo()`)
- * - This: Explicit this call (e.g., `this.foo()`)
- * - Super: Parent contract call (e.g., `super.foo()`)
- */
 enum CallType {
     Simple,
     Member,
@@ -17,13 +13,7 @@ enum CallType {
     Super
 }
 
-
-/**
- * Language adapter for Solidity smart contracts.
- * Handles entrypoint extraction, call graph generation, and metrics calculation.
- */
 export class SolidityAdapter extends BaseAdapter {
-    // Tree-sitter query strings
     private static readonly QUERIES = {
         CONTAINERS: `
             [(contract_declaration) (interface_declaration) (library_declaration)] @container
@@ -77,70 +67,34 @@ export class SolidityAdapter extends BaseAdapter {
             },
             constants: {
                 baseRateNlocPerDay: 150,
-                // Smart contracts should be structurally simple. Even moderate CC
-                // density is already risky, so the neutral point is low.
                 complexityMidpoint: 11,
-                // Complexity penalties ramp quickly: a small increase above midpoint
-                // (loops, nested branches, tricky control flow) should strongly
-                // impact audit time.
                 complexitySteepness: 8,
-                // Complex Solidity (value transfers, reentrancy, upgradeability,
-                // gas edge cases) can cost up to ~150% more review time at extreme
-                // complexity. Simplicity helps, but we cap its benefit at ~25%.
                 complexityBenefitCap: 0.25,
                 complexityPenaltyCap: 1.5,
-                // NatSpec-style docs and invariants/role explanations are highly
-                // valuable. Rich documentation can improve throughput by up to ~35%,
-                // especially for protocol-level contracts.
                 commentFullBenefitDensity: 20,
                 commentBenefitCap: 0.35
             }
         });
     }
 
-    private inheritanceGraph: Map<string, string[]> = new Map(); // child -> parents
-    private usingForMap: Map<string, string[]> = new Map(); // contract -> libraries
-
-    // Optimization: Index symbols for faster lookups
-    private symbolsByContract: Map<string, GraphNode[]> = new Map();
-
+    private inheritanceGraph: Map<string, string[]> = new Map();
+    private usingForMap: Map<string, string[]> = new Map();
     private static readonly BUILTIN_FUNCTIONS = new Set(['require', 'assert', 'revert', 'emit']);
 
-    /**
-     * Resets all internal state (symbol table, inheritance graph, etc.).
-     * Called at the start of each analysis operation.
-     */
     protected override resetState(): void {
         super.resetState();
         this.inheritanceGraph.clear();
         this.usingForMap.clear();
-        this.symbolsByContract.clear();
     }
 
-    /**
-     * Indexes a symbol in the symbol table and optimization indices.
-     *
-     * @param node - GraphNode to index
-     */
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-
-        if (node.contract) {
-            const nodes = this.symbolsByContract.get(node.contract) ?? [];
-            nodes.push(node);
-            this.symbolsByContract.set(node.contract, nodes);
-        }
+    private findInContract(contract: string, label: string): SymbolEntry | undefined {
+        return this.symbolsByContainer.get(contract)?.find(e => e.label === label);
     }
 
-    private findInContract(contract: string, label: string): GraphNode | undefined {
-        return this.symbolsByContract.get(contract)?.find(n => n.label === label);
-    }
-
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);
-
         const functionQuery = new Query(lang, SolidityAdapter.QUERIES.FUNCTIONS);
 
         for (const file of files) {
@@ -150,58 +104,25 @@ export class SolidityAdapter extends BaseAdapter {
             const captures = functionQuery.captures(tree.rootNode);
             for (const capture of captures) {
                 const functionNode = capture.node;
-
-                // Find the corresponding GraphNode in our symbol table
                 const symbol = this.findSymbolAtNode(functionNode, file.path);
                 if (!symbol) continue;
 
-                // Rule 1: Super calls
-                await this.processCallType(functionNode, symbol, edges, {
-                    callType: CallType.Super
-                });
-
-                // Rule 2: Member calls
-                await this.processCallType(functionNode, symbol, edges, {
-                    callType: CallType.Member,
-                    extractMember: true
-                });
-
-                // Rule 3: This calls
-                await this.processCallType(functionNode, symbol, edges, {
-                    callType: CallType.This
-                });
-
-                // Rule 4: Simple calls
-                await this.processCallType(functionNode, symbol, edges, {
-                    callType: CallType.Simple
-                });
-
-                // Rule 5: Assembly calls
-                await this.processAssemblyCalls(functionNode, symbol, edges);
+                await this.processCallType(functionNode, symbol, { callType: CallType.Super });
+                await this.processCallType(functionNode, symbol, { callType: CallType.Member, extractMember: true });
+                await this.processCallType(functionNode, symbol, { callType: CallType.This });
+                await this.processCallType(functionNode, symbol, { callType: CallType.Simple });
+                await this.processAssemblyCalls(functionNode, symbol);
             }
         }
     }
 
-    /**
-     * Processes function calls of a specific type within a function node.
-     * 
-     * @param functionNode - The tree-sitter node representing the function
-     * @param symbol - The GraphNode representing this function in the symbol table
-     * @param edges - Array to collect discovered call edges
-     * @param callConfig - Configuration specifying the call type and options
-     */
     private async processCallType(
         functionNode: Node,
-        symbol: GraphNode,
-        edges: GraphEdge[],
-        callConfig: {
-            callType: CallType;
-            extractMember?: boolean;
-        }
+        symbol: SymbolEntry,
+        callConfig: { callType: CallType; extractMember?: boolean }
     ) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
-
         const querySource = this.getQueryForCallType(callConfig.callType);
         const query = new Query(lang, querySource);
         const matches = query.matches(functionNode);
@@ -220,85 +141,74 @@ export class SolidityAdapter extends BaseAdapter {
 
             if (this.shouldSkipCall(funcName, memberName, callConfig.callType)) continue;
 
-            const calleeNode = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
-            if (calleeNode) {
-                const kind = this.determineEdgeKind(callConfig.callType, calleeNode);
-                edges.push({ from: symbol.id, to: calleeNode.id, kind });
+            const callee = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
+            if (callee) {
+                const kind = this.determineEdgeKind(callConfig.callType, callee);
+                this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, kind));
+            } else {
+                const unresolvedName = memberName && callConfig.callType === CallType.Member
+                    ? `${memberName}.${funcName}`
+                    : funcName;
+                this.addCallee(symbol.qualifiedName, this.makeCallee(unresolvedName, 'external_unknown'));
             }
         }
     }
 
-    /**
-     * Returns the appropriate tree-sitter query string for a given call type.
-     */
     private getQueryForCallType(callType: CallType): string {
         switch (callType) {
-            case CallType.Super:
-                return SolidityAdapter.QUERIES.SUPER_CALL;
-            case CallType.This:
-                return SolidityAdapter.QUERIES.THIS_CALL;
-            case CallType.Member:
-                return SolidityAdapter.QUERIES.MEMBER_CALL;
-            case CallType.Simple:
-                return SolidityAdapter.QUERIES.SIMPLE_CALL;
+            case CallType.Super: return SolidityAdapter.QUERIES.SUPER_CALL;
+            case CallType.This: return SolidityAdapter.QUERIES.THIS_CALL;
+            case CallType.Member: return SolidityAdapter.QUERIES.MEMBER_CALL;
+            case CallType.Simple: return SolidityAdapter.QUERIES.SIMPLE_CALL;
         }
     }
 
-
-    private determineEdgeKind(callType: CallType, callee: GraphNode): 'internal' | 'external' {
-        if (callType === CallType.This) return 'external';
+    private determineEdgeKind(callType: CallType, callee: SymbolEntry): CallTargetKind {
+        if (callType === CallType.This) return 'cross_module';
         if (callType === CallType.Super) return 'internal';
-        if (callType === CallType.Simple) {
-            return 'internal';
-        }
+        if (callType === CallType.Simple) return 'internal';
 
         if (callee.containerKind === 'library') {
-            return callee.visibility === 'internal' ? 'internal' : 'external';
+            return callee.visibility === 'internal' ? 'internal' : 'cross_module';
         }
-
-        return 'external';
+        return 'cross_module';
     }
 
-    private async processAssemblyCalls(functionNode: Node, symbol: GraphNode, edges: GraphEdge[]) {
+    private async processAssemblyCalls(functionNode: Node, symbol: SymbolEntry) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
-
         const query = new Query(lang, SolidityAdapter.QUERIES.ASSEMBLY_CALL);
         const captures = query.captures(functionNode);
 
         for (const capture of captures) {
             const callName = capture.node.text;
-            const calleeNode = this.resolveCallNode(CallType.Simple, callName, undefined, symbol);
-            if (calleeNode) {
-                edges.push({ from: symbol.id, to: calleeNode.id, kind: 'internal' });
+            const callee = this.resolveCallNode(CallType.Simple, callName, undefined, symbol);
+            if (callee) {
+                this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, 'internal'));
             }
         }
     }
 
     private shouldSkipCall(funcName: string, memberName: string | undefined, callType: CallType): boolean {
         if (SolidityAdapter.BUILTIN_FUNCTIONS.has(funcName)) return true;
-        if (callType === CallType.Member && memberName === 'super') return true;
+        if (callType === CallType.Member && (memberName === 'super' || memberName === 'this')) return true;
         if (callType === CallType.Simple && funcName.includes('.')) return true;
         return false;
     }
 
-    private resolveCallNode(type: CallType, name: string, memberName: string | undefined, caller: GraphNode): GraphNode | undefined {
+    private resolveCallNode(type: CallType, name: string, memberName: string | undefined, caller: SymbolEntry): SymbolEntry | undefined {
         switch (type) {
-            case CallType.Super:
-                return this.resolveSuperCall(name, caller);
-            case CallType.Member:
-                return this.resolveMemberCall(name, memberName!, caller);
+            case CallType.Super: return this.resolveSuperCall(name, caller);
+            case CallType.Member: return this.resolveMemberCall(name, memberName!, caller);
             case CallType.This:
-            case CallType.Simple:
-                return this.resolveLocalOrInheritedCall(name, caller);
+            case CallType.Simple: return this.resolveLocalOrInheritedCall(name, caller);
         }
     }
 
-    private resolveSuperCall(name: string, caller: GraphNode): GraphNode | undefined {
+    private resolveSuperCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
         if (!caller.contract) return undefined;
         const parents = this.inheritanceGraph.get(caller.contract);
         if (!parents?.length) return undefined;
-
         for (const parent of parents) {
             const func = this.findInContract(parent, name);
             if (func) return func;
@@ -306,7 +216,7 @@ export class SolidityAdapter extends BaseAdapter {
         return undefined;
     }
 
-    private resolveMemberCall(name: string, memberName: string, caller: GraphNode): GraphNode | undefined {
+    private resolveMemberCall(name: string, memberName: string, caller: SymbolEntry): SymbolEntry | undefined {
         const func = this.findInContract(memberName, name);
         if (func) return func;
 
@@ -322,51 +232,37 @@ export class SolidityAdapter extends BaseAdapter {
         return undefined;
     }
 
-    private resolveLocalOrInheritedCall(name: string, caller: GraphNode): GraphNode | undefined {
+    private resolveLocalOrInheritedCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
         if (caller.contract) {
             const local = this.findInContract(caller.contract, name);
             if (local) return local;
-
             const inherited = this.resolveInheritedCall(name, caller.contract);
             if (inherited) return inherited;
         }
-
         const freeFuncs = this.symbolsByLabel.get(name);
-        const free = freeFuncs?.find(n => !n.contract);
+        const free = freeFuncs?.find(e => !e.contract);
         if (free) return free;
-
-        const any = this.symbolsByLabel.get(name)?.[0];
-        return any;
+        return this.symbolsByLabel.get(name)?.[0];
     }
 
-    private resolveInheritedCall(name: string, contract: string, visited: Set<string> = new Set()): GraphNode | undefined {
+    private resolveInheritedCall(name: string, contract: string, visited: Set<string> = new Set()): SymbolEntry | undefined {
         if (visited.has(contract)) return undefined;
         visited.add(contract);
-
         const parents = this.inheritanceGraph.get(contract);
         if (!parents) return undefined;
-
         for (const parent of parents) {
             const func = this.findInContract(parent, name);
             if (func) return func;
-
             const inherited = this.resolveInheritedCall(name, parent, visited);
             if (inherited) return inherited;
         }
         return undefined;
     }
 
-    /**
-     * Builds the complete symbol table for all contracts, interfaces, and libraries.
-     * Also populates inheritance and using-for mappings.
-     * 
-     * @param files - Array of Solidity source files to analyze
-     */
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Solidity);
         const parser = await service.createParser(SupportedLanguage.Solidity);
-
         const containerQuery = new Query(lang, SolidityAdapter.QUERIES.CONTAINERS);
         const inheritanceQuery = new Query(lang, SolidityAdapter.QUERIES.INHERITANCE);
         const usingQuery = new Query(lang, SolidityAdapter.QUERIES.USING_FOR);
@@ -376,7 +272,6 @@ export class SolidityAdapter extends BaseAdapter {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
-            // 1. Find all containers (contracts, interfaces, libraries)
             const containerCaptures = containerQuery.captures(tree.rootNode);
 
             for (const capture of containerCaptures) {
@@ -386,27 +281,22 @@ export class SolidityAdapter extends BaseAdapter {
                 if (!nameNode) continue;
                 const contractName = nameNode.text;
 
-                // Handle Inheritance
                 const inheritanceCaptures = inheritanceQuery.captures(containerNode);
                 const parentsText = inheritanceCaptures
                     .filter(c => c.name === 'parent')
                     .map(c => c.node.text);
-
                 if (parentsText.length > 0) {
                     this.inheritanceGraph.set(contractName, parentsText);
                 }
 
-                // Track using-for directives
                 const usingCaptures = usingQuery.captures(containerNode);
                 const libs = usingCaptures
                     .filter(c => c.name === 'lib')
                     .map(c => c.node.text);
-
                 if (libs.length > 0) {
                     this.usingForMap.set(contractName, libs);
                 }
 
-                // Find functions inside container
                 const bodyNode = containerNode.childForFieldName('body');
                 if (bodyNode) {
                     const functions = functionQuery.captures(bodyNode);
@@ -416,7 +306,6 @@ export class SolidityAdapter extends BaseAdapter {
                 }
             }
 
-            // 2. Find free functions (not inside a container)
             for (const child of tree.rootNode.children) {
                 if (child.type === 'function_definition' || child.type === 'fallback_receive_definition') {
                     this.indexSymbol(this.createFunctionNode(child, file.path));
@@ -425,20 +314,16 @@ export class SolidityAdapter extends BaseAdapter {
         }
     }
 
-    /**
-     * Creates a GraphNode from a tree-sitter function node.
-     * Handles regular functions, fallback, and receive functions.
-     * 
-     * @param node - Tree-sitter node representing the function
-     * @param file - File path containing this function
-     * @param containerKind - Type of container (contract, interface, library)
-     * @param contract - Name of the containing contract
-     * @returns GraphNode representing this function
-     */
-    private createFunctionNode(node: Node, file: string, containerKind?: 'contract' | 'interface' | 'library', contract?: string): GraphNode {
+    private createFunctionNode(
+        node: Node,
+        file: string,
+        containerKind?: 'contract' | 'interface' | 'library',
+        contract?: string
+    ): SymbolEntry {
         let fnName = 'unknown';
         let params = '';
         let visibility: Visibility | undefined;
+        let modifiers: ModifierInfo[] = [];
 
         if (node.type === 'fallback_receive_definition') {
             fnName = node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
@@ -447,7 +332,6 @@ export class SolidityAdapter extends BaseAdapter {
             const nameNode = node.childForFieldName('name');
             fnName = nameNode ? nameNode.text : 'unknown';
 
-            // Extract parameters from direct children
             const paramTexts: string[] = [];
             for (const child of node.children) {
                 if (child.type === 'parameter') {
@@ -456,40 +340,35 @@ export class SolidityAdapter extends BaseAdapter {
             }
             params = paramTexts.join(', ');
 
-            // Extract visibility - check direct children for visibility node
             visibility = this.extractVisibility(node);
+
+            // Extract modifiers
+            for (const child of node.children) {
+                if (child.type === 'modifier_invocation') {
+                    const name = child.child(0)?.text ?? child.text;
+                    modifiers.push({ name, pattern: 'explicit' });
+                }
+            }
         }
 
         const signature = this.cleanSignature(`${fnName}(${params})`);
-        const id = contract ? `${contract}.${signature}` : signature;
-
+        const qualifiedName = contract ? `${contract}.${signature}` : signature;
         const finalVisibility: Visibility = visibility ??
             (containerKind === 'interface' ? 'external' : 'internal');
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName,
             label: fnName,
             file,
+            node,
+            visibility: finalVisibility,
             contract,
             containerKind,
-            visibility: finalVisibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            modifiers,
+        });
     }
 
-    /**
-     * Extracts visibility from a function node by checking its children.
-     * Handles various grammar structures robustly.
-     * 
-     * @param node - Function definition node
-     * @returns Visibility string or undefined if not found
-     */
     private extractVisibility(node: Node): Visibility | undefined {
-        // First, check for a direct 'visibility' child
         for (const child of node.children) {
             if (child.type === 'visibility') {
                 const text = child.text;
@@ -498,15 +377,200 @@ export class SolidityAdapter extends BaseAdapter {
                 }
             }
         }
-
-        // Fallback: some grammar versions might have visibility as text in other nodes
-        // Check for common visibility keywords in the function signature
-        const signatureText = node.text.split('{')[0]; // Get everything before the body
+        const signatureText = node.text.split('{')[0];
         if (signatureText.includes(' external')) return 'external';
         if (signatureText.includes(' public')) return 'public';
         if (signatureText.includes(' internal')) return 'internal';
         if (signatureText.includes(' private')) return 'private';
-
         return undefined;
     }
+
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_definition' || node.type === 'fallback_receive_definition';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'fallback_receive_definition') {
+            return node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
+        }
+        if (node.type === 'function_definition') {
+            return node.childForFieldName('name')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        const vis = this.extractVisibility(node);
+        return vis === 'public' || vis === 'external';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        if (node.type !== 'call_expression') return false;
+        const funcExpr = node.childForFieldName('function');
+        if (!funcExpr) return false;
+        const memberExpr = findDescendant(funcExpr, 'member_expression');
+        if (!memberExpr) return false;
+        const prop = lastIdentifier(memberExpr);
+        return prop === 'call' || prop === 'delegatecall' || prop === 'staticcall'
+            || prop === 'transfer' || prop === 'send';
+    }
+
+    override isStateWrite(node: Node): boolean {
+        if (node.type === 'assignment_expression' || node.type === 'augmented_assignment_expression') {
+            const lhs = node.childForFieldName('left') ?? node.children[0];
+            if (!lhs) return false;
+            // LHS may be wrapped in an 'expression' node
+            const inner = lhs.type === 'expression' ? lhs.child(0) : lhs;
+            if (!inner) return false;
+            return inner.type === 'identifier' || inner.type === 'member_expression'
+                || inner.type === 'subscript_expression' || inner.type === 'array_access';
+        }
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment_expression' && parent.childForFieldName('left')?.id === node.id) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        return node.type === 'modifier_invocation';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_statement';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expression') return null;
+        const funcExpr = node.childForFieldName('function');
+        if (!funcExpr) return null;
+        const inner = funcExpr.type === 'expression' ? funcExpr.child(0) : funcExpr;
+        if (!inner) return null;
+        if (inner.type === 'identifier') return inner.text;
+        if (inner.type === 'member_expression') {
+            return inner.childForFieldName('property')?.text ?? null;
+        }
+        return null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression' && node.type !== 'augmented_assignment_expression') return null;
+        const lhs = node.childForFieldName('left') ?? node.children[0];
+        if (!lhs) return null;
+        const inner = lhs.type === 'expression' ? lhs.child(0) : lhs;
+        return inner?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        for (const child of node.children) {
+            if (child.type === 'modifier_invocation') {
+                const name = child.child(0)?.text ?? child.text;
+                result.push({ name, pattern: 'explicit' });
+            }
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        if (this.isExternalCall(node)) {
+            return { qualifiedName: target, targetKind: 'external_unknown' };
+        }
+        return null;
+    }
+
+    override resolveExtensionMethod(
+        _receiverType: string,
+        methodName: string,
+        _sourceFiles: Map<string, string>
+    ): string | null {
+        for (const [_contract, libs] of this.usingForMap) {
+            for (const lib of libs) {
+                const entry = this.findInContract(lib, methodName);
+                if (entry) return entry.qualifiedName;
+            }
+        }
+        return null;
+    }
+
+    override resolveScope(
+        containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        return this.inheritanceGraph.get(containerName) ?? [];
+    }
+
+    override isBuiltinContextValue(node: Node): BuiltinContextValue | null {
+        if (node.type !== 'member_expression') return null;
+        const obj = node.childForFieldName('object')?.text;
+        const prop = node.childForFieldName('property')?.text;
+        if (!obj || !prop) return null;
+
+        const builtins: Record<string, Record<string, BuiltinContextValue>> = {
+            msg: {
+                sender: { name: 'msg.sender', category: 'caller' },
+                value: { name: 'msg.value', category: 'caller' },
+                data: { name: 'msg.data', category: 'caller' },
+                sig: { name: 'msg.sig', category: 'caller' },
+            },
+            block: {
+                timestamp: { name: 'block.timestamp', category: 'environment' },
+                number: { name: 'block.number', category: 'environment' },
+                coinbase: { name: 'block.coinbase', category: 'environment' },
+                difficulty: { name: 'block.difficulty', category: 'environment' },
+                gaslimit: { name: 'block.gaslimit', category: 'environment' },
+                basefee: { name: 'block.basefee', category: 'environment' },
+                chainid: { name: 'block.chainid', category: 'environment' },
+                prevrandao: { name: 'block.prevrandao', category: 'environment' },
+            },
+            tx: {
+                origin: { name: 'tx.origin', category: 'caller' },
+                gasprice: { name: 'tx.gasprice', category: 'environment' },
+            },
+        };
+
+        return builtins[obj]?.[prop] ?? null;
+    }
+}
+
+/** Find the first descendant (DFS) of a given type. */
+function findDescendant(node: Node, type: string): Node | null {
+    if (node.type === type) return node;
+    for (const child of node.children) {
+        const found = findDescendant(child, type);
+        if (found) return found;
+    }
+    return null;
+}
+
+/** Return the text of the last identifier child (used as property name in member_expression). */
+function lastIdentifier(node: Node): string | null {
+    let last: string | null = null;
+    for (const child of node.children) {
+        if (child.type === 'identifier') last = child.text;
+    }
+    return last;
 }

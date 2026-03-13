@@ -1,4 +1,4 @@
-import { SupportedLanguage, FileContent, CallGraph, FileMetrics, DiffFileMetrics, LanguageAdapter } from "./types.js";
+import { SupportedLanguage, FileContent, CallGraph, FileMetrics, DiffFileMetrics, LanguageAdapter, SymbolMap } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import { getGitDiff, getChangedLineNumbers, getFileStatus, getFileAtRef } from "./gitDiff.js";
 import { BaseAdapter } from "../languages/baseAdapter.js";
@@ -140,6 +140,29 @@ export class Engine {
             }
         }
         return combinedGraph;
+    }
+
+    async processSymbolMap(patterns: string[]): Promise<SymbolMap> {
+        const filePaths = await resolveFiles(patterns);
+        const files = await readFiles(filePaths);
+        const filesByLanguage = this.groupFilesByLanguage(files);
+
+        const combined: SymbolMap = new Map();
+
+        for (const [lang, langFiles] of filesByLanguage.entries()) {
+            const adapter = this.getAdapter(lang);
+            if (adapter) {
+                try {
+                    const symbolMap = await adapter.generateSymbolMap(langFiles);
+                    for (const [id, entry] of symbolMap) {
+                        combined.set(id, entry);
+                    }
+                } catch (error) {
+                    console.error(`Failed to generate symbol map for ${lang}:`, error);
+                }
+            }
+        }
+        return combined;
     }
 
     private groupFilesByLanguage(files: FileContent[]): Map<SupportedLanguage, FileContent[]> {

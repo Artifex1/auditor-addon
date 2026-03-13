@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -50,13 +53,13 @@ export class CompactAdapter extends BaseAdapter {
 
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
-                const node = this.createFunctionNode(capture.node, file.path);
-                this.indexSymbol(node);
+                const entry = this.createFunctionNode(capture.node, file.path);
+                this.indexSymbol(entry);
             }
         }
     }
 
-    private createFunctionNode(node: Node, file: string): GraphNode {
+    private createFunctionNode(node: Node, file: string): SymbolEntry {
         // Compact cdefn has a (function_name) child for the function name
         const nameNode = node.childForFieldName('name') ||
             node.children.find(c => c.type === 'function_name' || c.type === 'identifier');
@@ -64,17 +67,13 @@ export class CompactAdapter extends BaseAdapter {
 
         const visibility = this.extractVisibility(node);
 
-        return {
-            id: fnName,
+        return this.createEntry({
+            qualifiedName: fnName,
             label: fnName,
             file,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+        });
     }
 
     private extractVisibility(node: Node): Visibility {
@@ -96,7 +95,72 @@ export class CompactAdapter extends BaseAdapter {
         return 'private';
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'cdefn';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'cdefn') {
+            const nameNode = node.childForFieldName('name') ||
+                node.children.find(c => c.type === 'function_name' || c.type === 'identifier');
+            return nameNode?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        return this.extractVisibility(node) === 'public';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_statement' || node.type === 'return_expr';
+    }
+
+    override isStateWrite(node: Node): boolean {
+        return node.type === 'assignment' || node.type === 'assignment_expression';
+    }
+
+    override isStateRead(node: Node): boolean {
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment' || parent?.type === 'assignment_expression') {
+                if (parent.children[0]?.id === node.id) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'function_call_term') return null;
+        return this.extractCalleeName(node) ?? null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment' && node.type !== 'assignment_expression') return null;
+        return node.children[0]?.text ?? null;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        return null;
+    }
+
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Compact);
         const parser = await service.createParser(SupportedLanguage.Compact);
@@ -121,8 +185,8 @@ export class CompactAdapter extends BaseAdapter {
                     if (!calleeName) continue;
 
                     const callee = this.symbolsByLabel.get(calleeName)?.[0];
-                    if (callee && callee.id !== symbol.id) {
-                        this.addEdge(edges, symbol.id, callee.id);
+                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
                     }
                 }
             }

@@ -1,12 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { createCallChainsHandler } from "../../../src/mcp/tools/callChains.js";
 import { Engine } from "../../../src/engine/index.js";
-import { CallGraph, GraphNode, GraphEdge } from "../../../src/engine/types.js";
+import { CallGraph, GraphNode, GraphEdge, SymbolMap, CallTargetKind } from "../../../src/engine/types.js";
+import { BaseAdapter } from "../../../src/languages/baseAdapter.js";
+import { SupportedLanguage } from "../../../src/engine/types.js";
 import { decode } from "@toon-format/toon";
+
+/** Convert a CallGraph fixture to a SymbolMap (same bridge the real code uses). */
+function toSymbolMap(graph: CallGraph): SymbolMap {
+    return BaseAdapter.callGraphToSymbolMap(graph, SupportedLanguage.Solidity);
+}
 
 describe("call_chains tool", () => {
     const mockEngine = {
-        processCallGraph: vi.fn()
+        processSymbolMap: vi.fn()
     } as unknown as Engine;
 
     const handler = createCallChainsHandler(mockEngine);
@@ -27,7 +34,7 @@ describe("call_chains tool", () => {
                 { from: "B", to: "C", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -51,7 +58,7 @@ describe("call_chains tool", () => {
                 { from: "cronJob", to: "process", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -74,7 +81,7 @@ describe("call_chains tool", () => {
                 { from: "B", to: "shared", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -91,7 +98,7 @@ describe("call_chains tool", () => {
             ],
             edges: [{ from: "root", to: "leaf", kind: "internal" }]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -111,7 +118,7 @@ describe("call_chains tool", () => {
                 { from: "A", to: "C", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -134,7 +141,7 @@ describe("call_chains tool", () => {
                 { from: "B", to: "A", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -152,7 +159,7 @@ describe("call_chains tool", () => {
                 edges.push({ from: `N${i}`, to: `N${i + 1}`, kind: "internal" });
             }
         }
-        (mockEngine.processCallGraph as any).mockResolvedValue({ nodes, edges });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap({ nodes, edges }));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -174,7 +181,7 @@ describe("call_chains tool", () => {
                 { from: "C", to: "D", kind: "internal" }
             ]
         };
-        (mockEngine.processCallGraph as any).mockResolvedValue(graph);
+        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);

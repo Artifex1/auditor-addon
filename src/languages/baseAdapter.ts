@@ -1,4 +1,8 @@
-import { LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics, GraphNode, GraphEdge } from "../engine/types.js";
+import {
+    LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics,
+    GraphNode, GraphEdge, SymbolMap, SymbolEntry, CalleeEntry, CallTargetKind,
+    ModifierInfo, BuiltinContextValue, ModifierPattern
+} from "../engine/types.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
 
@@ -45,6 +49,9 @@ export interface AdapterConfig {
  * Base adapter providing common functionality for all language adapters.
  * Implements signature extraction and metrics calculation using tree-sitter.
  * Language-specific adapters should extend this class and override methods as needed.
+ *
+ * The primary data structure is SymbolMap (Map<string, SymbolEntry>).
+ * generateCallGraph is derived from it for backward compatibility.
  */
 export abstract class BaseAdapter implements LanguageAdapter {
     languageId: SupportedLanguage;
@@ -55,15 +62,14 @@ export abstract class BaseAdapter implements LanguageAdapter {
         this.config = config;
     }
 
-    protected symbolTable: Map<string, GraphNode> = new Map();
-    protected symbolsByLabel: Map<string, GraphNode[]> = new Map();
+    protected _symbolMap: SymbolMap = new Map();
+    protected symbolsByLabel: Map<string, SymbolEntry[]> = new Map();
+    protected symbolsByContainer: Map<string, SymbolEntry[]> = new Map();
+    private symbolsByLocation: Map<string, SymbolEntry> = new Map();
 
     /**
      * Normalizes a function signature by cleaning up whitespace.
      * Converts multi-line signatures to single line with consistent spacing.
-     * 
-     * @param raw - Raw signature string
-     * @returns Cleaned signature string
      */
     protected cleanSignature(raw: string): string {
         return raw.replace(/\s+/g, ' ')
@@ -73,59 +79,312 @@ export abstract class BaseAdapter implements LanguageAdapter {
             .trim();
     }
 
+    // ==========================================
+    // Primary: SymbolMap generation
+    // ==========================================
+
     /**
-     * Generates a call graph for the source files.
+     * Generates the symbol map for the source files.
      * Template method: resets state, builds symbol table, identifies calls.
-     * Override buildSymbolTable and identifyCalls in language-specific adapters.
-     *
-     * @param files - Array of source files to analyze
-     * @returns Call graph with nodes and edges
+     * This is the primary code path — all analysis runs through here.
+     */
+    async generateSymbolMap(files: FileContent[]): Promise<SymbolMap> {
+        this.resetState();
+        await this.buildSymbolTable(files);
+        await this.identifyCalls(files);
+        await this.enrichEntries(files);
+        return this._symbolMap;
+    }
+
+    /**
+     * Generates a call graph for backward compatibility.
+     * Derived from SymbolMap — not the primary representation.
      */
     async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        this.resetState();
-        const edges: GraphEdge[] = [];
-        await this.buildSymbolTable(files);
-        await this.identifyCalls(edges, files);
-        return { nodes: Array.from(this.symbolTable.values()), edges };
+        const symbolMap = await this.generateSymbolMap(files);
+        return BaseAdapter.symbolMapToCallGraph(symbolMap);
     }
+
+    /**
+     * Projects a SymbolMap into the legacy CallGraph format.
+     */
+    static symbolMapToCallGraph(symbolMap: SymbolMap): CallGraph {
+        const nodes: GraphNode[] = [];
+        const edges: GraphEdge[] = [];
+
+        for (const [_id, entry] of symbolMap) {
+            nodes.push({
+                id: entry.qualifiedName,
+                label: entry.label,
+                file: entry.file,
+                contract: entry.contract,
+                range: entry.range,
+                visibility: entry.visibility,
+                containerKind: entry.containerKind,
+            });
+
+            for (const callee of entry.callees) {
+                edges.push({
+                    from: entry.qualifiedName,
+                    to: callee.qualifiedName,
+                    kind: callee.targetKind === 'internal' ? 'internal' : 'external',
+                });
+            }
+        }
+
+        return { nodes, edges };
+    }
+
+    /**
+     * Converts a legacy CallGraph into a SymbolMap. Used by tests.
+     */
+    static callGraphToSymbolMap(graph: CallGraph, language: SupportedLanguage): SymbolMap {
+        const symbolMap: SymbolMap = new Map();
+
+        const edgeIndex = new Map<string, GraphEdge[]>();
+        for (const edge of graph.edges) {
+            const list = edgeIndex.get(edge.from) ?? [];
+            list.push(edge);
+            edgeIndex.set(edge.from, list);
+        }
+
+        for (const node of graph.nodes) {
+            const outEdges = edgeIndex.get(node.id) ?? [];
+            const callees: CalleeEntry[] = outEdges.map(e => ({
+                qualifiedName: e.to,
+                targetKind: (e.kind === 'external' ? 'cross_module' : 'internal') as CallTargetKind,
+            }));
+
+            symbolMap.set(node.id, {
+                qualifiedName: node.id,
+                label: node.label,
+                file: node.file,
+                line: node.range?.start.line ?? 0,
+                language,
+                writesState: [],
+                readsState: [],
+                callsExternal: callees.some(c => c.targetKind !== 'internal'),
+                callees,
+                isPublic: node.visibility === 'public' || node.visibility === 'external',
+                hasAccessControl: false,
+                modifiers: [],
+                resolvedBy: 'static',
+                confidence: 'high',
+                contract: node.contract,
+                range: node.range,
+                visibility: node.visibility,
+                containerKind: node.containerKind,
+            });
+        }
+
+        return symbolMap;
+    }
+
+    // ==========================================
+    // Internal state management
+    // ==========================================
 
     protected resetState(): void {
-        this.symbolTable.clear();
+        this._symbolMap.clear();
         this.symbolsByLabel.clear();
+        this.symbolsByContainer.clear();
+        this.symbolsByLocation.clear();
     }
 
-    protected indexSymbol(node: GraphNode): void {
-        this.symbolTable.set(node.id, node);
-        const labelNodes = this.symbolsByLabel.get(node.label) ?? [];
-        labelNodes.push(node);
-        this.symbolsByLabel.set(node.label, labelNodes);
-    }
-
-    protected addEdge(edges: GraphEdge[], from: string, to: string): void {
-        if (!edges.some(e => e.from === from && e.to === to)) {
-            edges.push({ from, to, kind: 'internal' });
+    protected indexSymbol(entry: SymbolEntry): void {
+        this._symbolMap.set(entry.qualifiedName, entry);
+        const labelEntries = this.symbolsByLabel.get(entry.label) ?? [];
+        labelEntries.push(entry);
+        this.symbolsByLabel.set(entry.label, labelEntries);
+        if (entry.contract) {
+            const containerEntries = this.symbolsByContainer.get(entry.contract) ?? [];
+            containerEntries.push(entry);
+            this.symbolsByContainer.set(entry.contract, containerEntries);
+        }
+        if (entry.range) {
+            const key = `${entry.file}:${entry.range.start.line}:${entry.range.start.column}`;
+            this.symbolsByLocation.set(key, entry);
         }
     }
 
-    protected findSymbolAtNode(node: Node, filePath: string): GraphNode | undefined {
+    /**
+     * Adds a callee to a symbol's callees list, deduplicating by qualifiedName.
+     */
+    protected addCallee(callerId: string, callee: CalleeEntry): void {
+        const entry = this._symbolMap.get(callerId);
+        if (!entry) return;
+        if (!entry.callees.some(c => c.qualifiedName === callee.qualifiedName)) {
+            entry.callees.push(callee);
+            if (callee.targetKind !== 'internal') {
+                entry.callsExternal = true;
+            }
+        }
+    }
+
+    /**
+     * Creates a CalleeEntry for the common case of a resolved internal call.
+     */
+    protected makeCallee(qualifiedName: string, kind: CallTargetKind = 'internal'): CalleeEntry {
+        return {
+            qualifiedName,
+            targetKind: kind,
+        };
+    }
+
+    protected findSymbolAtNode(node: Node, filePath: string): SymbolEntry | undefined {
         const line = node.startPosition.row + 1;
         const col = node.startPosition.column;
-        return Array.from(this.symbolTable.values()).find(s =>
-            s.file === filePath &&
-            s.range?.start.line === line &&
-            s.range?.start.column === col
-        );
+        return this.symbolsByLocation.get(`${filePath}:${line}:${col}`);
+    }
+
+    /**
+     * Creates a SymbolEntry with sensible defaults. Adapters call this from
+     * their createFunctionNode / createMethodNode methods.
+     */
+    protected createEntry(opts: {
+        qualifiedName: string;
+        label: string;
+        file: string;
+        node: Node;
+        visibility: import("../engine/types.js").Visibility;
+        contract?: string;
+        containerKind?: 'contract' | 'interface' | 'library';
+        modifiers?: ModifierInfo[];
+    }): SymbolEntry {
+        return {
+            qualifiedName: opts.qualifiedName,
+            label: opts.label,
+            file: opts.file,
+            line: opts.node.startPosition.row + 1,
+            language: this.languageId,
+            writesState: [],
+            readsState: [],
+            callsExternal: false,
+            callees: [],
+            isPublic: opts.visibility === 'public' || opts.visibility === 'external',
+            hasAccessControl: (opts.modifiers?.length ?? 0) > 0,
+            modifiers: opts.modifiers ?? [],
+            resolvedBy: 'static',
+            confidence: 'high',
+            contract: opts.contract,
+            range: {
+                start: { line: opts.node.startPosition.row + 1, column: opts.node.startPosition.column },
+                end: { line: opts.node.endPosition.row + 1, column: opts.node.endPosition.column },
+            },
+            visibility: opts.visibility,
+            containerKind: opts.containerKind,
+        };
     }
 
     protected async buildSymbolTable(_files: FileContent[]): Promise<void> {}
-    protected async identifyCalls(_edges: GraphEdge[], _files: FileContent[]): Promise<void> {}
+    protected async identifyCalls(_files: FileContent[]): Promise<void> {}
+
+    /**
+     * Enriches symbol entries with writesState, readsState, and modifiers
+     * by walking each function's AST body and calling trait methods.
+     */
+    protected async enrichEntries(files: FileContent[]): Promise<void> {
+        const service = TreeSitterService.getInstance();
+        const parser = await service.createParser(this.languageId);
+
+        const treeCache = new Map<string, import("web-tree-sitter").Tree>();
+        for (const file of files) {
+            const tree = parser.parse(file.content);
+            if (tree) treeCache.set(file.path, tree);
+        }
+
+        for (const entry of this._symbolMap.values()) {
+            const tree = treeCache.get(entry.file);
+            if (!tree || !entry.range) continue;
+
+            const targetRow = entry.range.start.line - 1;
+            const targetCol = entry.range.start.column;
+            const funcNode = findNodeAt(tree.rootNode, targetRow, targetCol);
+            if (!funcNode) continue;
+
+            // Populate modifiers if empty (some adapters do this in buildSymbolTable)
+            if (entry.modifiers.length === 0) {
+                const mods = this.getModifiers(funcNode);
+                if (mods.length > 0) {
+                    entry.modifiers = mods;
+                    entry.hasAccessControl = true;
+                }
+            }
+
+            // Walk descendants to populate writesState and readsState
+            const writes = new Set<string>(entry.writesState);
+            const reads = new Set<string>(entry.readsState);
+            walkDescendants(funcNode, (node) => {
+                if (this.isStateWrite(node)) {
+                    const varName = this.getWrittenVar(node);
+                    if (varName) writes.add(varName);
+                }
+                if (this.isStateRead(node)) {
+                    // For reads, use the node text as the variable name
+                    const text = node.text;
+                    if (text && text.length < 80) reads.add(text);
+                }
+            });
+            entry.writesState = [...writes];
+            entry.readsState = [...reads];
+        }
+    }
+
+    // ==========================================
+    // Node classifier stubs (override in adapters)
+    // ==========================================
+
+    isFunctionDef(_node: Node): boolean { return false; }
+    isExternalCall(_node: Node): boolean { return false; }
+    isStateWrite(_node: Node): boolean { return false; }
+    isStateRead(_node: Node): boolean { return false; }
+    isAccessModifier(_node: Node): boolean { return false; }
+    isReturnStatement(_node: Node): boolean { return false; }
+    isPublicFn(_node: Node): boolean { return false; }
+
+    // ==========================================
+    // Extractor stubs (override in adapters)
+    // ==========================================
+
+    getFunctionName(_node: Node): string | null { return null; }
+    getCallTarget(_node: Node): string | null { return null; }
+    getWrittenVar(_node: Node): string | null { return null; }
+    getModifiers(_node: Node): ModifierInfo[] { return []; }
+
+    // ==========================================
+    // Resolution stubs (override in adapters)
+    // ==========================================
+
+    resolveCallee(
+        _node: Node,
+        _symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        return null;
+    }
+
+    resolveExtensionMethod(
+        _receiverType: string,
+        _methodName: string,
+        _sourceFiles: Map<string, string>
+    ): string | null {
+        return null;
+    }
+
+    resolveScope(
+        _containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        return [];
+    }
+
+    isBuiltinContextValue(_node: Node): BuiltinContextValue | null {
+        return null;
+    }
 
     /**
      * Extracts function signatures from source files.
      * Returns signatures without function bodies, truncated to 80 characters.
-     * 
-     * @param files - Array of source files to analyze
-     * @returns Map of file paths to arrays of function signatures
      */
     async extractSignatures(files: FileContent[]): Promise<Record<string, string[]>> {
         const signaturesByFile: Record<string, string[]> = {};
@@ -145,12 +404,10 @@ export abstract class BaseAdapter implements LanguageAdapter {
                 for (const capture of captures) {
                     if (capture.name === 'function') {
                         const node = capture.node;
-                        // Extract signature text up to the function body
                         const bodyNode = node.childForFieldName('body') || node.children.find(c => c.type.includes('body') || c.type === 'block');
 
                         let rawSignature = '';
                         if (bodyNode) {
-                            // Text from node start to body start
                             rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
                         } else {
                             rawSignature = node.text;
@@ -178,22 +435,9 @@ export abstract class BaseAdapter implements LanguageAdapter {
     /**
      * Calculates code metrics for source files.
      * Computes NLoC, complexity, comment density, and estimated review time.
-     * 
-     * @param files - Array of source files to analyze
-     * @returns Array of file metrics
      */
     async calculateMetrics(files: FileContent[]): Promise<FileMetrics[]> {
         const results: FileMetrics[] = [];
-        const {
-            baseRateNlocPerDay,
-            complexityMidpoint,
-            complexitySteepness,
-            complexityBenefitCap,
-            complexityPenaltyCap,
-            commentFullBenefitDensity,
-            commentBenefitCap
-        } = this.config.constants;
-
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(this.languageId);
         const parser = await service.createParser(this.languageId);
@@ -208,17 +452,14 @@ export abstract class BaseAdapter implements LanguageAdapter {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
-            // 1. Calculate comment metrics
             const { linesWithComments, onlyCommentLinesCount } = this.calculateCommentMetrics(
                 commentQuery,
                 tree.rootNode,
                 lines
             );
 
-            // 2. Calculate cognitive complexity
             const cognitiveComplexity = this.calculateCognitiveComplexity(branchQuery, tree.rootNode);
 
-            // 3. Calculate NLoC with normalization
             const blankLines = lines.filter(line => line.trim() === '').length;
             const normalizationAdjustment = normQuery
                 ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode)
@@ -228,19 +469,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
             const commentDensity = nloc > 0 ? parseFloat(((linesWithComments / nloc) * 100).toFixed(2)) : 0;
             const normalizedComplexity = nloc > 0 ? (cognitiveComplexity / nloc) * 100 : 0;
 
-            // 4. Calculate estimated hours
-            const estimatedHours = this.calculateEstimation(
-                nloc,
-                normalizedComplexity,
-                commentDensity,
-                baseRateNlocPerDay,
-                complexityMidpoint,
-                complexitySteepness,
-                complexityBenefitCap,
-                complexityPenaltyCap,
-                commentFullBenefitDensity,
-                commentBenefitCap
-            );
+            const estimatedHours = this.calculateEstimation(nloc, normalizedComplexity, commentDensity);
 
             results.push({
                 file: file.path,
@@ -254,14 +483,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         return results;
     }
 
-    /**
-     * Calculates comment-related metrics for a file.
-     * 
-     * @param commentQuery - Tree-sitter query for matching comments
-     * @param rootNode - Root node of the syntax tree
-     * @param lines - Array of file lines
-     * @returns Object with linesWithComments and onlyCommentLinesCount
-     */
     private calculateCommentMetrics(
         commentQuery: Query,
         rootNode: Node,
@@ -282,7 +503,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         for (const lineIdx of commentLinesSet) {
             if (lineIdx >= lines.length) continue;
             const lineContent = lines[lineIdx].trim();
-            // Simple heuristic for "only comment" lines
             if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
                 onlyCommentLinesCount++;
             }
@@ -291,14 +511,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         return { linesWithComments, onlyCommentLinesCount };
     }
 
-    /**
-     * Calculates cognitive complexity based on branching statements and nesting.
-     * Nested branches contribute more to complexity.
-     * 
-     * @param branchQuery - Tree-sitter query for matching branching statements
-     * @param rootNode - Root node of the syntax tree
-     * @returns Cognitive complexity score
-     */
     private calculateCognitiveComplexity(branchQuery: Query, rootNode: Node): number {
         const branchCaptures = branchQuery.captures(rootNode);
         let cognitiveComplexity = 0;
@@ -328,15 +540,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         return cognitiveComplexity;
     }
 
-    /**
-     * Calculates the normalization adjustment for NLoC.
-     * Multi-line constructs (like function signatures) are normalized to single lines.
-     * 
-     * @param normQuery - Tree-sitter query for normalization constructs
-     * @param rootNode - Root node of the syntax tree
-     * @param fileContent - Full file content
-     * @returns Number of lines to subtract from total
-     */
     private calculateNormalizationAdjustment(
         normQuery: Query,
         rootNode: Node
@@ -344,15 +547,10 @@ export abstract class BaseAdapter implements LanguageAdapter {
         const normCaptures = normQuery.captures(rootNode);
         const allConstructs = normCaptures.map(c => ({ node: c.node, name: c.name }));
 
-        // Filter constructs to prevent double-counting multi-line adjustments.
-        // A construct is "nested" if it's inside another construct that also normalizes its extent.
         const topLevelConstructs = allConstructs.filter(construct => {
             const isNested = allConstructs.some(other => {
                 if (construct === other) return false;
 
-                // Functions/methods only normalize their signatures, not their bodies.
-                // Therefore, a construct inside a function body is NOT "nested" in a way
-                // that would cause double-counting of normalization adjustments.
                 const isOtherFunction = other.name.includes('function') ||
                     other.name.includes('method') ||
                     other.node.type.includes('function') ||
@@ -379,7 +577,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
             let startLine = construct.node.startPosition.row;
             let endLine = construct.node.endPosition.row;
 
-            // Special handling for functions/methods: only count signature lines
             const isFunction = construct.name.includes('function') ||
                 construct.name.includes('method') ||
                 construct.node.type.includes('function') ||
@@ -402,69 +599,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
         return normalizationAdjustment;
     }
 
-    /**
-     * Calculates estimated review time based on NLoC, complexity, and documentation.
-     * Uses a tanh-based formula to apply complexity penalties and documentation benefits.
-     * 
-     * @param nloc - Normalized lines of code
-     * @param normalizedComplexity - Complexity per 100 NLoC
-     * @param commentDensity - Percentage of lines with comments
-     * @param baseRateNlocPerDay - Base review rate
-     * @param complexityMidpoint - Neutral complexity level
-     * @param complexitySteepness - How quickly complexity impacts time
-     * @param complexityBenefitCap - Max benefit from low complexity
-     * @param complexityPenaltyCap - Max penalty from high complexity
-     * @param commentFullBenefitDensity - Comment density for full benefit
-     * @param commentBenefitCap - Max benefit from documentation
-     * @returns Estimated hours
-     */
-    private calculateEstimation(
-        nloc: number,
-        normalizedComplexity: number,
-        commentDensity: number,
-        baseRateNlocPerDay: number,
-        complexityMidpoint: number,
-        complexitySteepness: number,
-        complexityBenefitCap: number,
-        complexityPenaltyCap: number,
-        commentFullBenefitDensity: number,
-        commentBenefitCap: number
-    ): number {
-        const baseHours = (nloc / baseRateNlocPerDay) * 8;
-
-        // Complexity effect: centered around midpoint, capped by separate benefit/penalty caps
-        const complexityDelta = normalizedComplexity - complexityMidpoint;
-        const complexityShape = Math.tanh(complexityDelta / complexitySteepness); // ~[-1, 1]
-        const complexityAdjustment = complexityShape >= 0
-            ? complexityShape * complexityPenaltyCap
-            : complexityShape * complexityBenefitCap;
-
-        // Comment effect: smooth ramp up to full benefit density (tanh-based, 0 benefit at 0%)
-        const commentDensityProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
-        const commentShape = Math.tanh(commentDensityProgress * 2.646); // ~0 at 0%, ~0.99 at fullBenefitDensity
-        const commentAdjustment = commentShape * commentBenefitCap;
-
-        let factor = 1.0 + complexityAdjustment - commentAdjustment;
-        factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
-
-        return parseFloat((baseHours * factor).toFixed(2));
-    }
-
-    /**
-     * Calculates metrics for changed lines in a diff.
-     *
-     * @param file - Source file content
-     * @param addedLines - Line numbers that were added (1-indexed)
-     * @param removedLines - Line numbers that were removed (1-indexed)
-     * @param status - File status: added, modified, or deleted
-     * @returns Diff-specific metrics
-     */
-    async calculateDiffMetrics(
-        file: FileContent,
-        addedLines: number[],
-        removedLines: number[],
-        status: 'added' | 'modified' | 'deleted'
-    ): Promise<DiffFileMetrics> {
+    private calculateEstimation(nloc: number, normalizedComplexity: number, commentDensity: number): number {
         const {
             baseRateNlocPerDay,
             complexityMidpoint,
@@ -474,8 +609,30 @@ export abstract class BaseAdapter implements LanguageAdapter {
             commentFullBenefitDensity,
             commentBenefitCap
         } = this.config.constants;
+        const baseHours = (nloc / baseRateNlocPerDay) * 8;
 
-        // Deleted files are free
+        const complexityDelta = normalizedComplexity - complexityMidpoint;
+        const complexityShape = Math.tanh(complexityDelta / complexitySteepness);
+        const complexityAdjustment = complexityShape >= 0
+            ? complexityShape * complexityPenaltyCap
+            : complexityShape * complexityBenefitCap;
+
+        const commentDensityProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
+        const commentShape = Math.tanh(commentDensityProgress * 2.646);
+        const commentAdjustment = commentShape * commentBenefitCap;
+
+        let factor = 1.0 + complexityAdjustment - commentAdjustment;
+        factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
+
+        return parseFloat((baseHours * factor).toFixed(2));
+    }
+
+    async calculateDiffMetrics(
+        file: FileContent,
+        addedLines: number[],
+        removedLines: number[],
+        status: 'added' | 'modified' | 'deleted'
+    ): Promise<DiffFileMetrics> {
         if (status === 'deleted') {
             return {
                 file: file.path,
@@ -509,14 +666,13 @@ export abstract class BaseAdapter implements LanguageAdapter {
 
         const lines = file.content.split('\n');
 
-        // Calculate diff NLoC (exclude blank lines and comment-only lines from added lines)
         const commentQuery = new Query(lang, this.config.queries.comments);
         const commentCaptures = commentQuery.captures(tree.rootNode);
         const commentOnlyLines = new Set<number>();
 
         for (const capture of commentCaptures) {
             for (let i = capture.node.startPosition.row; i <= capture.node.endPosition.row; i++) {
-                const lineNum = i + 1; // Convert to 1-indexed
+                const lineNum = i + 1;
                 if (lineNum < lines.length) {
                     const lineContent = lines[i].trim();
                     if (/^(\/\/|\/\*|\*|#|--|;;)/.test(lineContent)) {
@@ -533,21 +689,15 @@ export abstract class BaseAdapter implements LanguageAdapter {
             const lineIdx = lineNum - 1;
             if (lineIdx >= 0 && lineIdx < lines.length) {
                 const lineContent = lines[lineIdx].trim();
-
-                // Skip blank lines
                 if (lineContent === '') continue;
-
-                // Skip comment-only lines for NLoC but track them
                 if (commentOnlyLines.has(lineNum)) {
                     linesWithComments++;
                     continue;
                 }
-
                 diffNloc++;
             }
         }
 
-        // Calculate diff complexity based on nesting depth of changed lines
         const branchQuery = new Query(lang, this.config.queries.branching);
         const branchCaptures = branchQuery.captures(tree.rootNode);
         const branches = branchCaptures.map(c => c.node);
@@ -558,33 +708,18 @@ export abstract class BaseAdapter implements LanguageAdapter {
             if (lineIdx >= 0 && lineIdx < lines.length) {
                 const lineContent = lines[lineIdx].trim();
                 if (lineContent === '' || commentOnlyLines.has(lineNum)) continue;
-
-                // Calculate nesting depth for this line
                 const nestingDepth = this.calculateNestingDepthForLine(lineNum, branches);
                 diffComplexity += nestingDepth;
             }
         }
 
-        // Calculate comment density for diff
         const commentDensity = diffNloc > 0
             ? parseFloat(((linesWithComments / diffNloc) * 100).toFixed(2))
             : 0;
 
-        // Calculate normalized complexity and estimated hours
         const normalizedComplexity = diffNloc > 0 ? (diffComplexity / diffNloc) * 100 : 0;
 
-        const estimatedHours = this.calculateEstimation(
-            diffNloc,
-            normalizedComplexity,
-            commentDensity,
-            baseRateNlocPerDay,
-            complexityMidpoint,
-            complexitySteepness,
-            complexityBenefitCap,
-            complexityPenaltyCap,
-            commentFullBenefitDensity,
-            commentBenefitCap
-        );
+        const estimatedHours = this.calculateEstimation(diffNloc, normalizedComplexity, commentDensity);
 
         return {
             file: file.path,
@@ -598,23 +733,14 @@ export abstract class BaseAdapter implements LanguageAdapter {
         };
     }
 
-    /**
-     * Calculates the nesting depth for a specific line number.
-     * Returns the number of branching statements that contain this line.
-     *
-     * @param lineNum - 1-indexed line number
-     * @param branches - Array of branch nodes from Tree-sitter
-     * @returns Nesting depth (0 if not inside any branch)
-     */
     private calculateNestingDepthForLine(lineNum: number, branches: Node[]): number {
-        const lineIdx = lineNum - 1; // Convert to 0-indexed for comparison
+        const lineIdx = lineNum - 1;
         let depth = 0;
 
         for (const branch of branches) {
             const branchStartLine = branch.startPosition.row;
             const branchEndLine = branch.endPosition.row;
 
-            // Check if line is inside this branch
             if (lineIdx >= branchStartLine && lineIdx <= branchEndLine) {
                 depth++;
             }
@@ -623,13 +749,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         return depth;
     }
 
-    /**
-     * Extracts function signatures with their line ranges.
-     * Used for mapping changed lines to affected functions.
-     *
-     * @param file - Source file to analyze
-     * @returns Array of functions with signature and line range
-     */
     async extractSignaturesWithRanges(
         file: FileContent
     ): Promise<Array<{ signature: string; startLine: number; endLine: number }>> {
@@ -666,7 +785,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
 
                     results.push({
                         signature: truncated,
-                        startLine: node.startPosition.row + 1, // 1-indexed
+                        startLine: node.startPosition.row + 1,
                         endLine: node.endPosition.row + 1
                     });
                 }
@@ -677,5 +796,25 @@ export abstract class BaseAdapter implements LanguageAdapter {
         }
 
         return results;
+    }
+}
+
+function findNodeAt(root: Node, row: number, col: number): Node | null {
+    if (root.startPosition.row === row && root.startPosition.column === col) {
+        return root;
+    }
+    for (const child of root.children) {
+        if (child.startPosition.row > row) break;
+        if (child.endPosition.row < row) continue;
+        const found = findNodeAt(child, row, col);
+        if (found) return found;
+    }
+    return null;
+}
+
+function walkDescendants(node: Node, callback: (n: Node) => void): void {
+    for (const child of node.children) {
+        callback(child);
+        walkDescendants(child, callback);
     }
 }

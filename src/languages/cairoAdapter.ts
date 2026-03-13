@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -17,8 +20,6 @@ export class CairoAdapter extends BaseAdapter {
         // Method calls: self.method() → field_expression with field_identifier
         METHOD_CALL: `(call_expression (field_expression (field_identifier) @FUNC))`
     } as const;
-
-    private symbolsByContainer: Map<string, GraphNode[]> = new Map();
 
     constructor() {
         super({
@@ -56,20 +57,6 @@ export class CairoAdapter extends BaseAdapter {
         });
     }
 
-    protected override resetState(): void {
-        super.resetState();
-        this.symbolsByContainer.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const containerNodes = this.symbolsByContainer.get(node.contract) ?? [];
-            containerNodes.push(node);
-            this.symbolsByContainer.set(node.contract, containerNodes);
-        }
-    }
-
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Cairo);
@@ -97,8 +84,8 @@ export class CairoAdapter extends BaseAdapter {
                 const funcCaptures = functionQuery.captures(bodyNode);
                 for (const funcCapture of funcCaptures) {
                     if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                    const node = this.createFunctionNode(funcCapture.node, file.path, containerName);
-                    this.indexSymbol(node);
+                    const entry = this.createFunctionNode(funcCapture.node, file.path, containerName);
+                    this.indexSymbol(entry);
                 }
             }
 
@@ -159,23 +146,19 @@ export class CairoAdapter extends BaseAdapter {
             'unknown';
     }
 
-    private createFunctionNode(node: Node, file: string, container?: string): GraphNode {
+    private createFunctionNode(node: Node, file: string, container?: string): SymbolEntry {
         const fnName = this.extractFunctionName(node);
         const visibility = this.extractVisibility(node);
-        const id = container ? `${container}::${fnName}` : fnName;
+        const qualifiedName = container ? `${container}::${fnName}` : fnName;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName,
             label: fnName,
             file,
-            contract: container,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            contract: container,
+        });
     }
 
     private extractVisibility(node: Node): Visibility {
@@ -196,7 +179,7 @@ export class CairoAdapter extends BaseAdapter {
         return 'private';
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Cairo);
         const parser = await service.createParser(SupportedLanguage.Cairo);
@@ -222,10 +205,10 @@ export class CairoAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(functionNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallQuery(simpleCallQuery, functionNode, symbol, edges, 'simple');
-                this.processCallQuery(scopedCallQuery, functionNode, symbol, edges, 'scoped');
+                this.processCallQuery(simpleCallQuery, functionNode, symbol, 'simple');
+                this.processCallQuery(scopedCallQuery, functionNode, symbol, 'scoped');
                 if (methodCallQuery) {
-                    this.processCallQuery(methodCallQuery, functionNode, symbol, edges, 'method');
+                    this.processCallQuery(methodCallQuery, functionNode, symbol, 'method');
                 }
             }
         }
@@ -234,8 +217,7 @@ export class CairoAdapter extends BaseAdapter {
     private processCallQuery(
         query: Query,
         functionNode: Node,
-        caller: GraphNode,
-        edges: GraphEdge[],
+        caller: SymbolEntry,
         callType: 'simple' | 'scoped' | 'method'
     ) {
         const captures = query.captures(functionNode);
@@ -244,13 +226,156 @@ export class CairoAdapter extends BaseAdapter {
 
             const callText = capture.node.text;
             const callee = this.resolveCall(callText, callType, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
     }
 
-    private resolveCall(callText: string, callType: 'simple' | 'scoped' | 'method', caller: GraphNode): GraphNode | undefined {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_item' || node.type === 'external_function_item';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (this.isFunctionDef(node)) {
+            return this.extractFunctionName(node) ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        return this.extractVisibility(node) === 'public' || this.extractVisibility(node) === 'external';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // Cairo external calls: dispatcher patterns or syscalls
+        if (node.type !== 'call_expression') return false;
+        const text = node.text;
+        return text.includes('Dispatcher') || text.includes('syscall');
+    }
+
+    override isStateWrite(node: Node): boolean {
+        if (node.type === 'assignment_expression') return true;
+        // Cairo storage write: self.storage_var.write(...)
+        if (node.type === 'call_expression') {
+            const text = node.text;
+            return text.includes('.write(');
+        }
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        // Cairo storage read: self.storage_var.read()
+        if (node.type === 'call_expression') {
+            const text = node.text;
+            return text.includes('.read(');
+        }
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment_expression'
+                && parent.childForFieldName('left')?.id === node.id) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        return node.type === 'attribute_item';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_expression';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expression') return null;
+        const funcNode = node.childForFieldName('function');
+        if (funcNode) {
+            if (funcNode.type === 'identifier') return funcNode.text;
+            if (funcNode.type === 'scoped_identifier') {
+                const parts = funcNode.text.split('::');
+                return parts[parts.length - 1];
+            }
+            if (funcNode.type === 'field_expression') {
+                const field = funcNode.children.find(c => c.type === 'field_identifier');
+                return field?.text ?? null;
+            }
+        }
+        // Fallback: first identifier child
+        const idChild = node.children.find(c => c.type === 'identifier');
+        return idChild?.text ?? null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression') return null;
+        return node.childForFieldName('left')?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        let prev = node.previousSibling;
+        while (prev && prev.type === 'attribute_item') {
+            const text = prev.text.replace(/^#\[/, '').replace(/\]$/, '');
+            const name = text.split('(')[0].trim();
+            // Cairo attributes are declarative metadata (#[external(v0)], #[storage], etc.)
+            result.push({ name, pattern: 'declarative' });
+            prev = prev.previousSibling;
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        // Dispatcher calls are cross-module
+        if (node.type === 'call_expression' && node.text.includes('Dispatcher')) {
+            return { qualifiedName: target, targetKind: 'cross_module' };
+        }
+        return null;
+    }
+
+    override isBuiltinContextValue(node: Node): BuiltinContextValue | null {
+        if (node.type !== 'call_expression') return null;
+        const text = node.text;
+        if (text.includes('get_caller_address')) {
+            return { name: 'get_caller_address()', category: 'caller' };
+        }
+        if (text.includes('get_block_timestamp')) {
+            return { name: 'get_block_timestamp()', category: 'environment' };
+        }
+        if (text.includes('get_block_number')) {
+            return { name: 'get_block_number()', category: 'environment' };
+        }
+        if (text.includes('get_contract_address')) {
+            return { name: 'get_contract_address()', category: 'contract_state' };
+        }
+        return null;
+    }
+
+    override resolveScope(
+        containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        return this.symbolsByContainer.has(containerName) ? [containerName] : [];
+    }
+
+    private resolveCall(callText: string, callType: 'simple' | 'scoped' | 'method', caller: SymbolEntry): SymbolEntry | undefined {
         if (callType === 'scoped') {
             // "module::func" → extract func name
             const parts = callText.split('::');

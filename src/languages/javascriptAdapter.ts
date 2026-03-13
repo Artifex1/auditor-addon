@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -75,22 +78,6 @@ abstract class JSFamilyAdapter extends BaseAdapter {
         MEMBER_CALL: `(call_expression function: (member_expression property: (property_identifier) @FUNC))`
     } as const;
 
-    private symbolsByClass: Map<string, GraphNode[]> = new Map();
-
-    protected override resetState(): void {
-        super.resetState();
-        this.symbolsByClass.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const classNodes = this.symbolsByClass.get(node.contract) ?? [];
-            classNodes.push(node);
-            this.symbolsByClass.set(node.contract, classNodes);
-        }
-    }
-
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(this.languageId);
@@ -122,18 +109,14 @@ abstract class JSFamilyAdapter extends BaseAdapter {
                     const visibility = this.extractMethodVisibility(child);
                     const id = `${className}.${methodName}`;
 
-                    this.indexSymbol({
-                        id,
+                    this.indexSymbol(this.createEntry({
+                        qualifiedName: id,
                         label: methodName,
                         file: file.path,
-                        contract: className,
+                        node: child,
                         visibility,
-                        range: {
-                            start: { line: child.startPosition.row + 1, column: child.startPosition.column },
-                            end: { line: child.endPosition.row + 1, column: child.endPosition.column }
-                        },
-                        text: child.text
-                    });
+                        contract: className
+                    }));
                 }
             }
 
@@ -152,17 +135,13 @@ abstract class JSFamilyAdapter extends BaseAdapter {
                 // Exported functions are public; others are private by default
                 const visibility: Visibility = funcNode.parent?.type === 'export_statement' ? 'public' : 'private';
 
-                this.indexSymbol({
-                    id: fnName,
+                this.indexSymbol(this.createEntry({
+                    qualifiedName: fnName,
                     label: fnName,
                     file: file.path,
-                    visibility,
-                    range: {
-                        start: { line: funcNode.startPosition.row + 1, column: funcNode.startPosition.column },
-                        end: { line: funcNode.endPosition.row + 1, column: funcNode.endPosition.column }
-                    },
-                    text: funcNode.text
-                });
+                    node: funcNode,
+                    visibility
+                }));
             }
         }
     }
@@ -195,7 +174,7 @@ abstract class JSFamilyAdapter extends BaseAdapter {
         return false;
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(this.languageId);
         const parser = await service.createParser(this.languageId);
@@ -223,7 +202,7 @@ abstract class JSFamilyAdapter extends BaseAdapter {
                     const symbol = this.findSymbolAtNode(child, file.path);
                     if (!symbol) continue;
 
-                    this.processCallsInNode(child, symbol, edges, simpleCallQuery, memberCallQuery);
+                    this.processCallsInNode(child, symbol, simpleCallQuery, memberCallQuery);
                 }
             }
 
@@ -236,15 +215,14 @@ abstract class JSFamilyAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(funcNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInNode(funcNode, symbol, edges, simpleCallQuery, memberCallQuery);
+                this.processCallsInNode(funcNode, symbol, simpleCallQuery, memberCallQuery);
             }
         }
     }
 
     private processCallsInNode(
         node: Node,
-        caller: GraphNode,
-        edges: GraphEdge[],
+        caller: SymbolEntry,
         simpleCallQuery: Query,
         memberCallQuery: Query
     ) {
@@ -256,8 +234,8 @@ abstract class JSFamilyAdapter extends BaseAdapter {
             if (JS_BUILTINS.has(callName)) continue;
 
             const callee = this.resolveSimpleCall(callName, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
 
@@ -268,17 +246,139 @@ abstract class JSFamilyAdapter extends BaseAdapter {
             const methodName = capture.node.text;
 
             const callee = this.resolveMemberCall(methodName, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
     }
 
-    private resolveSimpleCall(callName: string, caller: GraphNode): GraphNode | undefined {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_declaration' || node.type === 'method_definition'
+            || node.type === 'arrow_function' || node.type === 'function_expression'
+            || node.type === 'generator_function_declaration';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'method_definition' || node.type === 'function_declaration'
+            || node.type === 'generator_function_declaration') {
+            return node.childForFieldName('name')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        if (node.type === 'method_definition') {
+            // Check TS accessibility_modifier
+            for (const child of node.children) {
+                if (child.type === 'accessibility_modifier') {
+                    return child.text === 'public';
+                }
+            }
+            // Check # prefix (private)
+            const nameNode = node.childForFieldName('name');
+            if (nameNode?.type === 'private_property_identifier') return false;
+            return true; // default public in JS
+        }
+        if (node.type === 'function_declaration') {
+            return node.parent?.type === 'export_statement';
+        }
+        return false;
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // fetch(), XMLHttpRequest, child_process, http/https calls
+        if (node.type !== 'call_expression') return false;
+        const text = node.text;
+        return text.startsWith('fetch(') || text.includes('XMLHttpRequest')
+            || text.includes('child_process') || text.includes('exec(')
+            || text.includes('spawn(') || text.includes('http.');
+    }
+
+    override isStateWrite(node: Node): boolean {
+        if (node.type === 'assignment_expression') {
+            const lhs = node.childForFieldName('left');
+            // this.x = ... or object.x = ...
+            if (lhs?.type === 'member_expression') return true;
+            return true;
+        }
+        if (node.type === 'augmented_assignment_expression') return true;
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        // this.x property access
+        if (node.type === 'member_expression') {
+            const obj = node.childForFieldName('object');
+            if (obj?.text === 'this') return true;
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        // TS decorators
+        return node.type === 'decorator';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_statement';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expression') return null;
+        const func = node.childForFieldName('function');
+        if (!func) return null;
+        if (func.type === 'identifier') return func.text;
+        if (func.type === 'member_expression') {
+            return func.childForFieldName('property')?.text ?? null;
+        }
+        return null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression'
+            && node.type !== 'augmented_assignment_expression') return null;
+        return node.childForFieldName('left')?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        // TS decorators on methods
+        let prev = node.previousSibling;
+        while (prev && prev.type === 'decorator') {
+            const expr = prev.childForFieldName('expression')
+                ?? prev.children.find(c => c.type !== '@');
+            const name = expr?.text ?? prev.text.replace('@', '');
+            result.push({ name, pattern: 'wrapper' });
+            prev = prev.previousSibling;
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        return null;
+    }
+
+    private resolveSimpleCall(callName: string, caller: SymbolEntry): SymbolEntry | undefined {
         // 1. Try same class methods first
         if (caller.contract) {
-            const classNodes = this.symbolsByClass.get(caller.contract);
-            const match = classNodes?.find(n => n.label === callName);
+            const classEntries = this.symbolsByContainer.get(caller.contract);
+            const match = classEntries?.find(n => n.label === callName);
             if (match) return match;
         }
 
@@ -290,11 +390,11 @@ abstract class JSFamilyAdapter extends BaseAdapter {
         return candidates?.[0];
     }
 
-    private resolveMemberCall(methodName: string, caller: GraphNode): GraphNode | undefined {
+    private resolveMemberCall(methodName: string, caller: SymbolEntry): SymbolEntry | undefined {
         // 1. Try same class first (for this.method() patterns)
         if (caller.contract) {
-            const classNodes = this.symbolsByClass.get(caller.contract);
-            const match = classNodes?.find(n => n.label === methodName);
+            const classEntries = this.symbolsByContainer.get(caller.contract);
+            const match = classEntries?.find(n => n.label === methodName);
             if (match) return match;
         }
 

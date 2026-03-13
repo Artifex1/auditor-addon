@@ -12,7 +12,7 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
 
     it('should extract public and external functions', async () => {
         const code = fs.readFileSync(
-            path.join(__dirname, '../../fixtures/solidity/SimpleVault.sol'),
+            path.join(__dirname, 'fixtures/SimpleVault.sol'),
             'utf-8'
         );
 
@@ -36,7 +36,7 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
 
     it('should extract correct visibility', async () => {
         const code = fs.readFileSync(
-            path.join(__dirname, '../../fixtures/solidity/SimpleVault.sol'),
+            path.join(__dirname, 'fixtures/SimpleVault.sol'),
             'utf-8'
         );
 
@@ -54,7 +54,7 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
 
     it('should extract contract name', async () => {
         const code = fs.readFileSync(
-            path.join(__dirname, '../../fixtures/solidity/SimpleVault.sol'),
+            path.join(__dirname, 'fixtures/SimpleVault.sol'),
             'utf-8'
         );
 
@@ -84,7 +84,7 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
 
     it('should detect contract name inside abstract contracts', async () => {
         const code = fs.readFileSync(
-            path.join(__dirname, '../../fixtures/solidity/AbstractContract.sol'),
+            path.join(__dirname, 'fixtures/AbstractContract.sol'),
             'utf-8'
         );
 

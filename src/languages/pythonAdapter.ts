@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -39,7 +42,6 @@ export class PythonAdapter extends BaseAdapter {
         'exec', 'globals', 'locals', 'help', 'ascii'
     ]);
 
-    private symbolsByClass: Map<string, GraphNode[]> = new Map();
     private inheritanceGraph: Map<string, string[]> = new Map();
 
     constructor() {
@@ -86,17 +88,7 @@ export class PythonAdapter extends BaseAdapter {
 
     protected override resetState(): void {
         super.resetState();
-        this.symbolsByClass.clear();
         this.inheritanceGraph.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const classNodes = this.symbolsByClass.get(node.contract) ?? [];
-            classNodes.push(node);
-            this.symbolsByClass.set(node.contract, classNodes);
-        }
     }
 
     protected override async buildSymbolTable(files: FileContent[]) {
@@ -136,8 +128,8 @@ export class PythonAdapter extends BaseAdapter {
                     // Skip nested functions (functions defined inside other functions within the class)
                     if (this.isNestedFunction(methodCapture.node, bodyNode)) continue;
 
-                    const node = this.createMethodNode(methodCapture.node, file.path, className);
-                    this.indexSymbol(node);
+                    const entry = this.createMethodEntry(methodCapture.node, file.path, className);
+                    this.indexSymbol(entry);
                 }
             }
 
@@ -147,8 +139,8 @@ export class PythonAdapter extends BaseAdapter {
                 if (this.isInsideClass(capture.node, classCaptures)) continue;
                 if (this.isNestedInFunction(capture.node, tree.rootNode)) continue;
 
-                const node = this.createFunctionNode(capture.node, file.path);
-                this.indexSymbol(node);
+                const entry = this.createFunctionEntry(capture.node, file.path);
+                this.indexSymbol(entry);
             }
         }
     }
@@ -190,45 +182,33 @@ export class PythonAdapter extends BaseAdapter {
         return false;
     }
 
-    private createFunctionNode(node: Node, file: string): GraphNode {
+    private createFunctionEntry(node: Node, file: string): SymbolEntry {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
-
         const visibility = this.extractVisibility(fnName);
-        const id = fnName;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName: fnName,
             label: fnName,
             file,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+        });
     }
 
-    private createMethodNode(node: Node, file: string, className: string): GraphNode {
+    private createMethodEntry(node: Node, file: string, className: string): SymbolEntry {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
-
         const visibility = this.extractVisibility(fnName);
-        const id = `${className}.${fnName}`;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName: `${className}.${fnName}`,
             label: fnName,
             file,
-            contract: className,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            contract: className,
+        });
     }
 
     private extractVisibility(name: string): Visibility {
@@ -240,12 +220,12 @@ export class PythonAdapter extends BaseAdapter {
         return 'public';
     }
 
-    private findInClass(className: string, methodName: string): GraphNode | undefined {
-        const methods = this.symbolsByClass.get(className);
+    private findInClass(className: string, methodName: string): SymbolEntry | undefined {
+        const methods = this.symbolsByContainer.get(className);
         return methods?.find(n => n.label === methodName);
     }
 
-    private resolveInheritedCall(name: string, className: string, visited: Set<string> = new Set()): GraphNode | undefined {
+    private resolveInheritedCall(name: string, className: string, visited: Set<string> = new Set()): SymbolEntry | undefined {
         if (visited.has(className)) return undefined;
         visited.add(className);
 
@@ -262,7 +242,7 @@ export class PythonAdapter extends BaseAdapter {
         return undefined;
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Python);
         const parser = await service.createParser(SupportedLanguage.Python);
@@ -283,15 +263,14 @@ export class PythonAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(functionNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInFunction(functionNode, symbol, edges, simpleCallQuery, attributeCallQuery, superCallQuery);
+                this.processCallsInFunction(functionNode, symbol, simpleCallQuery, attributeCallQuery, superCallQuery);
             }
         }
     }
 
     private processCallsInFunction(
         functionNode: Node,
-        caller: GraphNode,
-        edges: GraphEdge[],
+        caller: SymbolEntry,
         simpleCallQuery: Query,
         attributeCallQuery: Query,
         superCallQuery: Query
@@ -305,8 +284,8 @@ export class PythonAdapter extends BaseAdapter {
             const methodName = capture.node.text;
             superMethodNames.add(methodName);
             const callee = this.resolveSuperCall(methodName, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
 
@@ -319,8 +298,8 @@ export class PythonAdapter extends BaseAdapter {
             if (PythonAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
 
             const callee = this.resolveSimpleCall(callName, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
 
@@ -334,18 +313,18 @@ export class PythonAdapter extends BaseAdapter {
             if (PythonAdapter.BUILTIN_FUNCTIONS.has(methodName)) continue;
 
             const callee = this.resolveAttributeCall(methodName, caller);
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
     }
 
-    private resolveSuperCall(name: string, caller: GraphNode): GraphNode | undefined {
+    private resolveSuperCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
         if (!caller.contract) return undefined;
         return this.resolveInheritedCall(name, caller.contract);
     }
 
-    private resolveSimpleCall(callName: string, caller: GraphNode): GraphNode | undefined {
+    private resolveSimpleCall(callName: string, caller: SymbolEntry): SymbolEntry | undefined {
         // 1. Try same class methods first
         if (caller.contract) {
             const local = this.findInClass(caller.contract, callName);
@@ -365,7 +344,119 @@ export class PythonAdapter extends BaseAdapter {
         return candidates?.[0];
     }
 
-    private resolveAttributeCall(methodName: string, caller: GraphNode): GraphNode | undefined {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_definition';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'function_definition') {
+            return node.childForFieldName('name')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        const name = this.getFunctionName(node);
+        if (!name) return false;
+        return this.extractVisibility(name) === 'public';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // Python: subprocess, os.system, socket, urllib, requests
+        if (node.type !== 'call') return false;
+        const text = node.text;
+        return text.includes('subprocess') || text.includes('os.system')
+            || text.includes('os.popen') || text.includes('socket.')
+            || text.includes('urllib') || text.includes('requests.');
+    }
+
+    override isStateWrite(node: Node): boolean {
+        // self.x = ... (instance attribute write)
+        if (node.type === 'assignment') {
+            const lhs = node.childForFieldName('left') ?? node.children[0];
+            if (lhs?.type === 'attribute' && lhs.text.startsWith('self.')) return true;
+            return true; // general assignment
+        }
+        if (node.type === 'augmented_assignment') return true;
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        // self.x access
+        if (node.type === 'attribute') {
+            return node.text.startsWith('self.');
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        return node.type === 'decorator';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_statement';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call') return null;
+        const func = node.childForFieldName('function');
+        if (!func) return null;
+        if (func.type === 'identifier') return func.text;
+        if (func.type === 'attribute') {
+            return func.childForFieldName('attribute')?.text ?? null;
+        }
+        return null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment' && node.type !== 'augmented_assignment') return null;
+        const lhs = node.childForFieldName('left') ?? node.children[0];
+        return lhs?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        // Decorators appear as previous siblings or special child nodes
+        let prev = node.previousSibling;
+        while (prev && prev.type === 'decorator') {
+            const nameNode = prev.children.find(c =>
+                c.type === 'identifier' || c.type === 'attribute' || c.type === 'call'
+            );
+            const name = nameNode?.text ?? prev.text.replace('@', '');
+            result.push({ name, pattern: 'wrapper' });
+            prev = prev.previousSibling;
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        return null;
+    }
+
+    override resolveScope(
+        containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        return this.inheritanceGraph.get(containerName) ?? [];
+    }
+
+    private resolveAttributeCall(methodName: string, caller: SymbolEntry): SymbolEntry | undefined {
         // 1. Try caller's own class first (self.method())
         if (caller.contract) {
             const local = this.findInClass(caller.contract, methodName);

@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -10,8 +13,6 @@ export class MoveAdapter extends BaseAdapter {
         FUNCTIONS: `(function_decl) @function`,
         CALLS: `(call_expr) @call`
     } as const;
-
-    private symbolsByModule: Map<string, GraphNode[]> = new Map();
 
     constructor() {
         super({
@@ -45,20 +46,6 @@ export class MoveAdapter extends BaseAdapter {
                 commentBenefitCap: 0.3
             }
         });
-    }
-
-    protected override resetState(): void {
-        super.resetState();
-        this.symbolsByModule.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const moduleNodes = this.symbolsByModule.get(node.contract) ?? [];
-            moduleNodes.push(node);
-            this.symbolsByModule.set(node.contract, moduleNodes);
-        }
     }
 
     protected override async buildSymbolTable(files: FileContent[]) {
@@ -146,27 +133,23 @@ export class MoveAdapter extends BaseAdapter {
         file: string,
         module?: string,
         visibility: Visibility = 'private'
-    ): GraphNode {
+    ): SymbolEntry {
         // function_decl → first (identifier) child = function name
         const nameNode = node.children.find(c => c.type === 'identifier');
         const fnName = nameNode?.text ?? 'unknown';
-        const id = module ? `${module}::${fnName}` : fnName;
+        const qualifiedName = module ? `${module}::${fnName}` : fnName;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName,
             label: fnName,
             file,
-            contract: module,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            contract: module,
+        });
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Move);
         const parser = await service.createParser(SupportedLanguage.Move);
@@ -187,15 +170,110 @@ export class MoveAdapter extends BaseAdapter {
                 const callCaptures = callQuery.captures(functionNode);
                 for (const callCapture of callCaptures) {
                     const callee = this.resolveCallNode(callCapture.node, symbol);
-                    if (callee && callee.id !== symbol.id) {
-                        this.addEdge(edges, symbol.id, callee.id);
+                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
                     }
                 }
             }
         }
     }
 
-    private resolveCallNode(callNode: Node, caller: GraphNode): GraphNode | undefined {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_decl';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'function_decl') {
+            return node.children.find(c => c.type === 'identifier')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        const parent = node.parent;
+        const vis = this.extractVisibilityFromDecl(parent ?? null);
+        return vis === 'public' || vis === 'external';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // Move cross-module calls: module_name::func()
+        if (node.type !== 'call_expr') return false;
+        const nameChain = node.children.find(c => c.type === 'name_access_chain');
+        if (!nameChain) return false;
+        const ids = nameChain.children.filter(c => c.type === 'identifier');
+        // Qualified call with module prefix = cross-module
+        return ids.length >= 2;
+    }
+
+    override isStateWrite(node: Node): boolean {
+        if (node.type === 'assignment') return true;
+        // Move global storage writes: move_to, borrow_global_mut
+        if (node.type === 'call_expr') {
+            const text = node.text;
+            return text.includes('move_to') || text.includes('borrow_global_mut')
+                || text.includes('move_from');
+        }
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        // Move global storage reads: borrow_global, exists
+        if (node.type === 'call_expr') {
+            const text = node.text;
+            return text.includes('borrow_global') || text.includes('exists<');
+        }
+        return false;
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_expr';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expr') return null;
+        const nameChain = node.children.find(c => c.type === 'name_access_chain');
+        if (!nameChain) return null;
+        const ids = nameChain.children.filter(c => c.type === 'identifier');
+        return ids.length > 0 ? ids[ids.length - 1].text : null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment') return null;
+        return node.childForFieldName('left')?.text
+            ?? node.children[0]?.text ?? null;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        // Qualified cross-module calls
+        if (this.isExternalCall(node)) {
+            return { qualifiedName: target, targetKind: 'cross_module' };
+        }
+        return null;
+    }
+
+    override resolveScope(
+        containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        return this.symbolsByContainer.has(containerName) ? [containerName] : [];
+    }
+
+    private resolveCallNode(callNode: Node, caller: SymbolEntry): SymbolEntry | undefined {
         // call_expr → name_access_chain → (identifier (:: identifier)*)
         const nameChain = callNode.children.find(c => c.type === 'name_access_chain');
         if (!nameChain) return undefined;
@@ -211,14 +289,14 @@ export class MoveAdapter extends BaseAdapter {
         const moduleName = identifiers.length >= 2 ? identifiers[identifiers.length - 2] : null;
 
         if (moduleName) {
-            const moduleFuncs = this.symbolsByModule.get(moduleName);
+            const moduleFuncs = this.symbolsByContainer.get(moduleName);
             const match = moduleFuncs?.find(n => n.label === funcName);
             if (match) return match;
         }
 
         // Same-module lookup
         if (caller.contract) {
-            const moduleFuncs = this.symbolsByModule.get(caller.contract);
+            const moduleFuncs = this.symbolsByContainer.get(caller.contract);
             const match = moduleFuncs?.find(n => n.label === funcName);
             if (match) return match;
         }

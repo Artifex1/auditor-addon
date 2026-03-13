@@ -1,14 +1,13 @@
 import { z } from "zod";
 import { encode } from "@toon-format/toon";
 import { Engine } from "../../engine/index.js";
-import { CallGraph } from "../../engine/types.js";
+import { computeHotspots, resolvePaths } from "../../static/hotspots.js";
 
 // ==========================================
 // Configuration
 // ==========================================
 const MAX_PATHS_PER_ENTRYPOINT = 10;
 const MAX_DEPTH = 10;
-const MAX_HOTSPOTS = 5;
 
 // ==========================================
 // Schema
@@ -26,48 +25,32 @@ export const callChainsSchema = {
 export function createCallChainsHandler(engine: Engine) {
     return async ({ paths }: { paths: string[] }) => {
         try {
-            const graph = await engine.processCallGraph(paths);
+            const symbolMap = await engine.processSymbolMap(paths);
 
             // Root nodes: functions that nothing else calls
-            const calledIds = new Set(graph.edges.map(e => e.to));
-            const roots = graph.nodes.filter(n => !calledIds.has(n.id));
+            const allCalleeIds = new Set<string>();
+            for (const entry of symbolMap.values()) {
+                for (const callee of entry.callees) {
+                    allCalleeIds.add(callee.qualifiedName);
+                }
+            }
+            const roots = [...symbolMap.keys()].filter(id => !allCalleeIds.has(id));
 
             // Generate chains grouped by root
             const chainsByRoot: Record<string, string[]> = {};
 
-            for (const root of roots) {
-                const rawPaths = resolvePaths(root.id, graph, 0, new Set());
+            for (const rootId of roots) {
+                const rawPaths = resolvePaths(rootId, symbolMap, 0, new Set(), MAX_DEPTH, true);
                 const chains = rawPaths.map(p => p.join(' -> '));
 
                 // Longest chains first — they show the deepest logic
                 chains.sort((a, b) => b.split(' -> ').length - a.split(' -> ').length);
 
-                chainsByRoot[root.id] = chains.slice(0, MAX_PATHS_PER_ENTRYPOINT);
+                chainsByRoot[rootId] = chains.slice(0, MAX_PATHS_PER_ENTRYPOINT);
             }
 
-            // Hotspots: functions appearing in the most chains across all roots
-            const chainCounts = new Map<string, number>();
-            for (const chains of Object.values(chainsByRoot)) {
-                const seen = new Set<string>();
-                for (const chain of chains) {
-                    for (const step of chain.split(' -> ')) {
-                        // Strip suffixes like " (Recursive)" or " (Max Depth)"
-                        const id = step.replace(/ \(.*\)$/, '');
-                        if (!seen.has(id)) {
-                            seen.add(id);
-                            chainCounts.set(id, (chainCounts.get(id) ?? 0) + 1);
-                        }
-                    }
-                }
-            }
-
-            // Exclude root nodes themselves from hotspots — they appear by definition
-            const rootIds = new Set(roots.map(r => r.id));
-            const hotspots = [...chainCounts.entries()]
-                .filter(([id]) => !rootIds.has(id))
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, MAX_HOTSPOTS)
-                .map(([id, count]) => `${id}: ${count} chain${count === 1 ? '' : 's'}`);
+            // Hotspots via shared utility
+            const hotspots = computeHotspots(symbolMap);
 
             return {
                 content: [{
@@ -86,46 +69,3 @@ export function createCallChainsHandler(engine: Engine) {
     };
 }
 
-/**
- * Recursive DFS to find all unique paths from a start node up to MAX_DEPTH.
- * Handles cycle detection by checking the current recursion stack.
- */
-function resolvePaths(
-    currentId: string,
-    graph: CallGraph,
-    depth: number,
-    stack: Set<string>
-): string[][] {
-    // Stop: Recursion detected
-    if (stack.has(currentId)) {
-        return [[`${currentId} (Recursive)`]];
-    }
-
-    // Stop: Depth limit
-    if (depth >= MAX_DEPTH) {
-        return [[`${currentId} (Max Depth)`]];
-    }
-
-    const outgoingEdges = graph.edges.filter(e => e.from === currentId);
-
-    // Base Case: Leaf node
-    if (outgoingEdges.length === 0) {
-        return [[currentId]];
-    }
-
-    const currentStack = new Set(stack);
-    currentStack.add(currentId);
-
-    const paths: string[][] = [];
-
-    outgoingEdges.sort((a, b) => a.to.localeCompare(b.to));
-
-    for (const edge of outgoingEdges) {
-        const tailPaths = resolvePaths(edge.to, graph, depth + 1, currentStack);
-        for (const tail of tailPaths) {
-            paths.push([currentId, ...tail]);
-        }
-    }
-
-    return paths;
-}

@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -28,8 +31,6 @@ export class RustAdapter extends BaseAdapter {
             (call_expression function: (generic_function function: (scoped_identifier) @FUNC))
         `
     } as const;
-
-    private symbolsByContainer: Map<string, GraphNode[]> = new Map();
 
     constructor() {
         super({
@@ -65,20 +66,6 @@ export class RustAdapter extends BaseAdapter {
         });
     }
 
-    protected override resetState(): void {
-        super.resetState();
-        this.symbolsByContainer.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const containerNodes = this.symbolsByContainer.get(node.contract) ?? [];
-            containerNodes.push(node);
-            this.symbolsByContainer.set(node.contract, containerNodes);
-        }
-    }
-
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Rust);
@@ -103,12 +90,12 @@ export class RustAdapter extends BaseAdapter {
                     const funcCaptures = functionQuery.captures(bodyNode);
                     for (const funcCapture of funcCaptures) {
                         if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                        const node = this.createFunctionNode(
+                        const entry = this.createFunctionNode(
                             funcCapture.node,
                             file.path,
                             containerName
                         );
-                        this.indexSymbol(node);
+                        this.indexSymbol(entry);
                     }
                 }
             }
@@ -125,8 +112,8 @@ export class RustAdapter extends BaseAdapter {
                     });
 
                     if (!isInImpl) {
-                        const node = this.createFunctionNode(child, file.path);
-                        this.indexSymbol(node);
+                        const entry = this.createFunctionNode(child, file.path);
+                        this.indexSymbol(entry);
                     }
                 }
 
@@ -146,12 +133,12 @@ export class RustAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(bodyNode);
             for (const funcCapture of funcCaptures) {
                 if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                const node = this.createFunctionNode(
+                const entry = this.createFunctionNode(
                     funcCapture.node,
                     filePath,
                     modName
                 );
-                this.indexSymbol(node);
+                this.indexSymbol(entry);
             }
         }
     }
@@ -184,25 +171,21 @@ export class RustAdapter extends BaseAdapter {
         node: Node,
         file: string,
         container?: string
-    ): GraphNode {
+    ): SymbolEntry {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
 
         const visibility = this.extractVisibility(node);
-        const id = container ? `${container}::${fnName}` : fnName;
+        const qualifiedName = container ? `${container}::${fnName}` : fnName;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName,
             label: fnName,
             file,
-            contract: container,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            contract: container,
+        });
     }
 
     private extractVisibility(node: Node): Visibility {
@@ -219,7 +202,7 @@ export class RustAdapter extends BaseAdapter {
         return 'private';
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Rust);
         const parser = await service.createParser(SupportedLanguage.Rust);
@@ -243,11 +226,11 @@ export class RustAdapter extends BaseAdapter {
                 if (!symbol) continue;
 
                 // Process different call types
-                await this.processCallQuery(simpleCallQuery, functionNode, symbol, edges, 'simple');
-                await this.processCallQuery(methodCallQuery, functionNode, symbol, edges, 'method');
-                await this.processCallQuery(scopedCallQuery, functionNode, symbol, edges, 'scoped');
-                await this.processCallQuery(genericCallQuery, functionNode, symbol, edges, 'simple');
-                await this.processCallQuery(genericScopedCallQuery, functionNode, symbol, edges, 'scoped');
+                await this.processCallQuery(simpleCallQuery, functionNode, symbol, 'simple');
+                await this.processCallQuery(methodCallQuery, functionNode, symbol, 'method');
+                await this.processCallQuery(scopedCallQuery, functionNode, symbol, 'scoped');
+                await this.processCallQuery(genericCallQuery, functionNode, symbol, 'simple');
+                await this.processCallQuery(genericScopedCallQuery, functionNode, symbol, 'scoped');
             }
         }
     }
@@ -255,8 +238,7 @@ export class RustAdapter extends BaseAdapter {
     private async processCallQuery(
         query: Query,
         functionNode: Node,
-        caller: GraphNode,
-        edges: GraphEdge[],
+        caller: SymbolEntry,
         callType: 'simple' | 'method' | 'scoped'
     ) {
         const captures = query.captures(functionNode);
@@ -270,16 +252,8 @@ export class RustAdapter extends BaseAdapter {
             if (this.isMacroCall(capture.node)) continue;
 
             const callee = this.resolveCall(callText, callType, caller);
-            if (callee && callee.id !== caller.id) {
-                // Avoid duplicate edges
-                const exists = edges.some(e => e.from === caller.id && e.to === callee.id);
-                if (!exists) {
-                    edges.push({
-                        from: caller.id,
-                        to: callee.id,
-                        kind: 'internal'
-                    });
-                }
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
     }
@@ -295,11 +269,156 @@ export class RustAdapter extends BaseAdapter {
         return false;
     }
 
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'function_item';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'function_item') {
+            return node.childForFieldName('name')?.text ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        return this.extractVisibility(node) === 'public';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // unsafe block containing a call, or FFI-style extern calls
+        if (node.type === 'call_expression') {
+            let current: Node | null = node;
+            while (current) {
+                if (current.type === 'unsafe_block') return true;
+                current = current.parent;
+            }
+        }
+        return false;
+    }
+
+    override isStateWrite(node: Node): boolean {
+        return node.type === 'assignment_expression'
+            || node.type === 'compound_assignment_expr';
+    }
+
+    override isStateRead(node: Node): boolean {
+        if (node.type === 'field_expression') return true;
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment_expression'
+                && parent.childForFieldName('left')?.id === node.id) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        return node.type === 'attribute_item';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_expression';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'call_expression') return null;
+        const funcExpr = node.childForFieldName('function');
+        if (!funcExpr) return null;
+        if (funcExpr.type === 'identifier') return funcExpr.text;
+        if (funcExpr.type === 'field_expression') {
+            return funcExpr.childForFieldName('field')?.text ?? null;
+        }
+        if (funcExpr.type === 'scoped_identifier') {
+            const parts = funcExpr.text.split('::');
+            return parts[parts.length - 1];
+        }
+        return null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression'
+            && node.type !== 'compound_assignment_expr') return null;
+        return node.childForFieldName('left')?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        // Rust attributes on functions: #[test], #[cfg(...)], proc macros
+        let prev = node.previousSibling;
+        while (prev && prev.type === 'attribute_item') {
+            const text = prev.text.replace(/^#\[/, '').replace(/\]$/, '');
+            const name = text.split('(')[0].trim();
+            result.push({ name, pattern: 'declarative' });
+            prev = prev.previousSibling;
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        if (node.type !== 'call_expression') return null;
+        const funcExpr = node.childForFieldName('function');
+        if (!funcExpr) return null;
+
+        let callText: string;
+        let callType: 'simple' | 'method' | 'scoped';
+
+        if (funcExpr.type === 'identifier') {
+            callText = funcExpr.text;
+            callType = 'simple';
+        } else if (funcExpr.type === 'field_expression') {
+            callText = funcExpr.childForFieldName('field')?.text ?? funcExpr.text;
+            callType = 'method';
+        } else if (funcExpr.type === 'scoped_identifier') {
+            callText = funcExpr.text;
+            callType = 'scoped';
+        } else {
+            return null;
+        }
+
+        // Try to find in symbolMap
+        if (callType === 'scoped') {
+            const parts = callText.split('::');
+            const funcName = parts[parts.length - 1];
+            for (const [qn, entry] of symbolMap) {
+                if (entry.label === funcName && qn.includes(parts[0])) {
+                    return { qualifiedName: qn, targetKind: 'internal' };
+                }
+            }
+        }
+
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === (callType === 'scoped' ? callText.split('::').pop()! : callText)) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+
+        return null;
+    }
+
+    override resolveScope(
+        containerName: string,
+        _sourceFiles: Map<string, string>
+    ): string[] {
+        // Rust doesn't have inheritance, but impl blocks for traits act similarly
+        return this.symbolsByContainer.has(containerName) ? [containerName] : [];
+    }
+
     private resolveCall(
         callText: string,
         callType: 'simple' | 'method' | 'scoped',
-        caller: GraphNode
-    ): GraphNode | undefined {
+        caller: SymbolEntry
+    ): SymbolEntry | undefined {
         if (callType === 'scoped') {
             // Handle qualified calls like Type::method or module::function
             const parts = callText.split('::');

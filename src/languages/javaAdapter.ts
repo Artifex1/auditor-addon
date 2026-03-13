@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind, ModifierInfo
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -14,8 +17,6 @@ export class JavaAdapter extends BaseAdapter {
         // method_invocation: name field is (identifier)
         METHOD_CALL: `(method_invocation name: (identifier) @FUNC)`
     } as const;
-
-    private symbolsByClass: Map<string, GraphNode[]> = new Map();
 
     constructor() {
         super({
@@ -64,20 +65,6 @@ export class JavaAdapter extends BaseAdapter {
         });
     }
 
-    protected override resetState(): void {
-        super.resetState();
-        this.symbolsByClass.clear();
-    }
-
-    protected override indexSymbol(node: GraphNode): void {
-        super.indexSymbol(node);
-        if (node.contract) {
-            const classNodes = this.symbolsByClass.get(node.contract) ?? [];
-            classNodes.push(node);
-            this.symbolsByClass.set(node.contract, classNodes);
-        }
-    }
-
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Java);
@@ -106,14 +93,14 @@ export class JavaAdapter extends BaseAdapter {
                     // Only direct methods of this class (not nested classes)
                     if (this.isInsideNestedClass(methodNode, bodyNode)) continue;
 
-                    const node = this.createMethodNode(methodNode, file.path, className);
-                    if (node) this.indexSymbol(node);
+                    const entry = this.createMethodNode(methodNode, file.path, className);
+                    if (entry) this.indexSymbol(entry);
                 }
             }
         }
     }
 
-    private createMethodNode(node: Node, file: string, className: string): GraphNode | undefined {
+    private createMethodNode(node: Node, file: string, className: string): SymbolEntry | undefined {
         // method_declaration: modifiers? type name formal_parameters body
         // constructor_declaration: modifiers? name formal_parameters body
         const nameNode = node.childForFieldName('name')
@@ -122,20 +109,16 @@ export class JavaAdapter extends BaseAdapter {
 
         const fnName = nameNode.text;
         const visibility = this.extractVisibility(node);
-        const id = `${className}.${fnName}`;
+        const qualifiedName = `${className}.${fnName}`;
 
-        return {
-            id,
+        return this.createEntry({
+            qualifiedName,
             label: fnName,
             file,
-            contract: className,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+            contract: className,
+        });
     }
 
     private extractVisibility(node: Node): Visibility {
@@ -160,7 +143,7 @@ export class JavaAdapter extends BaseAdapter {
         return false;
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Java);
         const parser = await service.createParser(SupportedLanguage.Java);
@@ -191,8 +174,8 @@ export class JavaAdapter extends BaseAdapter {
                         if (callCapture.name !== 'FUNC') continue;
                         const calleeName = callCapture.node.text;
                         const callee = this.resolveCall(calleeName, symbol);
-                        if (callee && callee.id !== symbol.id) {
-                            this.addEdge(edges, symbol.id, callee.id);
+                        if (callee && callee.qualifiedName !== symbol.qualifiedName) {
+                            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
                         }
                     }
                 }
@@ -200,10 +183,116 @@ export class JavaAdapter extends BaseAdapter {
         }
     }
 
-    private resolveCall(name: string, caller: GraphNode): GraphNode | undefined {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'method_declaration' || node.type === 'constructor_declaration';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (this.isFunctionDef(node)) {
+            return node.childForFieldName('name')?.text
+                ?? node.children.find(c => c.type === 'identifier')?.text
+                ?? null;
+        }
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        return this.extractVisibility(node) === 'public';
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // Java: Runtime.exec, ProcessBuilder, reflection
+        if (node.type !== 'method_invocation') return false;
+        const text = node.text;
+        return text.includes('Runtime.getRuntime().exec')
+            || text.includes('ProcessBuilder')
+            || text.includes('.invoke(');
+    }
+
+    override isStateWrite(node: Node): boolean {
+        if (node.type === 'assignment_expression') return true;
+        if (node.type === 'update_expression') return true;
+        return false;
+    }
+
+    override isStateRead(node: Node): boolean {
+        if (node.type === 'field_access') return true;
+        if (node.type === 'identifier') {
+            const parent = node.parent;
+            if (parent?.type === 'assignment_expression'
+                && parent.childForFieldName('left')?.id === node.id) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    override isAccessModifier(node: Node): boolean {
+        return node.type === 'marker_annotation' || node.type === 'annotation';
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'return_statement';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'method_invocation') return null;
+        return node.childForFieldName('name')?.text ?? null;
+    }
+
+    override getWrittenVar(node: Node): string | null {
+        if (node.type !== 'assignment_expression') return null;
+        return node.childForFieldName('left')?.text ?? null;
+    }
+
+    override getModifiers(node: Node): ModifierInfo[] {
+        if (!this.isFunctionDef(node)) return [];
+        const result: ModifierInfo[] = [];
+        // Java annotations on methods
+        let prev = node.previousSibling;
+        while (prev && (prev.type === 'marker_annotation' || prev.type === 'annotation')) {
+            const name = prev.text.replace('@', '').split('(')[0];
+            result.push({ name, pattern: 'wrapper' });
+            prev = prev.previousSibling;
+        }
+        // Also check within modifiers child
+        const modifiers = node.childForFieldName('modifiers')
+            ?? node.children.find(c => c.type === 'modifiers');
+        if (modifiers) {
+            for (const child of modifiers.children) {
+                if (child.type === 'marker_annotation' || child.type === 'annotation') {
+                    const name = child.text.replace('@', '').split('(')[0];
+                    result.push({ name, pattern: 'wrapper' });
+                }
+            }
+        }
+        return result;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        return null;
+    }
+
+    private resolveCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
         // 1. Same class methods first
         if (caller.contract) {
-            const classNodes = this.symbolsByClass.get(caller.contract);
+            const classNodes = this.symbolsByContainer.get(caller.contract);
             const match = classNodes?.find(n => n.label === name);
             if (match) return match;
         }

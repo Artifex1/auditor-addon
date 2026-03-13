@@ -1,4 +1,7 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import {
+    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    SymbolMap, CallTargetKind
+} from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -60,20 +63,20 @@ export class MasmAdapter extends BaseAdapter {
             // Index procedures
             const procCaptures = procQuery.captures(tree.rootNode);
             for (const capture of procCaptures) {
-                const node = this.createProcedureNode(capture.node, file.path);
-                this.indexSymbol(node);
+                const entry = this.createProcedureNode(capture.node, file.path);
+                this.indexSymbol(entry);
             }
 
             // Index entrypoints
             const entryCaptures = entryQuery.captures(tree.rootNode);
             for (const capture of entryCaptures) {
-                const node = this.createEntrypointNode(capture.node, file.path);
-                this.indexSymbol(node);
+                const entry = this.createEntrypointNode(capture.node, file.path);
+                this.indexSymbol(entry);
             }
         }
     }
 
-    private createProcedureNode(node: Node, file: string): GraphNode {
+    private createProcedureNode(node: Node, file: string): SymbolEntry {
         const nameNode = node.childForFieldName('name') ||
             node.children.find(c => c.type === 'identifier' || c.type === 'proc_name');
         const fnName = nameNode?.text ?? 'unknown';
@@ -82,35 +85,86 @@ export class MasmAdapter extends BaseAdapter {
         const isExported = node.text.trimStart().startsWith('export');
         const visibility: Visibility = isExported ? 'public' : 'private';
 
-        return {
-            id: fnName,
+        return this.createEntry({
+            qualifiedName: fnName,
             label: fnName,
             file,
+            node,
             visibility,
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+        });
     }
 
-    private createEntrypointNode(node: Node, file: string): GraphNode {
-        const id = 'begin';
-        return {
-            id,
-            label: id,
+    private createEntrypointNode(node: Node, file: string): SymbolEntry {
+        return this.createEntry({
+            qualifiedName: 'begin',
+            label: 'begin',
             file,
+            node,
             visibility: 'external',
-            range: {
-                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-                end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-            },
-            text: node.text
-        };
+        });
     }
 
-    protected override async identifyCalls(edges: GraphEdge[], files: FileContent[]) {
+    // ==========================================
+    // Trait method implementations
+    // ==========================================
+
+    override isFunctionDef(node: Node): boolean {
+        return node.type === 'procedure' || node.type === 'entrypoint';
+    }
+
+    override getFunctionName(node: Node): string | null {
+        if (node.type === 'procedure') {
+            const nameNode = node.childForFieldName('name') ||
+                node.children.find(c => c.type === 'identifier' || c.type === 'proc_name');
+            return nameNode?.text ?? null;
+        }
+        if (node.type === 'entrypoint') return 'begin';
+        return null;
+    }
+
+    override isPublicFn(node: Node): boolean {
+        if (node.type === 'entrypoint') return true;
+        if (node.type === 'procedure') {
+            return node.text.trimStart().startsWith('export');
+        }
+        return false;
+    }
+
+    override isExternalCall(node: Node): boolean {
+        // MASM: syscall instructions
+        if (node.type !== 'invoke') return false;
+        const text = node.text.trim();
+        return text.startsWith('syscall');
+    }
+
+    override isReturnStatement(node: Node): boolean {
+        return node.type === 'end' || node.text.trim() === 'end';
+    }
+
+    override getCallTarget(node: Node): string | null {
+        if (node.type !== 'invoke') return null;
+        return this.extractCalleeName(node) ?? null;
+    }
+
+    override resolveCallee(
+        node: Node,
+        symbolMap: SymbolMap,
+        _sourceFiles: Map<string, string>
+    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
+        const target = this.getCallTarget(node);
+        if (!target) return null;
+        for (const [qn, entry] of symbolMap) {
+            if (entry.label === target) {
+                return { qualifiedName: qn, targetKind: 'internal' };
+            }
+        }
+        if (this.isExternalCall(node)) {
+            return { qualifiedName: target, targetKind: 'external_unknown' };
+        }
+        return null;
+    }
+
+    protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Masm);
         const parser = await service.createParser(SupportedLanguage.Masm);
@@ -130,7 +184,7 @@ export class MasmAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(procNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInNode(procNode, symbol, edges, callQuery);
+                this.processCallsInNode(procNode, symbol, callQuery);
             }
 
             // Process entrypoints
@@ -140,12 +194,12 @@ export class MasmAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(entryNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInNode(entryNode, symbol, edges, callQuery);
+                this.processCallsInNode(entryNode, symbol, callQuery);
             }
         }
     }
 
-    private processCallsInNode(node: Node, caller: GraphNode, edges: GraphEdge[], callQuery: Query) {
+    private processCallsInNode(node: Node, caller: SymbolEntry, callQuery: Query) {
         const callCaptures = callQuery.captures(node);
         for (const capture of callCaptures) {
             const callNode = capture.node;
@@ -153,8 +207,8 @@ export class MasmAdapter extends BaseAdapter {
             if (!calleeName) continue;
 
             const callee = this.symbolsByLabel.get(calleeName)?.[0];
-            if (callee && callee.id !== caller.id) {
-                this.addEdge(edges, caller.id, callee.id);
+            if (callee && callee.qualifiedName !== caller.qualifiedName) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
             }
         }
     }

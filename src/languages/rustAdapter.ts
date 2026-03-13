@@ -1,4 +1,4 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility, FileMetrics, DiffFileMetrics } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -345,4 +345,194 @@ export class RustAdapter extends BaseAdapter {
         return this.symbolsByLabel.get(callText)?.[0];
     }
 
+    /**
+     * Strips test code from Rust source content.
+     * Removes: #[cfg(test)] module blocks, #[test] standalone functions,
+     * and their associated attribute lines.
+     * Does NOT strip doc-test code blocks inside /// comments.
+     */
+    async stripTestCode(content: string): Promise<string> {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Rust);
+        const parser = await service.createParser(SupportedLanguage.Rust);
+
+        const tree = parser.parse(content);
+        if (!tree) return content;
+
+        // Collect byte ranges to remove (startIndex, endIndex)
+        const rangesToRemove: Array<{ start: number; end: number }> = [];
+
+        // 1. Find #[cfg(test)] mod blocks
+        const modQuery = new Query(lang, '(mod_item) @mod');
+        const modCaptures = modQuery.captures(tree.rootNode);
+
+        for (const capture of modCaptures) {
+            if (this.hasCfgTestAttribute(capture.node)) {
+                const attrStart = this.getAttributeStart(capture.node);
+                rangesToRemove.push({
+                    start: attrStart,
+                    end: capture.node.endIndex
+                });
+            }
+        }
+
+        // 2. Find #[test] standalone functions (not already inside a #[cfg(test)] module)
+        const fnQuery = new Query(lang, '(function_item) @fn');
+        const fnCaptures = fnQuery.captures(tree.rootNode);
+
+        for (const capture of fnCaptures) {
+            if (this.hasTestAttribute(capture.node)) {
+                // Skip if already inside a range being removed
+                const alreadyCovered = rangesToRemove.some(
+                    r => capture.node.startIndex >= r.start && capture.node.endIndex <= r.end
+                );
+                if (!alreadyCovered) {
+                    const attrStart = this.getAttributeStart(capture.node);
+                    rangesToRemove.push({
+                        start: attrStart,
+                        end: capture.node.endIndex
+                    });
+                }
+            }
+        }
+
+        if (rangesToRemove.length === 0) return content;
+
+        // Sort ranges by start position (descending) to remove from end first
+        rangesToRemove.sort((a, b) => b.start - a.start);
+
+        let result = content;
+        for (const range of rangesToRemove) {
+            // Extend range to include the trailing newline if present
+            let end = range.end;
+            if (end < result.length && result[end] === '\n') end++;
+
+            result = result.substring(0, range.start) + result.substring(end);
+        }
+
+        return result;
+    }
+
+    private hasCfgTestAttribute(node: Node): boolean {
+        // Look for attribute_item siblings or children that contain cfg(test)
+        // In tree-sitter-rust, attributes are children of the item
+        for (const child of node.children) {
+            if (child.type === 'attribute_item') {
+                const text = child.text;
+                if (/^#\[cfg\(\s*test\s*\)\]$/.test(text)) return true;
+            }
+        }
+        // Also check previous siblings (outer attributes)
+        let prev = node.previousNamedSibling;
+        while (prev && prev.type === 'attribute_item') {
+            if (/^#\[cfg\(\s*test\s*\)\]$/.test(prev.text)) return true;
+            prev = prev.previousNamedSibling;
+        }
+        return false;
+    }
+
+    private hasTestAttribute(node: Node): boolean {
+        for (const child of node.children) {
+            if (child.type === 'attribute_item') {
+                const text = child.text;
+                if (/^#\[test\]$/.test(text)) return true;
+            }
+        }
+        let prev = node.previousNamedSibling;
+        while (prev && prev.type === 'attribute_item') {
+            if (/^#\[test\]$/.test(prev.text)) return true;
+            prev = prev.previousNamedSibling;
+        }
+        return false;
+    }
+
+    private getAttributeStart(node: Node): number {
+        // Include preceding attribute lines (e.g., #[cfg(test)], #[test])
+        let start = node.startIndex;
+        let prev = node.previousNamedSibling;
+        while (prev && prev.type === 'attribute_item') {
+            start = prev.startIndex;
+            prev = prev.previousNamedSibling;
+        }
+        // Also include attributes that are children of the node itself
+        for (const child of node.children) {
+            if (child.type === 'attribute_item' && child.startIndex < start) {
+                start = child.startIndex;
+            }
+        }
+        return start;
+    }
+
+    override async calculateMetrics(files: FileContent[]): Promise<FileMetrics[]> {
+        const strippedFiles = await Promise.all(
+            files.map(async (file) => ({
+                path: file.path,
+                content: await this.stripTestCode(file.content)
+            }))
+        );
+        return super.calculateMetrics(strippedFiles);
+    }
+
+    override async calculateDiffMetrics(
+        file: FileContent,
+        addedLines: number[],
+        removedLines: number[],
+        status: 'added' | 'modified' | 'deleted'
+    ): Promise<DiffFileMetrics> {
+        if (status === 'deleted') {
+            return super.calculateDiffMetrics(file, addedLines, removedLines, status);
+        }
+
+        const strippedContent = await this.stripTestCode(file.content);
+        const originalLines = file.content.split('\n');
+        const strippedLines = strippedContent.split('\n');
+
+        // Build mapping from original line numbers to stripped line numbers
+        // by finding which original lines were removed
+        const removedOriginalLines = new Set<number>();
+        let oi = 0, si = 0;
+
+        // Use a diff approach: walk both line arrays
+        // Lines that exist in original but not in stripped were removed
+        while (oi < originalLines.length && si < strippedLines.length) {
+            if (originalLines[oi] === strippedLines[si]) {
+                oi++;
+                si++;
+            } else {
+                removedOriginalLines.add(oi + 1); // 1-indexed
+                oi++;
+            }
+        }
+        // Remaining original lines were all removed
+        while (oi < originalLines.length) {
+            removedOriginalLines.add(oi + 1);
+            oi++;
+        }
+
+        // Filter out added lines that fall in stripped test regions
+        const filteredAddedLines: number[] = [];
+        // Build line number mapping: original -> stripped
+        const lineMapping = new Map<number, number>();
+        let strippedLineNum = 1;
+        for (let origLine = 1; origLine <= originalLines.length; origLine++) {
+            if (!removedOriginalLines.has(origLine)) {
+                lineMapping.set(origLine, strippedLineNum);
+                strippedLineNum++;
+            }
+        }
+
+        for (const lineNum of addedLines) {
+            const mappedLine = lineMapping.get(lineNum);
+            if (mappedLine !== undefined) {
+                filteredAddedLines.push(mappedLine);
+            }
+        }
+
+        return super.calculateDiffMetrics(
+            { path: file.path, content: strippedContent },
+            filteredAddedLines,
+            removedLines,
+            status
+        );
+    }
 }

@@ -16,15 +16,16 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         expect(entrypoints.length).toBeGreaterThan(0);
 
-        // Check for specific functions by ID
-        const ids = entrypoints.map(e => e.id);
+        // Check for specific functions by qualifiedName
+        const ids = entrypoints.map(e => e.qualifiedName);
         expect(ids).toContain('SimpleVault.deposit(uint256 amount)');
         expect(ids).toContain('SimpleVault.withdraw(uint256 amount)');
         expect(ids).toContain('SimpleVault.getBalance()');
@@ -40,15 +41,16 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
-        const deposit = entrypoints.find(e => e.id === 'SimpleVault.deposit(uint256 amount)');
+        const deposit = entrypoints.find(e => e.qualifiedName === 'SimpleVault.deposit(uint256 amount)');
         expect(deposit?.visibility).toBe('external');
 
-        const withdraw = entrypoints.find(e => e.id === 'SimpleVault.withdraw(uint256 amount)');
+        const withdraw = entrypoints.find(e => e.qualifiedName === 'SimpleVault.withdraw(uint256 amount)');
         expect(withdraw?.visibility).toBe('public');
     });
 
@@ -58,10 +60,11 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         entrypoints.forEach(e => {
             expect(e.contract).toBe('SimpleVault');
@@ -73,13 +76,14 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
     function foo() public {}
 }`;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         expect(entrypoints.length).toBe(1);
-        expect(entrypoints[0].id).toBe('Test.foo()');
+        expect(entrypoints[0].qualifiedName).toBe('Test.foo()');
     });
 
     it('should detect contract name inside abstract contracts', async () => {
@@ -88,10 +92,11 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'AbstractContract.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const pendingBalance = entrypoints.find(e => e.label === 'pendingBalance');
         expect(pendingBalance).toBeDefined();
@@ -110,10 +115,11 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const functionNames = entrypoints.map(e => e.label);
         expect(functionNames).toContain('fallback');
@@ -133,12 +139,13 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             ) public {}
         }`;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
-        expect(entrypoints[0].id).toBe('Test.foo(uint256 a, uint256 b)');
+        expect(entrypoints[0].qualifiedName).toBe('Test.foo(uint256 a, uint256 b)');
     });
 
     it('should extract complex function type parameters correctly', async () => {
@@ -148,34 +155,36 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
-        expect(execute?.id).toContain('function(uint256) external returns (uint256) callback');
+        expect(execute?.qualifiedName).toContain('function(uint256) external returns (uint256) callback');
     });
 
     it('should extract multiple parameters correctly using fallback', async () => {
         const code = `
             contract Test {
                 function complex(
-                    uint256 a, 
+                    uint256 a,
                     function(uint256) external returns (uint256) cb
                 ) public {}
             }
         `;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const complex = entrypoints.find(e => e.label === 'complex');
         expect(complex).toBeDefined();
-        expect(complex?.id).toBe('Test.complex(uint256 a, function(uint256) external returns (uint256) cb)');
+        expect(complex?.qualifiedName).toBe('Test.complex(uint256 a, function(uint256) external returns (uint256) cb)');
     });
 
     it('should exclude parameters from nested try-catch blocks', async () => {
@@ -191,33 +200,35 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
-        expect(execute?.id).toBe('Test.execute(uint256 input)');
+        expect(execute?.qualifiedName).toBe('Test.execute(uint256 input)');
     });
 
     it('should exclude parameters from nested function definitions', async () => {
         const code = `
             contract Test {
                 function execute(
-                    uint256 id, 
+                    uint256 id,
                     function(uint256 nestedParam) external callback
                 ) public {}
             }
         `;
 
-        const graph = await adapter.generateCallGraph([
+        const symbolMap = await adapter.generateSymbolMap([
             { path: 'Test.sol', content: code }
         ]);
-        const entrypoints = graph.nodes.filter(n => n.visibility === 'public' || n.visibility === 'external');
+        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');
         expect(execute).toBeDefined();
-        expect(execute?.id).toBe('Test.execute(uint256 id, function(uint256 nestedParam) external callback)');
+        expect(execute?.qualifiedName).toBe('Test.execute(uint256 id, function(uint256 nestedParam) external callback)');
     });
 });

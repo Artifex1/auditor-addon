@@ -1,143 +1,99 @@
 import type { Node as SyntaxNode } from "web-tree-sitter";
 import {
-    PathRule, PhaseState, RuleContext, FindingInstance,
-    SymbolMap
+    Rule, RuleContext, FindingInstance, SymbolMap
 } from "../engine/types.js";
 
 /**
- * Result of a walkPath invocation.
- * - finding: non-null if all phases matched
- * - state: the furthest-reached phase state (propagated from callees)
+ * Walks an AST calling rule.enter()/exit() on every node (DFS, document order).
+ * Used for shallow rules (no call-edge following).
  */
-export interface WalkResult {
-    finding: FindingInstance | null;
-    state: PhaseState;
+export function walkShallow(
+    root: SyntaxNode,
+    rule: Rule,
+    ctx: RuleContext,
+): void {
+    rule.enter?.(root, ctx);
+    for (const child of root.children) {
+        walkShallow(child, rule, ctx);
+    }
+    rule.exit?.(root, ctx);
 }
 
 /**
- * Walks an AST evaluating a PathRule's phase state machine.
- *
- * DFS through descendant nodes. Phase conditions are checked on every node.
- * When a call_expression resolves to a known callee, the walker crosses into
- * the callee's body (incrementing depth). State advances propagate back from
- * callees to the caller so that later siblings can match subsequent phases.
- *
- * `depth` counts **function boundaries crossed**, not AST levels.
+ * Walks an AST calling rule.enter()/exit(), following call edges for deep rules.
+ * `depth` counts function boundaries crossed, not AST levels.
  */
-export async function walkPath(
+export async function walkDeep(
     node: SyntaxNode,
-    rule: PathRule,
-    state: PhaseState,
+    rule: Rule,
     ctx: RuleContext,
     visited: Set<string>,
-    depth: number
-): Promise<WalkResult> {
-    if (depth > rule.maxDepth) return { finding: null, state };
+    depth: number,
+    maxDepth: number,
+): Promise<void> {
+    if (depth > maxDepth) return;
 
-    let current = state;
-    const result = await walkDescendants(node, rule, current, ctx, visited, depth);
-    return result;
-}
+    rule.enter?.(node, ctx);
 
-/**
- * Internal DFS. Walks all descendants without incrementing depth.
- * Depth only increments when crossing a function boundary.
- */
-async function walkDescendants(
-    node: SyntaxNode,
-    rule: PathRule,
-    state: PhaseState,
-    ctx: RuleContext,
-    visited: Set<string>,
-    depth: number
-): Promise<WalkResult> {
-    let current = state;
-
-    for (const child of node.children) {
-        // Check phase condition on this child
-        const phase = rule.phases[current.currentPhase];
-        if (!phase) return { finding: null, state: current };
-
-        if (phase.condition(child, ctx, current)) {
-            current = {
-                ...(phase.onEnter?.(child, current) ?? current),
-                currentPhase: current.currentPhase + 1,
-                matched: [...current.matched, true],
-                evidence: [...current.evidence, { node: child, file: ctx.currentFile }],
-            };
+    // Follow call edges from this node
+    const callee = ctx.trait.resolveCallee(node, ctx.symbolMap, ctx.sourceFiles);
+    if (callee && !visited.has(callee.qualifiedName)) {
+        const calleeNode = await lookupFunctionNode(callee.qualifiedName, ctx.symbolMap, ctx);
+        if (calleeNode) {
+            visited.add(callee.qualifiedName);
+            const entry = ctx.symbolMap.get(callee.qualifiedName)!;
+            const prevFile = ctx.currentFile;
+            ctx.currentFile = entry.file;
+            await walkDeep(calleeNode, rule, ctx, visited, depth + 1, maxDepth);
+            ctx.currentFile = prevFile;
         }
+    }
 
-        if (current.currentPhase === rule.phases.length) {
-            return { finding: rule.buildFinding(current, ctx), state: current };
-        }
-
-        // Follow call edges — depth increments here (crossing function boundary)
-        const callee = ctx.trait.resolveCallee(child, ctx.symbolMap, ctx.sourceFiles);
-        if (callee && !visited.has(callee.qualifiedName)) {
-            const calleeNode = await lookupFunctionNode(callee.qualifiedName, ctx.symbolMap, ctx);
-            if (calleeNode) {
-                visited.add(callee.qualifiedName);
-                const entry = ctx.symbolMap.get(callee.qualifiedName)!;
-                const prevFile = ctx.currentFile;
-                ctx.currentFile = entry.file;
-                const callResult = await walkPath(calleeNode, rule, current, ctx, visited, depth + 1);
-                ctx.currentFile = prevFile;
-                if (callResult.finding) return callResult;
-                current = callResult.state;
-            }
-        }
-
-        if (current.currentPhase === rule.phases.length) {
-            return { finding: rule.buildFinding(current, ctx), state: current };
-        }
-
-        // Follow modifier bodies — depth increments (crossing function boundary)
-        const currentFn = findContainingFunction(child, ctx);
-        if (currentFn) {
-            const fnEntry = ctx.symbolMap.get(currentFn);
-            if (fnEntry) {
-                for (const mod of fnEntry.modifiers) {
-                    if (mod.pattern === 'explicit' || mod.pattern === 'wrapper') {
-                        if (!visited.has(mod.name)) {
-                            const modNode = await lookupModifierNode(mod, ctx);
-                            if (modNode) {
-                                visited.add(mod.name);
-                                const modResult = await walkPath(modNode, rule, current, ctx, visited, depth + 1);
-                                if (modResult.finding) return modResult;
-                                current = modResult.state;
-                            }
+    // Follow modifier bodies at function boundaries
+    if (ctx.trait.isFunctionDef(node)) {
+        const qn = lookupQualifiedName(node, ctx);
+        if (qn) {
+            const entry = ctx.symbolMap.get(qn);
+            if (entry) {
+                for (const mod of entry.modifiers) {
+                    if ((mod.pattern === 'explicit' || mod.pattern === 'wrapper') && !visited.has(mod.name)) {
+                        const modNode = await lookupModifierNode(mod, ctx);
+                        if (modNode) {
+                            visited.add(mod.name);
+                            await walkDeep(modNode, rule, ctx, visited, depth + 1, maxDepth);
                         }
                     }
                 }
             }
         }
-
-        if (current.currentPhase === rule.phases.length) {
-            return { finding: rule.buildFinding(current, ctx), state: current };
-        }
-
-        // Recurse into children (same function — no depth increment)
-        const childResult = await walkDescendants(child, rule, current, ctx, visited, depth);
-        if (childResult.finding) return childResult;
-        current = childResult.state;
-
-        if (current.currentPhase === rule.phases.length) {
-            return { finding: rule.buildFinding(current, ctx), state: current };
-        }
     }
 
-    return { finding: null, state: current };
+    // Recurse into children (same function — no depth increment)
+    for (const child of node.children) {
+        await walkDeep(child, rule, ctx, visited, depth, maxDepth);
+    }
+
+    rule.exit?.(node, ctx);
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /**
- * Creates the initial PhaseState for a PathRule evaluation.
+ * Maps a function AST node back to its qualified name in the symbol map.
  */
-export function initialPhaseState(): PhaseState {
-    return {
-        currentPhase: 0,
-        matched: [],
-        evidence: [],
-    };
+function lookupQualifiedName(funcNode: SyntaxNode, ctx: RuleContext): string | null {
+    const name = ctx.trait.getFunctionName(funcNode);
+    if (!name) return null;
+    for (const [qn, entry] of ctx.symbolMap) {
+        if (entry.label === name && entry.file === ctx.currentFile) {
+            if (entry.range && entry.range.start.line - 1 === funcNode.startPosition.row) {
+                return qn;
+            }
+        }
+    }
+    return null;
 }
 
 /**
@@ -212,25 +168,7 @@ function findModifierDefByName(root: SyntaxNode, name: string): SyntaxNode | nul
     return null;
 }
 
-function findContainingFunction(node: SyntaxNode, ctx: RuleContext): string | null {
-    let current: SyntaxNode | null = node;
-    while (current) {
-        if (ctx.trait.isFunctionDef(current)) {
-            const name = ctx.trait.getFunctionName(current);
-            if (name) {
-                for (const [qn, entry] of ctx.symbolMap) {
-                    if (entry.label === name && entry.file === ctx.currentFile) {
-                        return qn;
-                    }
-                }
-            }
-        }
-        current = current.parent;
-    }
-    return null;
-}
-
-function findNodeAt(root: SyntaxNode, row: number, col: number): SyntaxNode | null {
+export function findNodeAt(root: SyntaxNode, row: number, col: number): SyntaxNode | null {
     if (root.startPosition.row === row && root.startPosition.column === col) {
         return root;
     }

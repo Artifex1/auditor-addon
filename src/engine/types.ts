@@ -34,27 +34,12 @@ export interface Range {
 
 export type Visibility = 'public' | 'external' | 'internal' | 'private';
 
-export interface GraphNode {
-    id: string; // Fully qualified signature (e.g., "MyContract.myFunc(uint256)")
-    label: string; // Function name
-    file: string;
-    contract?: string;
-    range?: Range;
-    visibility: Visibility;
-    text?: string;
-    containerKind?: 'contract' | 'interface' | 'library';
-}
-
-export interface GraphEdge {
-    from: string; // node id
-    to: string; // node id
-    kind?: 'internal' | 'external';
-}
-
-export interface CallGraph {
-    nodes: GraphNode[];
-    edges: GraphEdge[];
-}
+export type ContainerKind =
+    | 'contract' | 'interface' | 'library'  // Solidity
+    | 'class' | 'struct'                     // C++, Java, Move, Rust
+    | 'impl'                                 // Cairo, Rust
+    | 'module'                               // Move, Python
+    | (string & {});                         // extensible
 
 export interface FileMetrics {
     file: string;
@@ -69,8 +54,8 @@ export interface LanguageAdapter {
     languageId: SupportedLanguage;
     framework?: string;
 
-    // Existing
-    generateCallGraph(files: FileContent[]): Promise<CallGraph>;
+    // Primary operations
+    generateSymbolMap(files: FileContent[]): Promise<SymbolMap>;
     extractSignatures(files: FileContent[]): Promise<Record<string, string[]>>;
     calculateMetrics(files: FileContent[]): Promise<FileMetrics[]>;
     calculateDiffMetrics(
@@ -80,9 +65,6 @@ export interface LanguageAdapter {
         status: 'added' | 'modified' | 'deleted'
     ): Promise<DiffFileMetrics>;
 
-    // SymbolMap generation (bridge from CallGraph by default)
-    generateSymbolMap(files: FileContent[]): Promise<SymbolMap>;
-
     // Node classifiers
     isFunctionDef(node: import("web-tree-sitter").Node): boolean;
     isExternalCall(node: import("web-tree-sitter").Node): boolean;
@@ -91,6 +73,7 @@ export interface LanguageAdapter {
     isAccessModifier(node: import("web-tree-sitter").Node): boolean;
     isReturnStatement(node: import("web-tree-sitter").Node): boolean;
     isPublicFn(node: import("web-tree-sitter").Node): boolean;
+    isEmitStatement(node: import("web-tree-sitter").Node): boolean;
 
     // Extractors
     getFunctionName(node: import("web-tree-sitter").Node): string | null;
@@ -142,6 +125,7 @@ export type ResolvedBy = 'static' | 'agent' | 'manual';
 export type Confidence = 'high' | 'medium' | 'low';
 export type ScanStatus = 'pending' | 'needs_resolution' | 'ready' | 'complete';
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type FindingKind = 'issue' | 'smell' | 'pointer';
 export type RuleSource = 'shipped' | 'custom';
 
 // --- Call target classification (§3) ---
@@ -209,6 +193,9 @@ export interface BuiltinContextValue {
     category: BuiltinCategory;
 }
 
+// --- Symbol kind discriminator ---
+export type SymbolKind = 'function' | 'state_variable';
+
 // --- Symbol table (§4.1) ---
 export interface CalleeEntry {
     qualifiedName: string;
@@ -217,6 +204,7 @@ export interface CalleeEntry {
 
 export interface SymbolEntry {
     qualifiedName: string;
+    kind: SymbolKind;
     file: string;
     line: number;
     language: SupportedLanguage;
@@ -234,7 +222,7 @@ export interface SymbolEntry {
     contract?: string;
     range?: Range;
     visibility: Visibility;
-    containerKind?: 'contract' | 'interface' | 'library';
+    containerKind?: ContainerKind;
 }
 
 export type SymbolMap = Map<string, SymbolEntry>;
@@ -279,47 +267,46 @@ export interface RuleFinding {
     ruleId: string;
     ruleSource: RuleSource;
     severity: Severity;
+    kind: FindingKind;
     title: string;
+    description: string;
     confidence: Confidence;
     resolvedBy: ResolvedBy;
     instances: FindingInstance[];
 }
 
-// --- NarrowRule (§7.3) ---
-export interface NarrowRule {
+// --- Rule (§7 — unified rule interface) ---
+export interface Rule {
     id: string;
     severity: Severity;
     title: string;
-    appliesTo: RuleApplicability;
-    check: (ctx: RuleContext, node: TreeSitterNode) => FindingInstance | null;
-}
-
-// --- PathRule phase state machine (§7.4) ---
-export interface Phase {
-    id: string;
     description: string;
-    condition: (
-        node: TreeSitterNode,
-        ctx: RuleContext,
-        state: PhaseState
-    ) => boolean;
-    onEnter?: (node: TreeSitterNode, state: PhaseState) => PhaseState;
+    kind: FindingKind;
+    appliesTo: RuleApplicability;
+
+    /** Deep rules follow call edges during AST walk. */
+    deep?: { maxDepth: number };
+
+    /** Called on every AST node during traversal (enter phase of DFS). */
+    enter?(node: TreeSitterNode, ctx: RuleContext): void;
+    /** Called when leaving an AST node (exit phase of DFS). */
+    exit?(node: TreeSitterNode, ctx: RuleContext): void;
+
+    /** Return accumulated findings. Called after each unit of work. */
+    finalize(ctx: RuleContext): FindingInstance[];
+    /** Clear all internal state. Called before each unit of work. */
+    reset(): void;
 }
 
-export interface PhaseState {
-    currentPhase: number;
-    matched: boolean[];
-    evidence: Array<{ node: TreeSitterNode; file: string }>;
-    [key: string]: unknown;
-}
-
-export interface PathRule {
+// --- MapRule (§7 — post-processing over the completed SymbolMap) ---
+export interface MapRule {
     id: string;
     severity: Severity;
     title: string;
-    scope: 'function' | 'cross-function' | 'cross-contract';
-    maxDepth: number;
-    phases: Phase[];
+    description: string;
+    kind: FindingKind;
     appliesTo: RuleApplicability;
-    buildFinding: (state: PhaseState, ctx: RuleContext) => FindingInstance;
+
+    /** Run once against the full symbol table. */
+    check(symbolMap: SymbolMap, ctx: RuleContext): FindingInstance[];
 }

@@ -3,6 +3,25 @@ import { SymbolMap } from "../engine/types.js";
 const DEFAULT_TOP_N = 5;
 
 /**
+ * Builds a reverse caller index: for each function, the set of callers.
+ * Returns Map<qualifiedName, Set<callerQualifiedName>>.
+ */
+export function buildCallerIndex(symbolMap: SymbolMap): Map<string, Set<string>> {
+    const index = new Map<string, Set<string>>();
+    for (const [callerId, entry] of symbolMap) {
+        for (const callee of entry.callees) {
+            let callers = index.get(callee.qualifiedName);
+            if (!callers) {
+                callers = new Set();
+                index.set(callee.qualifiedName, callers);
+            }
+            callers.add(callerId);
+        }
+    }
+    return index;
+}
+
+/**
  * Computes hotspot functions — those appearing across the most call chains.
  * A hotspot is a non-root function that is a callee in many different chains,
  * making it a high-impact target for review.

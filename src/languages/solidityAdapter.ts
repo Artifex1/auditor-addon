@@ -1,5 +1,5 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
+    FileContent, SupportedLanguage, SymbolEntry, Visibility, ContainerKind,
     SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
@@ -25,7 +25,7 @@ export class SolidityAdapter extends BaseAdapter {
             (using_directive (type_alias (identifier) @lib))
         `,
         FUNCTIONS: `
-            [(function_definition) (fallback_receive_definition)] @function
+            [(function_definition) (fallback_receive_definition) (constructor_definition)] @function
         `,
         SUPER_CALL: `
             (call_expression function: (expression (member_expression object: (identifier) @RECV (#eq? @RECV "super") property: (identifier) @FUNC)))
@@ -41,6 +41,9 @@ export class SolidityAdapter extends BaseAdapter {
         `,
         ASSEMBLY_CALL: `
             (yul_function_call function: (yul_identifier) @FUNC)
+        `,
+        STATE_VARIABLES: `
+            (state_variable_declaration) @statevar
         `
     } as const;
 
@@ -267,6 +270,7 @@ export class SolidityAdapter extends BaseAdapter {
         const inheritanceQuery = new Query(lang, SolidityAdapter.QUERIES.INHERITANCE);
         const usingQuery = new Query(lang, SolidityAdapter.QUERIES.USING_FOR);
         const functionQuery = new Query(lang, SolidityAdapter.QUERIES.FUNCTIONS);
+        const stateVarQuery = new Query(lang, SolidityAdapter.QUERIES.STATE_VARIABLES);
 
         for (const file of files) {
             const tree = parser.parse(file.content);
@@ -276,7 +280,7 @@ export class SolidityAdapter extends BaseAdapter {
 
             for (const capture of containerCaptures) {
                 const containerNode = capture.node;
-                const kind = containerNode.type.replace('_declaration', '') as 'contract' | 'interface' | 'library';
+                const kind = containerNode.type.replace('_declaration', '') as ContainerKind;
                 const nameNode = containerNode.childForFieldName('name');
                 if (!nameNode) continue;
                 const contractName = nameNode.text;
@@ -303,6 +307,12 @@ export class SolidityAdapter extends BaseAdapter {
                     for (const fnCapture of functions) {
                         this.indexSymbol(this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
                     }
+
+                    const stateVars = stateVarQuery.captures(bodyNode);
+                    for (const svCapture of stateVars) {
+                        const entry = this.createStateVarEntry(svCapture.node, file.path, contractName, kind);
+                        if (entry) this.indexSymbol(entry);
+                    }
                 }
             }
 
@@ -317,7 +327,7 @@ export class SolidityAdapter extends BaseAdapter {
     private createFunctionNode(
         node: Node,
         file: string,
-        containerKind?: 'contract' | 'interface' | 'library',
+        containerKind?: ContainerKind,
         contract?: string
     ): SymbolEntry {
         let fnName = 'unknown';
@@ -325,7 +335,10 @@ export class SolidityAdapter extends BaseAdapter {
         let visibility: Visibility | undefined;
         let modifiers: ModifierInfo[] = [];
 
-        if (node.type === 'fallback_receive_definition') {
+        if (node.type === 'constructor_definition') {
+            fnName = 'constructor';
+            visibility = 'public';
+        } else if (node.type === 'fallback_receive_definition') {
             fnName = node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
             visibility = 'external';
         } else {
@@ -368,6 +381,56 @@ export class SolidityAdapter extends BaseAdapter {
         });
     }
 
+    private createStateVarEntry(
+        node: Node,
+        file: string,
+        contract: string,
+        containerKind: ContainerKind,
+    ): SymbolEntry | null {
+        const nameNode = node.childForFieldName('name');
+        if (!nameNode) return null;
+        const varName = nameNode.text;
+        const qualifiedName = `${contract}.${varName}`;
+        const visibility = this.extractVisibility(node) ?? 'internal';
+
+        const isConstant = node.children.some(c => c.type === 'constant');
+        const isImmutable = node.children.some(c => c.type === 'immutable');
+        const hasInitializer = node.childForFieldName('value') !== null;
+
+        const entry: SymbolEntry = {
+            qualifiedName,
+            kind: 'state_variable',
+            label: varName,
+            file,
+            line: node.startPosition.row + 1,
+            language: this.languageId,
+            writesState: [],
+            readsState: [],
+            callsExternal: false,
+            callees: [],
+            isPublic: visibility === 'public',
+            hasAccessControl: false,
+            modifiers: [],
+            resolvedBy: 'static',
+            confidence: 'high',
+            contract,
+            range: {
+                start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+                end: { line: node.endPosition.row + 1, column: node.endPosition.column },
+            },
+            visibility,
+            containerKind,
+        };
+
+        // Stash constant/immutable/initializer as lightweight markers in modifiers
+        // so rules can inspect without re-parsing
+        if (isConstant) entry.modifiers.push({ name: 'constant', pattern: 'declarative' });
+        if (isImmutable) entry.modifiers.push({ name: 'immutable', pattern: 'declarative' });
+        if (hasInitializer) entry.modifiers.push({ name: 'has_initializer', pattern: 'declarative' });
+
+        return entry;
+    }
+
     private extractVisibility(node: Node): Visibility | undefined {
         for (const child of node.children) {
             if (child.type === 'visibility') {
@@ -390,10 +453,14 @@ export class SolidityAdapter extends BaseAdapter {
     // ==========================================
 
     override isFunctionDef(node: Node): boolean {
-        return node.type === 'function_definition' || node.type === 'fallback_receive_definition';
+        return node.type === 'function_definition' || node.type === 'fallback_receive_definition'
+            || node.type === 'constructor_definition';
     }
 
     override getFunctionName(node: Node): string | null {
+        if (node.type === 'constructor_definition') {
+            return 'constructor';
+        }
         if (node.type === 'fallback_receive_definition') {
             return node.text.trim().startsWith('receive') ? 'receive' : 'fallback';
         }
@@ -441,6 +508,10 @@ export class SolidityAdapter extends BaseAdapter {
             return true;
         }
         return false;
+    }
+
+    override isEmitStatement(node: Node): boolean {
+        return node.type === 'emit_statement';
     }
 
     override isAccessModifier(node: Node): boolean {

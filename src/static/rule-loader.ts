@@ -1,11 +1,11 @@
 import fs from "fs/promises";
 import path from "path";
 import {
-    NarrowRule, PathRule, RuleApplicability,
+    Rule, MapRule, RuleApplicability,
     EffectiveLanguageMeta, SupportedLanguage, RuleSource
 } from "../engine/types.js";
 
-export type AnyRule = NarrowRule | PathRule;
+export type AnyRule = Rule | MapRule;
 
 export interface LoadedRule {
     rule: AnyRule;
@@ -17,19 +17,20 @@ export interface LoadResult {
     failed: string[];
 }
 
-function isPathRule(rule: unknown): rule is PathRule {
+function isRule(rule: unknown): rule is Rule {
     return typeof rule === 'object' && rule !== null
-        && 'id' in rule && 'phases' in rule && 'appliesTo' in rule;
+        && 'id' in rule && 'finalize' in rule && typeof (rule as any).finalize === 'function';
 }
 
-function isNarrowRule(rule: unknown): rule is NarrowRule {
+function isMapRule(rule: unknown): rule is MapRule {
     return typeof rule === 'object' && rule !== null
-        && 'id' in rule && 'check' in rule && typeof (rule as any).check === 'function';
+        && 'id' in rule && 'check' in rule && typeof (rule as any).check === 'function'
+        && !('finalize' in rule);
 }
 
 /**
  * Loads shipped rules from a directory via dynamic import.
- * Each .ts file should default-export a NarrowRule or PathRule.
+ * Each .ts file should default-export a Rule or MapRule.
  */
 export async function loadShippedRules(ruleDir: string): Promise<LoadResult> {
     const rules: LoadedRule[] = [];
@@ -48,7 +49,7 @@ export async function loadShippedRules(ruleDir: string): Promise<LoadResult> {
         try {
             const mod = await import(fullPath);
             const exported = mod.default ?? mod;
-            if (isPathRule(exported) || isNarrowRule(exported)) {
+            if (isRule(exported) || isMapRule(exported)) {
                 rules.push({ rule: exported, source: 'shipped' });
             } else {
                 failed.push(fullPath);
@@ -75,13 +76,11 @@ export async function loadCustomRules(paths: string[]): Promise<LoadResult> {
             const mod = await import(fullPath);
             const exported = mod.default ?? mod;
 
-            if (isPathRule(exported)) {
+            if (isRule(exported) || isMapRule(exported)) {
                 if (!exported.id.startsWith('CUSTOM-')) {
                     failed.push(fullPath);
                     continue;
                 }
-                rules.push({ rule: exported, source: 'custom' });
-            } else if (isNarrowRule(exported)) {
                 rules.push({ rule: exported, source: 'custom' });
             } else {
                 failed.push(fullPath);

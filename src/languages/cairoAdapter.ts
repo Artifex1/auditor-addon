@@ -251,6 +251,18 @@ export class CairoAdapter extends BaseAdapter {
         return this.extractVisibility(node) === 'public' || this.extractVisibility(node) === 'external';
     }
 
+    override isEmitStatement(node: Node): boolean {
+        // Cairo emit: self.emit(EventName { ... })
+        if (node.type !== 'call_expression') return false;
+        const funcNode = node.childForFieldName('function');
+        if (!funcNode) return false;
+        if (funcNode.type === 'field_expression') {
+            const field = funcNode.children.find(c => c.type === 'field_identifier');
+            if (field?.text === 'emit') return true;
+        }
+        return false;
+    }
+
     override isExternalCall(node: Node): boolean {
         // Cairo external calls: dispatcher patterns or syscalls
         if (node.type !== 'call_expression') return false;

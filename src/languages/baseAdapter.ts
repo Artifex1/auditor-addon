@@ -1,10 +1,10 @@
 import {
-    LanguageAdapter, FileContent, SupportedLanguage, CallGraph, FileMetrics, DiffFileMetrics,
-    GraphNode, GraphEdge, SymbolMap, SymbolEntry, CalleeEntry, CallTargetKind,
-    ModifierInfo, BuiltinContextValue, ModifierPattern
+    LanguageAdapter, FileContent, SupportedLanguage, FileMetrics, DiffFileMetrics,
+    SymbolMap, SymbolEntry, CalleeEntry, CallTargetKind,
+    ModifierInfo, BuiltinContextValue, Visibility, ContainerKind
 } from "../engine/types.js";
 import { TreeSitterService } from "../util/treeSitter.js";
-import { Query, Node } from "web-tree-sitter";
+import { Query, Node, Tree } from "web-tree-sitter";
 
 /**
  * Configuration for a language adapter.
@@ -51,7 +51,6 @@ export interface AdapterConfig {
  * Language-specific adapters should extend this class and override methods as needed.
  *
  * The primary data structure is SymbolMap (Map<string, SymbolEntry>).
- * generateCallGraph is derived from it for backward compatibility.
  */
 export abstract class BaseAdapter implements LanguageAdapter {
     languageId: SupportedLanguage;
@@ -94,90 +93,6 @@ export abstract class BaseAdapter implements LanguageAdapter {
         await this.identifyCalls(files);
         await this.enrichEntries(files);
         return this._symbolMap;
-    }
-
-    /**
-     * Generates a call graph for backward compatibility.
-     * Derived from SymbolMap — not the primary representation.
-     */
-    async generateCallGraph(files: FileContent[]): Promise<CallGraph> {
-        const symbolMap = await this.generateSymbolMap(files);
-        return BaseAdapter.symbolMapToCallGraph(symbolMap);
-    }
-
-    /**
-     * Projects a SymbolMap into the legacy CallGraph format.
-     */
-    static symbolMapToCallGraph(symbolMap: SymbolMap): CallGraph {
-        const nodes: GraphNode[] = [];
-        const edges: GraphEdge[] = [];
-
-        for (const [_id, entry] of symbolMap) {
-            nodes.push({
-                id: entry.qualifiedName,
-                label: entry.label,
-                file: entry.file,
-                contract: entry.contract,
-                range: entry.range,
-                visibility: entry.visibility,
-                containerKind: entry.containerKind,
-            });
-
-            for (const callee of entry.callees) {
-                edges.push({
-                    from: entry.qualifiedName,
-                    to: callee.qualifiedName,
-                    kind: callee.targetKind === 'internal' ? 'internal' : 'external',
-                });
-            }
-        }
-
-        return { nodes, edges };
-    }
-
-    /**
-     * Converts a legacy CallGraph into a SymbolMap. Used by tests.
-     */
-    static callGraphToSymbolMap(graph: CallGraph, language: SupportedLanguage): SymbolMap {
-        const symbolMap: SymbolMap = new Map();
-
-        const edgeIndex = new Map<string, GraphEdge[]>();
-        for (const edge of graph.edges) {
-            const list = edgeIndex.get(edge.from) ?? [];
-            list.push(edge);
-            edgeIndex.set(edge.from, list);
-        }
-
-        for (const node of graph.nodes) {
-            const outEdges = edgeIndex.get(node.id) ?? [];
-            const callees: CalleeEntry[] = outEdges.map(e => ({
-                qualifiedName: e.to,
-                targetKind: (e.kind === 'external' ? 'cross_module' : 'internal') as CallTargetKind,
-            }));
-
-            symbolMap.set(node.id, {
-                qualifiedName: node.id,
-                label: node.label,
-                file: node.file,
-                line: node.range?.start.line ?? 0,
-                language,
-                writesState: [],
-                readsState: [],
-                callsExternal: callees.some(c => c.targetKind !== 'internal'),
-                callees,
-                isPublic: node.visibility === 'public' || node.visibility === 'external',
-                hasAccessControl: false,
-                modifiers: [],
-                resolvedBy: 'static',
-                confidence: 'high',
-                contract: node.contract,
-                range: node.range,
-                visibility: node.visibility,
-                containerKind: node.containerKind,
-            });
-        }
-
-        return symbolMap;
     }
 
     // ==========================================
@@ -246,13 +161,14 @@ export abstract class BaseAdapter implements LanguageAdapter {
         label: string;
         file: string;
         node: Node;
-        visibility: import("../engine/types.js").Visibility;
+        visibility: Visibility;
         contract?: string;
-        containerKind?: 'contract' | 'interface' | 'library';
+        containerKind?: ContainerKind;
         modifiers?: ModifierInfo[];
     }): SymbolEntry {
         return {
             qualifiedName: opts.qualifiedName,
+            kind: 'function',
             label: opts.label,
             file: opts.file,
             line: opts.node.startPosition.row + 1,
@@ -287,7 +203,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
         const service = TreeSitterService.getInstance();
         const parser = await service.createParser(this.languageId);
 
-        const treeCache = new Map<string, import("web-tree-sitter").Tree>();
+        const treeCache = new Map<string, Tree>();
         for (const file of files) {
             const tree = parser.parse(file.content);
             if (tree) treeCache.set(file.path, tree);
@@ -341,6 +257,7 @@ export abstract class BaseAdapter implements LanguageAdapter {
     isAccessModifier(_node: Node): boolean { return false; }
     isReturnStatement(_node: Node): boolean { return false; }
     isPublicFn(_node: Node): boolean { return false; }
+    isEmitStatement(_node: Node): boolean { return false; }
 
     // ==========================================
     // Extractor stubs (override in adapters)

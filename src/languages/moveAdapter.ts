@@ -199,6 +199,14 @@ export class MoveAdapter extends BaseAdapter {
         return vis === 'public' || vis === 'external';
     }
 
+    override isEmitStatement(node: Node): boolean {
+        // Move event::emit(...)
+        if (node.type !== 'call_expr') return false;
+        const nameChain = node.children.find(c => c.type === 'name_access_chain');
+        if (!nameChain) return false;
+        return nameChain.text.includes('emit');
+    }
+
     override isExternalCall(node: Node): boolean {
         // Move cross-module calls: module_name::func()
         if (node.type !== 'call_expr') return false;

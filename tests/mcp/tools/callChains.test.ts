@@ -1,14 +1,37 @@
 import { describe, it, expect, vi } from "vitest";
 import { createCallChainsHandler } from "../../../src/mcp/tools/callChains.js";
 import { Engine } from "../../../src/engine/index.js";
-import { CallGraph, GraphNode, GraphEdge, SymbolMap, CallTargetKind } from "../../../src/engine/types.js";
-import { BaseAdapter } from "../../../src/languages/baseAdapter.js";
-import { SupportedLanguage } from "../../../src/engine/types.js";
+import { SymbolMap, SymbolEntry, SupportedLanguage } from "../../../src/engine/types.js";
 import { decode } from "@toon-format/toon";
 
-/** Convert a CallGraph fixture to a SymbolMap (same bridge the real code uses). */
-function toSymbolMap(graph: CallGraph): SymbolMap {
-    return BaseAdapter.callGraphToSymbolMap(graph, SupportedLanguage.Solidity);
+/** Build a minimal SymbolMap from a compact adjacency list. */
+function buildSymbolMap(
+    adjacency: Record<string, string[]>,
+    opts?: { visibility?: string },
+): SymbolMap {
+    const vis = (opts?.visibility ?? 'private') as SymbolEntry['visibility'];
+    const map: SymbolMap = new Map();
+    for (const [id, callees] of Object.entries(adjacency)) {
+        map.set(id, {
+            qualifiedName: id,
+            kind: 'function',
+            label: id,
+            file: 'f',
+            line: 0,
+            language: SupportedLanguage.Solidity,
+            writesState: [],
+            readsState: [],
+            callsExternal: false,
+            callees: callees.map(c => ({ qualifiedName: c, targetKind: 'internal' as const })),
+            isPublic: false,
+            hasAccessControl: false,
+            modifiers: [],
+            resolvedBy: 'static',
+            confidence: 'high',
+            visibility: vis,
+        });
+    }
+    return map;
 }
 
 describe("call_chains tool", () => {
@@ -23,42 +46,21 @@ describe("call_chains tool", () => {
     }
 
     it("should group chains by root node", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "A", label: "A", visibility: "private", file: "f" },
-                { id: "B", label: "B", visibility: "private", file: "f" },
-                { id: "C", label: "C", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "A", to: "B", kind: "internal" },
-                { from: "B", to: "C", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ A: ["B"], B: ["C"], C: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
 
         expect(out.call_chains).toHaveProperty("A");
         expect(out.call_chains["A"]).toContain("A -> B -> C");
-        // B and C have incoming edges — not roots
         expect(out.call_chains).not.toHaveProperty("B");
         expect(out.call_chains).not.toHaveProperty("C");
     });
 
     it("should produce separate groups for multiple roots", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "main",  label: "main",  visibility: "private", file: "f" },
-                { id: "cronJob", label: "cronJob", visibility: "private", file: "f" },
-                { id: "process", label: "process", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "main",    to: "process", kind: "internal" },
-                { from: "cronJob", to: "process", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ main: ["process"], cronJob: ["process"], process: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -70,18 +72,8 @@ describe("call_chains tool", () => {
     });
 
     it("should report hotspots for functions appearing in many chains", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "A", label: "A", visibility: "private", file: "f" },
-                { id: "B", label: "B", visibility: "private", file: "f" },
-                { id: "shared", label: "shared", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "A", to: "shared", kind: "internal" },
-                { from: "B", to: "shared", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ A: ["shared"], B: ["shared"], shared: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -91,14 +83,8 @@ describe("call_chains tool", () => {
     });
 
     it("should not list root nodes themselves in hotspots", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "root", label: "root", visibility: "private", file: "f" },
-                { id: "leaf", label: "leaf", visibility: "private", file: "f" },
-            ],
-            edges: [{ from: "root", to: "leaf", kind: "internal" }]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ root: ["leaf"], leaf: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -107,18 +93,8 @@ describe("call_chains tool", () => {
     });
 
     it("should handle branching by producing one chain per branch", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "A", label: "A", visibility: "private", file: "f" },
-                { id: "B", label: "B", visibility: "private", file: "f" },
-                { id: "C", label: "C", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "A", to: "B", kind: "internal" },
-                { from: "A", to: "C", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ A: ["B", "C"], B: [], C: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -129,19 +105,8 @@ describe("call_chains tool", () => {
     });
 
     it("should handle cycles gracefully", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "R", label: "R", visibility: "private", file: "f" },
-                { id: "A", label: "A", visibility: "private", file: "f" },
-                { id: "B", label: "B", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "R", to: "A", kind: "internal" },
-                { from: "A", to: "B", kind: "internal" },
-                { from: "B", to: "A", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ R: ["A"], A: ["B"], B: ["A"] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -150,16 +115,12 @@ describe("call_chains tool", () => {
     });
 
     it("should respect max depth limit", async () => {
-        const nodes: GraphNode[] = [];
-        const edges: GraphEdge[] = [];
+        const adj: Record<string, string[]> = {};
         const CHAIN_LEN = 15;
         for (let i = 0; i < CHAIN_LEN; i++) {
-            nodes.push({ id: `N${i}`, label: `N${i}`, visibility: "private", file: "f" });
-            if (i < CHAIN_LEN - 1) {
-                edges.push({ from: `N${i}`, to: `N${i + 1}`, kind: "internal" });
-            }
+            adj[`N${i}`] = i < CHAIN_LEN - 1 ? [`N${i + 1}`] : [];
         }
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap({ nodes, edges }));
+        (mockEngine.processSymbolMap as any).mockResolvedValue(buildSymbolMap(adj));
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);
@@ -168,20 +129,8 @@ describe("call_chains tool", () => {
     });
 
     it("should sort chains longest-first within each root group", async () => {
-        const graph: CallGraph = {
-            nodes: [
-                { id: "A", label: "A", visibility: "private", file: "f" },
-                { id: "B", label: "B", visibility: "private", file: "f" },
-                { id: "C", label: "C", visibility: "private", file: "f" },
-                { id: "D", label: "D", visibility: "private", file: "f" },
-            ],
-            edges: [
-                { from: "A", to: "B", kind: "internal" },
-                { from: "A", to: "C", kind: "internal" },
-                { from: "C", to: "D", kind: "internal" }
-            ]
-        };
-        (mockEngine.processSymbolMap as any).mockResolvedValue(toSymbolMap(graph));
+        const sm = buildSymbolMap({ A: ["B", "C"], B: [], C: ["D"], D: [] });
+        (mockEngine.processSymbolMap as any).mockResolvedValue(sm);
 
         const result = await handler({ paths: ["foo"] });
         const out = decoded(result);

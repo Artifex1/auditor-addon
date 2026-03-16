@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { encode } from "@toon-format/toon";
 import {
-    Severity, RuleFinding, FindingInstance, PathRule, NarrowRule,
+    Severity, FindingKind, RuleFinding, FindingInstance, Rule, MapRule,
     SupportedLanguage, RuleContext, EffectiveLanguageMeta
 } from "../../engine/types.js";
 import { readScanState, writeScanState, recordToSymbolMap } from "../../static/persistence.js";
 import { loadShippedRules, loadCustomRules, ruleApplies, AnyRule, LoadedRule } from "../../static/rule-loader.js";
-import { walkPath, initialPhaseState, deduplicateInstances } from "../../static/walker.js";
+import { walkShallow, walkDeep, deduplicateInstances } from "../../static/walker.js";
 import { TreeSitterService } from "../../util/treeSitter.js";
 import type { Tree, Node, Parser } from "web-tree-sitter";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -19,15 +19,17 @@ export const sastRunRulesSchema = {
         customRulePaths: z.array(z.string()).optional().describe("Absolute paths to custom .ts rule files"),
         includeSeverity: z.array(z.enum(['critical', 'high', 'medium', 'low', 'info'])).optional()
             .describe("Severity filter; omit to run all"),
+        includeKind: z.array(z.enum(['issue', 'smell', 'pointer'])).optional()
+            .describe("Finding kind filter; omit to run all"),
     },
 };
 
-function isPathRule(rule: AnyRule): rule is PathRule {
-    return typeof rule === 'object' && rule !== null && 'phases' in rule;
+function isRule(rule: AnyRule): rule is Rule {
+    return 'finalize' in rule && typeof (rule as any).finalize === 'function';
 }
 
-function isNarrowRule(rule: AnyRule): rule is NarrowRule {
-    return typeof rule === 'object' && rule !== null && 'check' in rule && typeof (rule as any).check === 'function';
+function isMapRule(rule: AnyRule): rule is MapRule {
+    return 'check' in rule && typeof (rule as any).check === 'function' && !('finalize' in rule);
 }
 
 export function createSastRunRulesHandler(shippedRuleDir?: string) {
@@ -36,6 +38,7 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
         ruleIds?: string[];
         customRulePaths?: string[];
         includeSeverity?: Severity[];
+        includeKind?: FindingKind[];
     }): Promise<CallToolResult> => {
         try {
             const state = await readScanState(input.scanId);
@@ -62,18 +65,21 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
             // Filter by ruleIds if specified
             let applicableRules = allRules;
             if (input.ruleIds?.length) {
-                applicableRules = allRules.filter(lr => {
-                    const id = isPathRule(lr.rule) ? lr.rule.id : (lr.rule as NarrowRule).id;
-                    return input.ruleIds!.includes(id);
-                });
+                applicableRules = allRules.filter(lr => input.ruleIds!.includes(lr.rule.id));
             }
 
             // Filter by severity
             if (input.includeSeverity?.length) {
-                applicableRules = applicableRules.filter(lr => {
-                    const sev = isPathRule(lr.rule) ? lr.rule.severity : (lr.rule as NarrowRule).severity;
-                    return input.includeSeverity!.includes(sev);
-                });
+                applicableRules = applicableRules.filter(lr =>
+                    input.includeSeverity!.includes(lr.rule.severity)
+                );
+            }
+
+            // Filter by kind
+            if (input.includeKind?.length) {
+                applicableRules = applicableRules.filter(lr =>
+                    input.includeKind!.includes(lr.rule.kind)
+                );
             }
 
             // Build sourceFiles map from persisted state
@@ -88,7 +94,7 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
 
             // Collect findings grouped by ruleId
             const findingsByRule = new Map<string, {
-                rule: PathRule | NarrowRule;
+                rule: AnyRule;
                 source: 'shipped' | 'custom';
                 instances: FindingInstance[];
             }>();
@@ -132,28 +138,49 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
                 };
 
                 for (const { rule, source } of applicableRules) {
-                    if (isPathRule(rule)) {
-                        if (!ruleApplies(rule.appliesTo, meta, lang as SupportedLanguage)) continue;
+                    if (!ruleApplies(rule.appliesTo, meta, lang as SupportedLanguage)) continue;
+
+                    if (isRule(rule)) {
                         rulesRun++;
-
-                        // Run PathRule from every function in the symbolMap for this language
                         const instances: FindingInstance[] = [];
-                        for (const [_qn, entry] of symbolMap) {
-                            if (entry.language !== lang) continue;
-                            if (!entry.range) continue;
 
-                            try {
-                                const tree = await getTree(entry.file);
-                                const funcNode = findNodeAt(tree.rootNode, entry.range.start.line - 1, entry.range.start.column);
-                                if (!funcNode) continue;
+                        if (rule.deep) {
+                            // Deep rule: start from every function in the symbolMap
+                            for (const [_qn, entry] of symbolMap) {
+                                if (entry.language !== lang) continue;
+                                if (!entry.range) continue;
 
-                                ctx.currentFile = entry.file;
-                                const visited = new Set<string>();
-                                visited.add(entry.qualifiedName);
-                                const result = await walkPath(funcNode, rule, initialPhaseState(), ctx, visited, 0);
-                                if (result.finding) instances.push(result.finding);
-                            } catch {
-                                // Skip functions we can't parse
+                                try {
+                                    const tree = await getTree(entry.file);
+                                    const funcNode = findNodeAt(tree.rootNode, entry.range.start.line - 1, entry.range.start.column);
+                                    if (!funcNode) continue;
+
+                                    ctx.currentFile = entry.file;
+                                    rule.reset();
+                                    const visited = new Set<string>();
+                                    visited.add(entry.qualifiedName);
+                                    await walkDeep(funcNode, rule, ctx, visited, 0, rule.deep.maxDepth);
+                                    instances.push(...rule.finalize(ctx));
+                                } catch {
+                                    // Skip functions we can't parse
+                                }
+                            }
+                        } else {
+                            // Shallow rule: walk all nodes in all files for this language
+                            const langFiles = [...sourceFiles.entries()].filter(([path]) => {
+                                return [...symbolMap.values()].some(e => e.file === path && e.language === lang);
+                            });
+
+                            for (const [file] of langFiles) {
+                                try {
+                                    const tree = await getTree(file);
+                                    ctx.currentFile = file;
+                                    rule.reset();
+                                    walkShallow(tree.rootNode, rule, ctx);
+                                    instances.push(...rule.finalize(ctx));
+                                } catch {
+                                    // Skip unparseable files
+                                }
                             }
                         }
 
@@ -165,37 +192,16 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
                                 findingsByRule.set(rule.id, { rule, source, instances });
                             }
                         }
-                    } else if (isNarrowRule(rule)) {
-                        const narrowRule = rule as NarrowRule;
-                        if (!ruleApplies(narrowRule.appliesTo, meta, lang as SupportedLanguage)) continue;
+                    } else if (isMapRule(rule)) {
                         rulesRun++;
-
-                        // NarrowRule: walk all nodes in all files for this language
-                        const instances: FindingInstance[] = [];
-                        const langFiles = [...sourceFiles.entries()].filter(([path]) => {
-                            // Match files that belong to entries of this language
-                            return [...symbolMap.values()].some(e => e.file === path && e.language === lang);
-                        });
-
-                        for (const [file] of langFiles) {
-                            try {
-                                const tree = await getTree(file);
-                                ctx.currentFile = file;
-                                walkAllNodes(tree.rootNode, (node) => {
-                                    const inst = narrowRule.check(ctx, node);
-                                    if (inst) instances.push(inst);
-                                });
-                            } catch {
-                                // Skip unparseable files
-                            }
-                        }
+                        const instances = rule.check(symbolMap, ctx);
 
                         if (instances.length > 0) {
-                            const existing = findingsByRule.get(narrowRule.id);
+                            const existing = findingsByRule.get(rule.id);
                             if (existing) {
                                 existing.instances.push(...instances);
                             } else {
-                                findingsByRule.set(narrowRule.id, { rule: narrowRule, source, instances });
+                                findingsByRule.set(rule.id, { rule, source, instances });
                             }
                         }
                     }
@@ -208,19 +214,20 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
                 const deduped = deduplicateInstances(instances);
                 if (deduped.length === 0) continue;
 
-                const r = isPathRule(rule) ? rule : rule as NarrowRule;
                 findings.push({
                     ruleId,
                     ruleSource: source,
-                    severity: r.severity,
-                    title: r.title,
-                    confidence: 'high',
+                    severity: rule.severity,
+                    kind: rule.kind,
+                    title: rule.title,
+                    description: rule.description,
+                    confidence: rule.kind === 'pointer' ? 'low' : 'high',
                     resolvedBy: 'static',
                     instances: deduped,
                 });
             }
 
-            // Merge findings into state
+            // Merge full findings into state (with snippets for bookkeeping)
             state.findings = [...state.findings, ...findings];
             state.status = 'complete';
             state.updatedAt = new Date().toISOString();
@@ -229,18 +236,33 @@ export function createSastRunRulesHandler(shippedRuleDir?: string) {
             const bySeverity: Record<Severity, number> = {
                 critical: 0, high: 0, medium: 0, low: 0, info: 0,
             };
+            const byKind: Record<FindingKind, number> = {
+                issue: 0, smell: 0, pointer: 0,
+            };
             for (const f of findings) {
                 bySeverity[f.severity]++;
+                byKind[f.kind]++;
             }
+
+            // Strip snippets from TOON output to keep context lean —
+            // the agent can Read the file at the location if needed.
+            const leanFindings = findings.map(f => ({
+                ...f,
+                instances: f.instances.map(({ location, executionPath }) => ({
+                    location,
+                    ...(executionPath?.length ? { executionPath } : {}),
+                })),
+            }));
 
             return {
                 content: [{
                     type: "text",
                     text: encode({
                         scanId: input.scanId,
-                        findings,
+                        findings: leanFindings,
                         summary: {
                             bySeverity,
+                            byKind,
                             rulesRun,
                         },
                     }),
@@ -268,11 +290,4 @@ function findNodeAt(root: Node, row: number, col: number): Node | null {
         if (found) return found;
     }
     return null;
-}
-
-function walkAllNodes(node: Node, callback: (n: Node) => void): void {
-    callback(node);
-    for (const child of node.children) {
-        walkAllNodes(child, callback);
-    }
 }

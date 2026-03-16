@@ -1,4 +1,4 @@
-import { SupportedLanguage, FileContent, CallGraph, FileMetrics, DiffFileMetrics, LanguageAdapter, SymbolMap } from "./types.js";
+import { SupportedLanguage, FileContent, FileMetrics, DiffFileMetrics, LanguageAdapter, SymbolMap } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import { getGitDiff, getChangedLineNumbers, getFileStatus, getFileAtRef } from "./gitDiff.js";
 import { BaseAdapter } from "../languages/baseAdapter.js";
@@ -118,28 +118,6 @@ export class Engine {
             }
         }
         return allMetrics;
-    }
-
-    async processCallGraph(patterns: string[]): Promise<CallGraph> {
-        const filePaths = await resolveFiles(patterns);
-        const files = await readFiles(filePaths);
-        const filesByLanguage = this.groupFilesByLanguage(files);
-
-        const combinedGraph: CallGraph = { nodes: [], edges: [] };
-
-        for (const [lang, langFiles] of filesByLanguage.entries()) {
-            const adapter = this.getAdapter(lang);
-            if (adapter) {
-                try {
-                    const graph = await adapter.generateCallGraph(langFiles);
-                    combinedGraph.nodes.push(...graph.nodes);
-                    combinedGraph.edges.push(...graph.edges);
-                } catch (error) {
-                    console.error(`Failed to generate call graph for ${lang}:`, error);
-                }
-            }
-        }
-        return combinedGraph;
     }
 
     async processSymbolMap(patterns: string[]): Promise<SymbolMap> {

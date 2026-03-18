@@ -24,6 +24,8 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | 📊 **estimator** | Project scoping and effort estimation | Full scope (Discovery, Explore, Metrics, Report) or Diff scope (Discovery, Review, Report) |
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
+| 🔬 **sast-pipeline** | Run the SAiST static analysis pipeline | Init scan → Resolve gaps → Run rules (shipped + custom) |
+| ✏️ **rule-authoring** | Author SAiST detection rules | Shallow, deep, and MapRule types with testing patterns |
 
 ### How Skills Work
 
@@ -88,28 +90,31 @@ The signatures mode compares function signatures between base and head versions:
 
 Traces call chains from root functions (functions nothing else calls) through the full call graph, grouped by root and sorted longest-first. The **security-auditor** skill uses this to understand how execution flows through a system and to identify attack surfaces. A hotspot summary highlights functions appearing across the most chains, giving an immediate prioritization signal for where to focus the audit.
 
+### 🔬 SAiST — Static AI-assisted Security Testing
+
+SAiST is a three-phase static analysis pipeline: **init** → **resolve gaps** → **run rules**.
+
+#### `sast_init_scan`
+
+Initializes a scan by building a symbol map (functions, state variables, call edges, modifiers, state reads/writes), computing hotspots, and detecting gaps — callees the static pass cannot resolve (unresolved targets, interface dispatch, external libraries). Returns a `scanId` for subsequent phases.
+
+#### `sast_resolve_gaps`
+
+Resolves gaps identified during init by providing facts the static pass could not determine (e.g., `writesState`, `callsExternal`). Gaps are prioritized by hotspot proximity (high/medium/low). Skip if no gaps or all low priority.
+
+#### `sast_run_rules`
+
+Runs shipped and custom rules against the enriched symbol map. Supports filtering by `ruleIds`, `includeSeverity` (critical/high/medium/low/info), and `includeKind` (issue/smell/pointer). Findings include rule metadata, location, and optional execution paths for deep rules.
+
+#### `rules_info`
+
+Lists all available SAiST rules with their metadata (id, title, description, severity, kind, languages). Supports filtering by `languages`, `severity`, and `kind`. Use to discover the rule catalog before running scans or to interpret finding IDs in results.
+
 ### 🌐 Supported Languages
 
 <div align="center">
 
-| Language | Peek | Call Chains | Metrics |
-|:--------:|:-----------:|:-----------:|:-------:|
-| 🔷 **Solidity** | ✅ | ✅ | ✅ |
-| 🦀 **Rust** | ✅ | ✅ | ✅ |
-| 🐹 **Go** | ✅ | ✅ | ✅ |
-| 🐍 **Python** | ✅ | ✅ | ✅ |
-| 🐪 **Cairo** | ✅ | ✅ | ✅ |
-| 📦 **Compact** | ✅ | ✅ | ✅ |
-| 💧 **Move** | ✅ | ✅ | ✅ |
-| 🌑 **Noir** | ✅ | ✅ | ✅ |
-| 🧩 **Tolk** | ✅ | ✅ | ✅ |
-| ⚙️ **Masm** | ✅ | ✅ | ✅ |
-| ⚡ **C++** | ✅ | ✅ | ✅ |
-| ☕ **Java** | ✅ | ✅ | ✅ |
-| 🟨 **JavaScript** | ✅ | ✅ | ✅ |
-| 🔷 **TypeScript** | ✅ | ✅ | ✅ |
-| 🧩 **TSX** | ✅ | ✅ | ✅ |
-| 🌀 **Flow** | ✅ | ✅ | ✅ |
+Solidity · Rust · Go · Python · Cairo · Compact · Move · Noir · Tolk · Masm · C++ · Java · JavaScript · TypeScript · TSX · Flow
 
 </div>
 
@@ -132,9 +137,6 @@ claude
 
 ### Via Gemini CLI Extension
 
-> [!NOTE]
-> This extension uses Skills. Please ensure the **Skills Preview** feature is enabled in your Gemini CLI settings. Confirm by typing `/skills list` in the CLI.
-
 ```bash
 # Install the MCP server
 gemini extensions install <this repository URL>
@@ -142,6 +144,47 @@ gemini extensions install <this repository URL>
 # Verify installation
 gemini extensions list
 ```
+
+### Other AI Coding Environments (Cursor, Codex, Windsurf, etc.)
+
+#### Skills Only
+
+Skills can be installed standalone using the [skills CLI](https://skills.sh/). This gives you the workflow prompts (security-auditor, estimator, threat-modeling, etc.) without the MCP tools.
+
+```bash
+npx skills add Artifex1/auditor-addon
+```
+
+> [!NOTE]
+> Some skills are designed to work with the MCP tools. Without the tools, these skills will not be fully functional.
+
+#### Skills + MCP Tools
+
+For the full experience (skills + tools like `peek`, `metrics`, `call_chains`, SAiST), run the MCP server locally and register it with your environment:
+
+```bash
+# 1. Clone the repository
+git clone <repository-url>
+cd auditor-addon
+
+# 2. Start the MCP server (pre-built, no install needed)
+node dist/mcp/server.js
+```
+
+Then add the server to your environment's MCP configuration. For example, in Cursor's `.cursor/mcp.json` or a generic `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "auditor-addon": {
+      "command": "node",
+      "args": ["/absolute/path/to/auditor-addon/dist/mcp/server.js"]
+    }
+  }
+}
+```
+
+**Optional:** Place the context file (`CLAUDE.md` or `GEMINI.md`) in your project root or follow your environment's instructions for loading system prompts — this gives the AI the tools reference and usage guidance.
 
 ### Local Development Setup
 

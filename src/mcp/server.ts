@@ -22,12 +22,8 @@ import { createDiffHandler, diffSchema } from "./tools/diff.js";
 import { createSastInitScanHandler, sastInitScanSchema } from "./tools/sastInitScan.js";
 import { createSastResolveGapsHandler, sastResolveGapsSchema } from "./tools/sastResolveGaps.js";
 import { createSastRunRulesHandler, sastRunRulesSchema } from "./tools/sastRunRules.js";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const SHIPPED_RULES_DIR = path.join(__dirname, '..', 'static', 'rules');
+import { createRulesInfoHandler, rulesInfoSchema } from "./tools/rulesInfo.js";
+import { shippedRules } from "../static/rules/index.js";
 
 // Create and configure engine
 const engine = new Engine();
@@ -99,7 +95,13 @@ server.registerTool(
 server.registerTool(
     "sast_run_rules",
     sastRunRulesSchema,
-    createSastRunRulesHandler(SHIPPED_RULES_DIR)
+    createSastRunRulesHandler(shippedRules, engine)
+);
+
+server.registerTool(
+    "rules_info",
+    rulesInfoSchema,
+    createRulesInfoHandler(shippedRules)
 );
 
 async function main() {

@@ -8,8 +8,8 @@ argument-hint: "<rule idea or vulnerability pattern>"
 
 Rules live in two places:
 
-- **Shipped rules** (`src/static/rules/`): part of auditor-addon, run for every scan. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`.
-- **Custom rules** (any `.ts` file): per-engagement rules in the audit workspace. IDs **must** use the `CUSTOM-` prefix. Loaded via `customRulePaths` on `sast_run_rules`.
+- **Shipped rules** (`src/static/rules/`): part of auditor-addon, bundled into the server at build time. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`. Adding a new shipped rule requires two files: the rule itself and an import in `src/static/rules/index.ts`.
+- **Custom rules** (any `.ts` or `.js` file): per-engagement rules in the audit workspace. IDs **must** use the `CUSTOM-` prefix. Loaded at runtime via `customRulePaths` on `sast_run_rules`. TypeScript files are compiled on-the-fly by tsx — no build step needed.
 
 Both use the same interfaces. Each rule is a single `.ts` file that default-exports a `Rule` or `MapRule` object.
 
@@ -94,24 +94,6 @@ Rules are language-agnostic through `ctx.trait` — the `LanguageAdapter` for th
 
 **When to use traits vs direct node types:** Use traits for concepts that exist across languages (function def, state write, external call). Use direct `node.type` checks for language-specific syntax (`modifier_definition`, `pragma_directive`).
 
-## Solidity AST Gotchas
-
-The Solidity tree-sitter grammar wraps sub-expressions in `expression` nodes. Key patterns:
-
-- `childForFieldName('left')` returns `expression`, not the inner node — unwrap with helper
-- `call_expression` arguments are `call_argument` children, not an `arguments` field
-- `if_statement` condition: `childForFieldName('condition')` returns `expression` wrapper
-- `receive()` is `fallback_receive_definition`, not `function_definition` (but `isFunctionDef` handles it)
-- Assignments inside `statement > expression_statement > expression > assignment_expression`
-
-```typescript
-function unwrapExpression(node: Node): Node {
-    if (node.type === 'expression' && node.childCount === 1)
-        return unwrapExpression(node.child(0)!);
-    return node;
-}
-```
-
 ## Language Scoping
 
 ### Naming Convention
@@ -122,6 +104,7 @@ function unwrapExpression(node: Node): Node {
 
 ### `appliesTo` — always explicit
 
+**Shipped rules** use the `SupportedLanguage` enum (available via the relative import `../../engine/types.js`):
 ```typescript
 appliesTo: {
     languages: [SupportedLanguage.Solidity, SupportedLanguage.Cairo],
@@ -130,7 +113,17 @@ appliesTo: {
 }
 ```
 
+**Custom rules** use string literals instead — no runtime import of `SupportedLanguage` needed:
+```typescript
+appliesTo: {
+    languages: ['solidity', 'cairo'] as any,
+    domains: ['on-chain'],
+}
+```
+
 Never use empty `appliesTo: {}` — that matches everything. List supported languages explicitly. Only include languages whose grammar you have verified.
+
+> For Solidity-specific node types, field names, and expression-unwrapping patterns, see [references/solidity-ast.md](references/solidity-ast.md).
 
 ## Finding Kinds
 
@@ -159,7 +152,8 @@ Custom rules let auditors codify a pattern found during an audit and immediately
 
 ```typescript
 // ./rules/CUSTOM-001-unbounded-loop.ts
-import type { Rule, FindingInstance, RuleContext } from "auditor-addon/engine/types";
+// These imports are optional — only needed for IDE type hints, erased at runtime by tsx
+import type { Rule, FindingInstance, RuleContext } from "auditor-addon";
 import type { Node } from "web-tree-sitter";
 
 function createRule(): Rule {
@@ -170,7 +164,7 @@ function createRule(): Rule {
         title: 'Unbounded loop over user-controlled array',
         description: 'A for-loop iterates over a storage array with no upper bound. An attacker can grow the array to cause out-of-gas reverts.',
         kind: 'smell',
-        appliesTo: { languages: [/* ... */] },
+        appliesTo: { languages: ['solidity'] as any },  // string literal, not SupportedLanguage enum
         enter(node: Node, ctx: RuleContext) { /* ... */ },
         finalize() { return findings; },
         reset() { findings = []; },
@@ -188,45 +182,21 @@ sast_run_rules({
 })
 ```
 
-Custom rules run alongside shipped rules. Use `ruleIds` filter to run only custom rules if needed.
+Both `.ts` and `.js` paths are accepted. Custom rules run alongside shipped rules. Use `ruleIds` filter to isolate custom rules if needed.
+
+### Adding a Shipped Rule
+
+When promoting a custom rule to a shipped rule:
+1. Move the file to `src/static/rules/` with a standard ID (`SOL-`, `GEN-`, `MAP-`)
+2. Add an import to `src/static/rules/index.ts` and append it to the `shippedRules` array
+3. Add tests in `tests/languages/<lang>/rules/<RULE-ID>.test.ts`
 
 ## Testing
 
 One test file per rule: `tests/languages/<lang>/rules/<RULE-ID>.test.ts`
 
-```typescript
-import { describe, it, expect } from 'vitest';
-import { buildContext, runRule } from './helpers.js';      // shallow/deep
-import { buildContext, runMapRule } from './helpers.js';    // MapRule
-import rule from '../../../../src/static/rules/SOL-NNN-name.js';
+Helpers in `tests/languages/<lang>/rules/helpers.ts`: `buildContext(sources)` → `{ ctx, symbolMap }`, `runRule(ctx, file, rule)`, `runMapRule(ctx, symbolMap, rule)`, `runDeepRuleOnFunction(ctx, symbolMap, funcLabel, rule)`.
 
-describe('SOL-NNN: Rule title', () => {
-    it('flags the pattern', async () => {
-        const { ctx } = await buildContext({
-            '/test.sol': `
-contract Foo {
-    // ... code that triggers the rule
-}`,
-        });
-        const findings = await runRule(ctx, '/test.sol', rule);
-        expect(findings).toHaveLength(1);
-    });
-
-    it('does not flag the safe variant', async () => {
-        const { ctx } = await buildContext({
-            '/test.sol': `
-contract Foo {
-    // ... code that should NOT trigger the rule
-}`,
-        });
-        const findings = await runRule(ctx, '/test.sol', rule);
-        expect(findings).toHaveLength(0);
-    });
-});
-```
-
-**Helpers:** `buildContext(sources)` → `{ ctx, symbolMap }`, `runRule(ctx, file, rule)`, `runMapRule(ctx, symbolMap, rule)`, `runDeepRuleOnFunction(ctx, symbolMap, funcLabel, rule)`.
-
-Multi-language rules: add a test file in each affected language's `tests/languages/<lang>/rules/` folder.
+Each rule needs a positive case (flags the pattern) and a negative case (safe variant). Multi-language rules: one test file per affected language.
 
 Run: `npx vitest run tests/languages/<lang>/rules/<RULE-ID>`

@@ -1,4 +1,3 @@
-import fs from "fs/promises";
 import path from "path";
 import {
     Rule, MapRule, RuleApplicability,
@@ -29,42 +28,9 @@ function isMapRule(rule: unknown): rule is MapRule {
 }
 
 /**
- * Loads shipped rules from a directory via dynamic import.
- * Each .ts file should default-export a Rule or MapRule.
- */
-export async function loadShippedRules(ruleDir: string): Promise<LoadResult> {
-    const rules: LoadedRule[] = [];
-    const failed: string[] = [];
-
-    let entries: string[];
-    try {
-        entries = await fs.readdir(ruleDir);
-    } catch {
-        return { rules, failed };
-    }
-
-    for (const entry of entries) {
-        if (!entry.endsWith('.ts') && !entry.endsWith('.js')) continue;
-        const fullPath = path.resolve(ruleDir, entry);
-        try {
-            const mod = await import(fullPath);
-            const exported = mod.default ?? mod;
-            if (isRule(exported) || isMapRule(exported)) {
-                rules.push({ rule: exported, source: 'shipped' });
-            } else {
-                failed.push(fullPath);
-            }
-        } catch {
-            failed.push(fullPath);
-        }
-    }
-
-    return { rules, failed };
-}
-
-/**
  * Loads custom rules from explicit file paths.
- * Validates that rule IDs use the 'CUSTOM-' prefix.
+ * Accepts .ts files (compiled via tsx at runtime) and .js files.
+ * Rule IDs must use the 'CUSTOM-' prefix.
  */
 export async function loadCustomRules(paths: string[]): Promise<LoadResult> {
     const rules: LoadedRule[] = [];
@@ -73,7 +39,14 @@ export async function loadCustomRules(paths: string[]): Promise<LoadResult> {
     for (const rulePath of paths) {
         const fullPath = path.resolve(rulePath);
         try {
-            const mod = await import(fullPath);
+            let mod: any;
+            if (fullPath.endsWith('.ts')) {
+                const { tsImport } = await import('tsx/esm/api');
+                mod = await tsImport(fullPath, import.meta.url);
+            } else {
+                mod = await import(fullPath);
+            }
+
             const exported = mod.default ?? mod;
 
             if (isRule(exported) || isMapRule(exported)) {

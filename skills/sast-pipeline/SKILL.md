@@ -64,8 +64,6 @@ sast_run_rules({
 
 **Filters:** `ruleIds` (specific IDs), `includeSeverity`, `includeKind` (`issue`, `smell`, `pointer`).
 
-**Output per finding:** `ruleId`, `severity`, `kind`, `title`, `description`, `confidence`, instances with `location: { file, line, col }` and optional `executionPath`. Summary has `bySeverity` and `byKind` counts.
-
 ## Finding Kinds
 
 | Kind | Confidence | Meaning |
@@ -87,7 +85,7 @@ sast_run_rules({
 })
 ```
 
-Custom rule IDs **must** use the `CUSTOM-` prefix. Use the rule-authoring skill to create them.
+Both `.ts` and `.js` paths are accepted. TypeScript files are compiled on-the-fly by tsx — no build step needed. Custom rule IDs **must** use the `CUSTOM-` prefix. Use the rule-authoring skill to create them.
 
 **Flywheel:** Find an issue → recognize it's a pattern → write a custom rule → test it flags the known instance → run it against the full codebase to find more.
 

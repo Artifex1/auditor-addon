@@ -1,4 +1,4 @@
-import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility } from "../engine/types.js";
+import { FileContent, SupportedLanguage, GraphNode, GraphEdge, Visibility, FileMetrics, DiffFileMetrics } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
 import { Query, Node } from "web-tree-sitter";
@@ -8,7 +8,23 @@ export class MoveAdapter extends BaseAdapter {
     private static readonly QUERIES = {
         MODULES: `(module) @module`,
         FUNCTIONS: `(function_decl) @function`,
-        CALLS: `(call_expr) @call`
+        CALLS: `(call_expr) @call`,
+        TEST_ATTR: `
+            (attributes
+                (attribute
+                    (identifier) @attr-name
+                    (#eq? @attr-name "test")
+                )
+            ) @test-attrs
+        `,
+        TEST_ONLY_ATTR: `
+            (attributes
+                (attribute
+                    (identifier) @attr-name
+                    (#eq? @attr-name "test_only")
+                )
+            ) @test-only-attrs
+        `
     } as const;
 
     private symbolsByModule: Map<string, GraphNode[]> = new Map();
@@ -227,6 +243,153 @@ export class MoveAdapter extends BaseAdapter {
         if (free) return free;
 
         return this.symbolsByLabel.get(funcName)?.[0];
+    }
+
+    /**
+     * Strips test code from Move source content.
+     * Removes: #[test_only] modules, #[test_only] declarations,
+     * and #[test] function declarations.
+     */
+    async stripTestCode(content: string): Promise<string> {
+        const service = TreeSitterService.getInstance();
+        const lang = await service.getLanguage(SupportedLanguage.Move);
+        const parser = await service.createParser(SupportedLanguage.Move);
+
+        const tree = parser.parse(content);
+        if (!tree) return content;
+
+        const rangesToRemove: Array<{ start: number; end: number }> = [];
+
+        // Build sets of matching attributes nodes
+        const testAttrQuery = new Query(lang, MoveAdapter.QUERIES.TEST_ATTR);
+        const testAttrs = new Set(
+            testAttrQuery.matches(tree.rootNode)
+                .map(m => m.captures.find(c => c.name === 'test-attrs')!.node.id)
+        );
+
+        const testOnlyAttrQuery = new Query(lang, MoveAdapter.QUERIES.TEST_ONLY_ATTR);
+        const testOnlyAttrs = new Set(
+            testOnlyAttrQuery.matches(tree.rootNode)
+                .map(m => m.captures.find(c => c.name === 'test-only-attrs')!.node.id)
+        );
+
+        // 1. Find #[test_only] modules (attributes is a sibling preceding the module)
+        for (const child of tree.rootNode.children) {
+            if (child.type === 'module') {
+                const prev = child.previousNamedSibling;
+                if (prev && prev.type === 'attributes' && testOnlyAttrs.has(prev.id)) {
+                    rangesToRemove.push({
+                        start: prev.startIndex,
+                        end: child.endIndex
+                    });
+                }
+            }
+        }
+
+        // 2. Find #[test] and #[test_only] declarations inside modules
+        const moduleQuery = new Query(lang, '(module) @module');
+        const moduleCaptures = moduleQuery.captures(tree.rootNode);
+
+        for (const capture of moduleCaptures) {
+            const moduleNode = capture.node;
+            // Skip modules already being removed
+            const moduleRemoved = rangesToRemove.some(
+                r => moduleNode.startIndex >= r.start && moduleNode.endIndex <= r.end
+            );
+            if (moduleRemoved) continue;
+
+            for (const child of moduleNode.children) {
+                if (child.type !== 'declaration') continue;
+
+                const attrs = child.children.find(c => c.type === 'attributes');
+                if (!attrs) continue;
+
+                if (testAttrs.has(attrs.id) || testOnlyAttrs.has(attrs.id)) {
+                    rangesToRemove.push({
+                        start: child.startIndex,
+                        end: child.endIndex
+                    });
+                }
+            }
+        }
+
+        if (rangesToRemove.length === 0) return content;
+
+        rangesToRemove.sort((a, b) => b.start - a.start);
+
+        let result = content;
+        for (const range of rangesToRemove) {
+            let end = range.end;
+            if (end < result.length && result[end] === '\n') end++;
+            result = result.substring(0, range.start) + result.substring(end);
+        }
+
+        return result;
+    }
+
+    override async calculateMetrics(files: FileContent[]): Promise<FileMetrics[]> {
+        const strippedFiles = await Promise.all(
+            files.map(async (file) => ({
+                path: file.path,
+                content: await this.stripTestCode(file.content)
+            }))
+        );
+        return super.calculateMetrics(strippedFiles);
+    }
+
+    override async calculateDiffMetrics(
+        file: FileContent,
+        addedLines: number[],
+        removedLines: number[],
+        status: 'added' | 'modified' | 'deleted'
+    ): Promise<DiffFileMetrics> {
+        if (status === 'deleted') {
+            return super.calculateDiffMetrics(file, addedLines, removedLines, status);
+        }
+
+        const strippedContent = await this.stripTestCode(file.content);
+        const originalLines = file.content.split('\n');
+        const strippedLines = strippedContent.split('\n');
+
+        const removedOriginalLines = new Set<number>();
+        let oi = 0, si = 0;
+        while (oi < originalLines.length && si < strippedLines.length) {
+            if (originalLines[oi] === strippedLines[si]) {
+                oi++;
+                si++;
+            } else {
+                removedOriginalLines.add(oi + 1);
+                oi++;
+            }
+        }
+        while (oi < originalLines.length) {
+            removedOriginalLines.add(oi + 1);
+            oi++;
+        }
+
+        const lineMapping = new Map<number, number>();
+        let strippedLineNum = 1;
+        for (let origLine = 1; origLine <= originalLines.length; origLine++) {
+            if (!removedOriginalLines.has(origLine)) {
+                lineMapping.set(origLine, strippedLineNum);
+                strippedLineNum++;
+            }
+        }
+
+        const filteredAddedLines: number[] = [];
+        for (const lineNum of addedLines) {
+            const mappedLine = lineMapping.get(lineNum);
+            if (mappedLine !== undefined) {
+                filteredAddedLines.push(mappedLine);
+            }
+        }
+
+        return super.calculateDiffMetrics(
+            { path: file.path, content: strippedContent },
+            filteredAddedLines,
+            removedLines,
+            status
+        );
     }
 
 }

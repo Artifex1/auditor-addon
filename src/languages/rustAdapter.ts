@@ -26,6 +26,35 @@ export class RustAdapter extends BaseAdapter {
         `,
         GENERIC_SCOPED_CALL: `
             (call_expression function: (generic_function function: (scoped_identifier) @FUNC))
+        `,
+        TEST_ATTR: `
+            (attribute_item
+                (attribute
+                    (identifier) @attr-name
+                    (#eq? @attr-name "test")
+                )
+            ) @test-attr
+
+            (attribute_item
+                (attribute
+                    (scoped_identifier
+                        name: (identifier) @scoped-name
+                        (#eq? @scoped-name "test")
+                    )
+                )
+            ) @test-attr
+        `,
+        CFG_TEST_ATTR: `
+            (attribute_item
+                (attribute
+                    (identifier) @outer
+                    arguments: (token_tree
+                        (identifier) @inner
+                    )
+                    (#eq? @outer "cfg")
+                    (#eq? @inner "test")
+                )
+            ) @cfg-test-attr
         `
     } as const;
 
@@ -362,12 +391,25 @@ export class RustAdapter extends BaseAdapter {
         // Collect byte ranges to remove (startIndex, endIndex)
         const rangesToRemove: Array<{ start: number; end: number }> = [];
 
+        // Build sets of attribute_item nodes matching #[cfg(test)] and #[test]
+        const cfgTestQuery = new Query(lang, RustAdapter.QUERIES.CFG_TEST_ATTR);
+        const cfgTestAttrs = new Set(
+            cfgTestQuery.matches(tree.rootNode)
+                .map(m => m.captures.find(c => c.name === 'cfg-test-attr')!.node.id)
+        );
+
+        const testAttrQuery = new Query(lang, RustAdapter.QUERIES.TEST_ATTR);
+        const testAttrs = new Set(
+            testAttrQuery.matches(tree.rootNode)
+                .map(m => m.captures.find(c => c.name === 'test-attr')!.node.id)
+        );
+
         // 1. Find #[cfg(test)] mod blocks
         const modQuery = new Query(lang, '(mod_item) @mod');
         const modCaptures = modQuery.captures(tree.rootNode);
 
         for (const capture of modCaptures) {
-            if (this.hasCfgTestAttribute(capture.node)) {
+            if (this.hasAttributeFromSet(capture.node, cfgTestAttrs)) {
                 const attrStart = this.getAttributeStart(capture.node);
                 rangesToRemove.push({
                     start: attrStart,
@@ -381,7 +423,7 @@ export class RustAdapter extends BaseAdapter {
         const fnCaptures = fnQuery.captures(tree.rootNode);
 
         for (const capture of fnCaptures) {
-            if (this.hasTestAttribute(capture.node)) {
+            if (this.hasAttributeFromSet(capture.node, testAttrs)) {
                 // Skip if already inside a range being removed
                 const alreadyCovered = rangesToRemove.some(
                     r => capture.node.startIndex >= r.start && capture.node.endIndex <= r.end
@@ -413,34 +455,19 @@ export class RustAdapter extends BaseAdapter {
         return result;
     }
 
-    private hasCfgTestAttribute(node: Node): boolean {
-        // Look for attribute_item siblings or children that contain cfg(test)
-        // In tree-sitter-rust, attributes are children of the item
+    /**
+     * Checks whether a node has an associated attribute_item (child or preceding sibling)
+     * whose node ID is in the provided set of matched attribute IDs.
+     */
+    private hasAttributeFromSet(node: Node, attrIds: Set<number>): boolean {
         for (const child of node.children) {
-            if (child.type === 'attribute_item') {
-                const text = child.text;
-                if (/^#\[cfg\(\s*test\s*\)\]$/.test(text)) return true;
-            }
-        }
-        // Also check previous siblings (outer attributes)
-        let prev = node.previousNamedSibling;
-        while (prev && prev.type === 'attribute_item') {
-            if (/^#\[cfg\(\s*test\s*\)\]$/.test(prev.text)) return true;
-            prev = prev.previousNamedSibling;
-        }
-        return false;
-    }
-
-    private hasTestAttribute(node: Node): boolean {
-        for (const child of node.children) {
-            if (child.type === 'attribute_item') {
-                const text = child.text;
-                if (/^#\[test\]$/.test(text)) return true;
+            if (child.type === 'attribute_item' && attrIds.has(child.id)) {
+                return true;
             }
         }
         let prev = node.previousNamedSibling;
         while (prev && prev.type === 'attribute_item') {
-            if (/^#\[test\]$/.test(prev.text)) return true;
+            if (attrIds.has(prev.id)) return true;
             prev = prev.previousNamedSibling;
         }
         return false;

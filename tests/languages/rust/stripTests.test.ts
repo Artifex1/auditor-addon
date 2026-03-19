@@ -86,6 +86,92 @@ fn main() {
             const stripped = await adapter.stripTestCode(content);
             expect(stripped).toBe(content);
         });
+
+        it('should strip #[tokio::test] functions (scoped test attribute)', async () => {
+            const content = `fn production() -> i32 { 42 }
+
+#[tokio::test]
+async fn async_test() {
+    assert_eq!(production(), 42);
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn production()');
+            expect(stripped).not.toContain('async_test');
+            expect(stripped).not.toContain('#[tokio::test]');
+        });
+
+        it('should strip scoped test attributes with arguments', async () => {
+            const content = `fn production() -> i32 { 42 }
+
+#[tokio1::test(crate = "tokio1")]
+async fn async_test() {
+    assert_eq!(production(), 42);
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn production()');
+            expect(stripped).not.toContain('async_test');
+            expect(stripped).not.toContain('tokio1::test');
+        });
+
+        it('should strip scoped test with non-test cfg attribute', async () => {
+            const content = `fn production() -> i32 { 42 }
+
+#[cfg(tokio_unstable)]
+#[tokio::test(flavor = "current_thread", unhandled_panic = "shutdown_runtime")]
+async fn async_test() {
+    assert_eq!(production(), 42);
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn production()');
+            expect(stripped).not.toContain('async_test');
+            expect(stripped).not.toContain('#[tokio::test');
+            expect(stripped).not.toContain('#[cfg(tokio_unstable)]');
+        });
+
+        it('should not strip functions with test-like names but no #[test] attribute', async () => {
+            const content = `fn test_helper() -> i32 { 1 }
+
+fn run_tests() {
+    test_helper();
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn test_helper()');
+            expect(stripped).toContain('fn run_tests()');
+        });
+
+        it('should strip #[test] functions with multiple attributes', async () => {
+            const content = `fn production() -> i32 { 42 }
+
+#[test]
+#[should_panic]
+fn test_panics() {
+    panic!("expected");
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn production()');
+            expect(stripped).not.toContain('test_panics');
+            expect(stripped).not.toContain('#[test]');
+            expect(stripped).not.toContain('#[should_panic]');
+        });
+
+        it('should handle #[cfg(test)] with extra whitespace in source', async () => {
+            const content = `fn production() -> i32 { 42 }
+
+#[cfg( test )]
+mod tests {
+    fn test_it() {}
+}
+`;
+            const stripped = await adapter.stripTestCode(content);
+            expect(stripped).toContain('fn production()');
+            expect(stripped).not.toContain('mod tests');
+            expect(stripped).not.toContain('test_it');
+        });
     });
 
     describe('calculateMetrics with test stripping', () => {

@@ -42,7 +42,7 @@ engine.registerAdapter(new PythonAdapter());
 // Create server instance
 const server = new McpServer({
     name: "auditor-addon",
-    version: "1.0.0",
+    version: "1.0.11",
 });
 
 server.registerTool(

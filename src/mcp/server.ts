@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Engine } from "../engine/index.js";
@@ -40,9 +41,10 @@ engine.registerAdapter(new FlowAdapter());
 engine.registerAdapter(new PythonAdapter());
 
 // Create server instance
+const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 const server = new McpServer({
     name: "auditor-addon",
-    version: "1.0.11",
+    version,
 });
 
 server.registerTool(

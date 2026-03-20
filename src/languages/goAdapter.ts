@@ -26,7 +26,12 @@ export class GoAdapter extends BaseAdapter {
     private static readonly BUILTIN_FUNCTIONS = new Set([
         'make', 'new', 'len', 'cap', 'append', 'copy', 'close', 'delete',
         'complex', 'real', 'imag', 'panic', 'recover', 'print', 'println',
-        'min', 'max', 'clear'
+        'min', 'max', 'clear',
+        // Type conversions / primitives
+        'string', 'int', 'int8', 'int16', 'int32', 'int64',
+        'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uintptr',
+        'float32', 'float64', 'complex64', 'complex128',
+        'byte', 'rune', 'bool', 'error',
     ]);
 
     constructor() {
@@ -193,11 +198,11 @@ export class GoAdapter extends BaseAdapter {
             if (capture.name !== 'FUNC') continue;
 
             const callName = capture.node.text;
-            if (GoAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
-
             const callee = this.resolveSimpleCall(callName);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callName, 'external_unknown'));
             }
         }
 
@@ -207,9 +212,13 @@ export class GoAdapter extends BaseAdapter {
             if (capture.name !== 'FUNC') continue;
 
             const methodName = capture.node.text;
+            const receiver = capture.node.parent?.childForFieldName('operand')?.text;
+            const fullName = receiver ? `${receiver}.${methodName}` : methodName;
             const callee = this.resolveSelectorCall(methodName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
             }
         }
     }
@@ -329,6 +338,32 @@ export class GoAdapter extends BaseAdapter {
 
         // 2. Any match
         return packageFuncs?.[0];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        'fmt', 'log', 'os', 'io', 'errors', 'strings', 'strconv', 'sync', 'context',
+        'time', 'net', 'math', 'sort', 'encoding', 'bytes', 'bufio', 'http', 'json',
+        'regexp', 'filepath', 'path', 'unicode', 'utf8', 'atomic', 'rand', 'flag',
+        'reflect', 'runtime', 'unsafe', 'testing', 'hex', 'base64', 'ioutil', 'exec',
+        'signal', 'url', 'crypto', 'tls', 'x509', 'sha256', 'sha512', 'md5', 'hmac',
+        // net/http subpackages
+        'httptest', 'httputil', 'cookiejar', 'httptrace',
+        // text/html/template
+        'template', 'html', 'tabwriter', 'csv', 'xml',
+        // common third-party used like stdlib
+        'render', 'chi', 'mux',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        const dot = name.indexOf('.');
+        if (dot !== -1) {
+            const pkg = name.slice(0, dot);
+            if (GoAdapter.STDLIB_PREFIXES.has(pkg)) return true;
+            // Single or 2-char lowercase identifiers are Go receiver variables (t, r, w, wg, etc.),
+            // not package names. Go package names are conventional full words.
+            if (pkg.length <= 2 && /^[a-z]+$/.test(pkg)) return true;
+        }
+        return GoAdapter.BUILTIN_FUNCTIONS.has(name);
     }
 
     private resolveSelectorCall(methodName: string, caller: SymbolEntry): SymbolEntry | undefined {

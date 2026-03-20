@@ -228,6 +228,8 @@ export class CairoAdapter extends BaseAdapter {
             const callee = this.resolveCall(callText, callType, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callText, 'external_unknown'));
             }
         }
     }
@@ -413,6 +415,34 @@ export class CairoAdapter extends BaseAdapter {
         if (free) return free;
 
         return this.symbolsByLabel.get(callText)?.[0];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        'starknet', 'core', 'array', 'dict', 'option', 'result', 'box', 'nullable',
+        'integer', 'felt252', 'bool', 'bytes31', 'byte_array', 'pedersen', 'poseidon',
+        'ec', 'ecdsa', 'keccak', 'sha256', 'secp256k1', 'secp256r1',
+        'contract_address', 'class_hash', 'storage', 'syscalls',
+        'traits', 'zeroable', 'clone', 'drop', 'serde', 'hash', 'default',
+        'into', 'try_into', 'fmt', 'debug', 'print', 'testing',
+        'alexandria', 'openzeppelin',
+    ]);
+
+    private static readonly STDLIB_NAMES = new Set([
+        'assert', 'panic', 'panic_with_felt252', 'array', 'into', 'try_into',
+        'unwrap', 'expect', 'is_some', 'is_none', 'is_ok', 'is_err',
+        'append', 'pop_front', 'pop_front_consume', 'get', 'at', 'len', 'is_empty',
+        'span', 'clone', 'drop', 'copy', 'print', 'new',
+        'emit', 'read', 'write',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (CairoAdapter.STDLIB_NAMES.has(name)) return true;
+        const sep = name.indexOf('::');
+        if (sep !== -1 && CairoAdapter.STDLIB_PREFIXES.has(name.slice(0, sep))) return true;
+        // method call suffix check
+        const lastSep = name.lastIndexOf('::');
+        if (lastSep !== -1 && CairoAdapter.STDLIB_NAMES.has(name.slice(lastSep + 2))) return true;
+        return false;
     }
 
 }

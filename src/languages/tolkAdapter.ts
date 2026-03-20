@@ -172,9 +172,33 @@ export class TolkAdapter extends BaseAdapter {
                     const callee = this.symbolsByLabel.get(calleeName)?.[0];
                     if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                         this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    } else if (!callee) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
                     }
                 }
             }
         }
+    }
+
+    private static readonly STDLIB_NAMES = new Set([
+        // Tolk built-in functions and common FunC/Tolk stdlib
+        'send_raw_message', 'get_data', 'set_data', 'get_balance',
+        'accept_message', 'reserve_extra_currencies',
+        'slice_empty', 'slice_bits', 'slice_refs', 'slice_bits_refs', 'slice_data',
+        'load_bits', 'load_uint', 'load_int', 'load_ref', 'load_maybe_ref',
+        'load_coins', 'load_address', 'skip_bits',
+        'store_uint', 'store_int', 'store_ref', 'store_maybe_ref', 'store_bits',
+        'store_coins', 'store_address', 'store_builder',
+        'begin_cell', 'end_cell', 'begin_parse',
+        'cell_hash', 'slice_hash', 'string_hash',
+        'throw', 'throw_if', 'throw_unless', 'return',
+        'random', 'randomize_lt', 'cur_lt', 'now',
+        'is_address_none', 'pack_address', 'address_hash',
+        'tvm_hash', 'config_param', 'raw_commit',
+        'divmod', 'moddiv', 'muldiv', 'muldivr', 'muldivc', 'muldivmod',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        return TolkAdapter.STDLIB_NAMES.has(name);
     }
 }

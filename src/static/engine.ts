@@ -6,7 +6,7 @@ import {
 } from "../engine/types.js";
 import { computeHotspots } from "./hotspots.js";
 import { detectGaps, SymbolGap } from "./symbol-table.js";
-import { writeScanState, ScanState, symbolMapToRecord } from "./persistence.js";
+import { writeScanState, ScanState, symbolMapToRecord, buildLocatorIndex } from "./persistence.js";
 
 export interface ScanResult {
     scanId: string;
@@ -93,6 +93,7 @@ export async function runScan(
         status,
         findings: [] as RuleFinding[],
         sourceFiles: serializedSources,
+        locatorIndex: buildLocatorIndex(combined),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     };

@@ -31,8 +31,13 @@ export class Engine {
         return this.adapters.get(languageId);
     }
 
-    detectLanguage(filePath: string): SupportedLanguage | undefined {
+    detectLanguage(filePath: string, content?: string): SupportedLanguage | undefined {
         const ext = path.extname(filePath).toLowerCase();
+        // Flow files use .js extension with // @flow annotation (or .flow extension)
+        if ((ext === '.js' || ext === '.jsx') && content) {
+            const header = content.slice(0, 500);
+            if (/@flow/.test(header)) return SupportedLanguage.Flow;
+        }
         switch (ext) {
             case ".sol":
                 return SupportedLanguage.Solidity;

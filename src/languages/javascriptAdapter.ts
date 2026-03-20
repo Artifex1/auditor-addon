@@ -57,20 +57,22 @@ const JS_FAMILY_CONSTANTS = {
     commentBenefitCap: 0.25
 };
 
-const JS_BUILTINS = new Set([
-    'require', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-    'Promise', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON',
-    'Error', 'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol',
-    'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent',
-    'decodeURIComponent', 'encodeURI', 'decodeURI', 'fetch', 'structuredClone',
-    'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame'
-]);
 
 /**
  * Shared call graph implementation for the JavaScript/TypeScript language family.
  * Handles class declarations with methods and top-level function declarations.
  */
 abstract class JSFamilyAdapter extends BaseAdapter {
+    private static readonly BUILTINS = new Set([
+        'require', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+        'Promise', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON',
+        'Error', 'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol',
+        'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent',
+        'decodeURIComponent', 'encodeURI', 'decodeURI', 'fetch', 'structuredClone',
+        'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
+        'undefined', 'null', 'NaN', 'Infinity', 'globalThis',
+    ]);
+
     private static readonly CALL_QUERIES = {
         CLASSES: `(class_declaration) @class`,
         FUNCTIONS: `(function_declaration) @function`,
@@ -94,7 +96,10 @@ abstract class JSFamilyAdapter extends BaseAdapter {
             const classCaptures = classQuery.captures(tree.rootNode);
             for (const capture of classCaptures) {
                 const classNode = capture.node;
-                const className = classNode.childForFieldName('name')?.text ?? 'unknown';
+                // Fallback to first identifier child for generic classes: class Foo<T>
+                const className = classNode.childForFieldName('name')?.text
+                    ?? classNode.children.find(c => c.type === 'identifier')?.text
+                    ?? 'unknown';
 
                 const bodyNode = classNode.childForFieldName('body');
                 if (!bodyNode) continue;
@@ -142,6 +147,34 @@ abstract class JSFamilyAdapter extends BaseAdapter {
                     node: funcNode,
                     visibility
                 }));
+            }
+
+            // 3. Find top-level variable-declared arrow/function expressions
+            // Handles: const foo = () => {} / const foo = function() {}
+            for (const child of tree.rootNode.children) {
+                const isExport = child.type === 'export_statement';
+                const declNode = isExport
+                    ? child.children.find(c => c.type === 'lexical_declaration' || c.type === 'variable_declaration')
+                    : (child.type === 'lexical_declaration' || child.type === 'variable_declaration') ? child : null;
+                if (!declNode) continue;
+
+                for (const declarator of declNode.children) {
+                    if (declarator.type !== 'variable_declarator') continue;
+                    const nameNode = declarator.childForFieldName('name');
+                    const valueNode = declarator.childForFieldName('value');
+                    if (!nameNode || !valueNode) continue;
+                    if (valueNode.type !== 'arrow_function' && valueNode.type !== 'function_expression') continue;
+
+                    const fnName = nameNode.text;
+                    const visibility: Visibility = isExport ? 'public' : 'private';
+                    this.indexSymbol(this.createEntry({
+                        qualifiedName: fnName,
+                        label: fnName,
+                        file: file.path,
+                        node: valueNode,
+                        visibility
+                    }));
+                }
             }
         }
     }
@@ -217,6 +250,27 @@ abstract class JSFamilyAdapter extends BaseAdapter {
 
                 this.processCallsInNode(funcNode, symbol, simpleCallQuery, memberCallQuery);
             }
+
+            // Process top-level variable-declared arrow/function expressions
+            for (const child of tree.rootNode.children) {
+                const isExport = child.type === 'export_statement';
+                const declNode = isExport
+                    ? child.children.find(c => c.type === 'lexical_declaration' || c.type === 'variable_declaration')
+                    : (child.type === 'lexical_declaration' || child.type === 'variable_declaration') ? child : null;
+                if (!declNode) continue;
+
+                for (const declarator of declNode.children) {
+                    if (declarator.type !== 'variable_declarator') continue;
+                    const valueNode = declarator.childForFieldName('value');
+                    if (!valueNode) continue;
+                    if (valueNode.type !== 'arrow_function' && valueNode.type !== 'function_expression') continue;
+
+                    const symbol = this.findSymbolAtNode(valueNode, file.path);
+                    if (!symbol) continue;
+
+                    this.processCallsInNode(valueNode, symbol, simpleCallQuery, memberCallQuery);
+                }
+            }
         }
     }
 
@@ -231,11 +285,11 @@ abstract class JSFamilyAdapter extends BaseAdapter {
         for (const capture of simpleCaptures) {
             if (capture.name !== 'FUNC') continue;
             const callName = capture.node.text;
-            if (JS_BUILTINS.has(callName)) continue;
-
             const callee = this.resolveSimpleCall(callName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callName, 'external_unknown'));
             }
         }
 
@@ -248,6 +302,12 @@ abstract class JSFamilyAdapter extends BaseAdapter {
             const callee = this.resolveMemberCall(methodName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                const obj = capture.node.parent?.childForFieldName('object')?.text;
+                const fullName = obj && obj !== 'this' && obj !== 'self'
+                    ? `${obj}.${methodName}`
+                    : methodName;
+                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
             }
         }
     }
@@ -401,6 +461,55 @@ abstract class JSFamilyAdapter extends BaseAdapter {
         // 2. Any method with that name in any class
         const candidates = this.symbolsByLabel.get(methodName);
         return candidates?.find(n => !!n.contract);
+    }
+
+    private static readonly STDLIB_RECEIVERS = new Set([
+        // Global objects
+        'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean',
+        'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'Symbol',
+        'Error', 'Buffer', 'process', 'global', 'window', 'document', 'navigator',
+        'localStorage', 'sessionStorage', 'location', 'history',
+        // Node.js modules
+        'fs', 'path', 'os', 'crypto', 'http', 'https', 'net', 'url', 'util',
+        'events', 'stream', 'zlib', 'child_process', 'cluster', 'dns', 'readline',
+        'assert', 'querystring', 'vm', 'worker_threads', 'perf_hooks',
+    ]);
+
+    private static readonly STDLIB_METHODS = new Set([
+        // Array methods
+        'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'concat', 'join',
+        'reverse', 'sort', 'flat', 'flatMap', 'map', 'filter', 'reduce', 'reduceRight',
+        'forEach', 'find', 'findIndex', 'findLast', 'findLastIndex', 'indexOf', 'lastIndexOf',
+        'includes', 'some', 'every', 'fill', 'copyWithin', 'entries', 'keys', 'values',
+        // String methods
+        'split', 'trim', 'trimStart', 'trimEnd', 'padStart', 'padEnd', 'repeat',
+        'startsWith', 'endsWith', 'replace', 'replaceAll', 'match', 'matchAll',
+        'search', 'at', 'charAt', 'charCodeAt', 'codePointAt', 'normalize',
+        'toUpperCase', 'toLowerCase', 'toLocaleLowerCase', 'toLocaleUpperCase',
+        // Object/Promise methods
+        'then', 'catch', 'finally', 'resolve', 'reject', 'all', 'allSettled', 'any', 'race',
+        'assign', 'keys', 'values', 'entries', 'freeze', 'seal', 'create', 'defineProperty',
+        'hasOwnProperty', 'toString', 'valueOf', 'bind', 'call', 'apply',
+        // General
+        'log', 'warn', 'error', 'info', 'debug', 'trace', 'group', 'groupEnd', 'time', 'timeEnd',
+        'get', 'set', 'has', 'delete', 'clear', 'size', 'add',
+        'emit', 'on', 'off', 'once', 'removeListener', 'addListener',
+        'read', 'write', 'pipe', 'end', 'close', 'open',
+        'parse', 'stringify',
+        'test', 'exec', 'compile',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (JSFamilyAdapter.BUILTINS.has(name)) return true;
+        if (JSFamilyAdapter.STDLIB_METHODS.has(name)) return true;
+        const dot = name.indexOf('.');
+        if (dot !== -1) {
+            const receiver = name.slice(0, dot);
+            const method = name.slice(dot + 1);
+            if (JSFamilyAdapter.STDLIB_RECEIVERS.has(receiver)) return true;
+            if (JSFamilyAdapter.STDLIB_METHODS.has(method)) return true;
+        }
+        return false;
     }
 
 }

@@ -207,6 +207,8 @@ export class NoirAdapter extends BaseAdapter {
                     const callee = this.symbolsByLabel.get(callName)?.[0];
                     if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                         this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    } else if (!callee) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(callName, 'external_unknown'));
                     }
                 }
 
@@ -222,11 +224,37 @@ export class NoirAdapter extends BaseAdapter {
                         const callee = this.symbolsByLabel.get(funcName)?.[0];
                         if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                        } else if (!callee) {
+                            this.addCallee(symbol.qualifiedName, this.makeCallee(callText, 'external_unknown'));
                         }
                     }
                 }
             }
         }
+    }
+
+    private static readonly STDLIB_NAMES = new Set([
+        // Noir standard library
+        'assert', 'assert_eq', 'assert_constant', 'panic',
+        'std', 'dep',
+        'println', 'print',
+        'from_field', 'to_field', 'from_bits', 'to_bits', 'from_bytes', 'to_bytes',
+        'modulus', 'pow_32', 'wrapping_add', 'wrapping_sub', 'wrapping_mul',
+        'to_le_bytes', 'to_be_bytes', 'to_le_bits', 'to_be_bits',
+        'pedersen_hash', 'pedersen_commitment', 'sha256', 'blake2s', 'blake3',
+        'keccak256', 'poseidon', 'poseidon2',
+        'ecdsa_secp256k1', 'ecdsa_secp256r1', 'schnorr', 'ed25519',
+        'aes128_encrypt', 'sha256_compression',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (NoirAdapter.STDLIB_NAMES.has(name)) return true;
+        const sep = name.indexOf('::');
+        if (sep !== -1) {
+            const prefix = name.slice(0, sep);
+            if (prefix === 'std' || prefix === 'dep') return true;
+        }
+        return false;
     }
 
 }

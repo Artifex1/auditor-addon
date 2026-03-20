@@ -254,6 +254,8 @@ export class RustAdapter extends BaseAdapter {
             const callee = this.resolveCall(callText, callType, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callText, 'external_unknown'));
             }
         }
     }
@@ -462,6 +464,39 @@ export class RustAdapter extends BaseAdapter {
 
         // 3. Any match
         return this.symbolsByLabel.get(callText)?.[0];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        'std', 'core', 'alloc', 'fmt', 'io', 'fs', 'str', 'slice', 'iter', 'ops',
+        'cmp', 'mem', 'ptr', 'sync', 'thread', 'collections', 'convert', 'clone',
+        'hash', 'marker', 'rc', 'cell', 'env', 'process', 'path', 'net', 'time',
+        'error', 'panic', 'any', 'borrow', 'boxed', 'vec', 'string', 'char', 'array',
+        'future', 'pin', 'task', 'stream', 'num',
+    ]);
+
+    private static readonly STDLIB_NAMES = new Set([
+        'Some', 'None', 'Ok', 'Err', 'Box', 'Vec', 'String', 'Option', 'Result',
+        'map', 'filter', 'collect', 'iter', 'into_iter', 'iter_mut', 'fold', 'reduce',
+        'flat_map', 'flatten', 'zip', 'enumerate', 'take', 'skip', 'chain', 'any', 'all',
+        'find', 'position', 'count', 'sum', 'product', 'min', 'max', 'cloned', 'copied',
+        'rev', 'peekable', 'nth', 'last', 'unwrap', 'unwrap_or', 'unwrap_or_else',
+        'expect', 'is_some', 'is_none', 'is_ok', 'is_err', 'ok', 'err', 'map_err',
+        'and_then', 'or_else', 'into', 'from', 'as_ref', 'as_mut', 'clone', 'default',
+        'to_string', 'to_owned', 'push', 'pop', 'len', 'is_empty', 'contains', 'get',
+        'insert', 'remove', 'retain', 'extend', 'drain', 'split', 'join', 'trim',
+        'println', 'eprintln', 'print', 'eprint', 'format', 'write', 'writeln',
+        'assert', 'assert_eq', 'assert_ne', 'panic', 'todo', 'unimplemented', 'unreachable',
+        'drop', 'swap', 'replace', 'take', 'transmute', 'size_of', 'align_of',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (RustAdapter.STDLIB_NAMES.has(name)) return true;
+        const sep = name.indexOf('::');
+        if (sep !== -1 && RustAdapter.STDLIB_PREFIXES.has(name.slice(0, sep))) return true;
+        // method chains: receiver.method — check just the method part
+        const dot = name.lastIndexOf('.');
+        if (dot !== -1 && RustAdapter.STDLIB_NAMES.has(name.slice(dot + 1))) return true;
+        return false;
     }
 
 }

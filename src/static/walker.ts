@@ -38,10 +38,15 @@ export async function walkDeep(
     // Follow call edges from this node
     const callee = ctx.trait.resolveCallee(node, ctx.symbolMap, ctx.sourceFiles);
     if (callee && !visited.has(callee.qualifiedName)) {
-        const calleeNode = await lookupFunctionNode(callee.qualifiedName, ctx.symbolMap, ctx);
+        // If the agent resolved this gap to a concrete symbol, follow the redirect.
+        const gapEntry = ctx.symbolMap.get(callee.qualifiedName);
+        const targetQN = gapEntry?.redirectTo ?? callee.qualifiedName;
+
+        const calleeNode = await lookupFunctionNode(targetQN, ctx.symbolMap, ctx);
         if (calleeNode) {
             visited.add(callee.qualifiedName);
-            const entry = ctx.symbolMap.get(callee.qualifiedName)!;
+            visited.add(targetQN);
+            const entry = ctx.symbolMap.get(targetQN)!;
             const prevFile = ctx.currentFile;
             ctx.currentFile = entry.file;
             await walkDeep(calleeNode, rule, ctx, visited, depth + 1, maxDepth);

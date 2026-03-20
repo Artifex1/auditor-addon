@@ -3267,8 +3267,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path7) {
-      let input = path7;
+    function removeDotSegments(path9) {
+      let input = path9;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3468,8 +3468,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path7, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
+        const [path9, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6868,12 +6868,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name2}"`);
       return f6;
     };
-    function addFormats(ajv, list, fs6, exportName) {
+    function addFormats(ajv, list, fs7, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f6 of list)
-        ajv.addFormat(f6, fs6[f6]);
+        ajv.addFormat(f6, fs7[f6]);
     }
     module2.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6957,7 +6957,7 @@ var require_path = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.convertPosixPathToPattern = exports.convertWindowsPathToPattern = exports.convertPathToPattern = exports.escapePosixPath = exports.escapeWindowsPath = exports.escape = exports.removeLeadingDotSegment = exports.makeAbsolute = exports.unixify = void 0;
     var os2 = __require("os");
-    var path7 = __require("path");
+    var path9 = __require("path");
     var IS_WINDOWS_PLATFORM = os2.platform() === "win32";
     var LEADING_DOT_SEGMENT_CHARACTERS_COUNT = 2;
     var POSIX_UNESCAPED_GLOB_SYMBOLS_RE = /(\\?)([()*?[\]{|}]|^!|[!+@](?=\()|\\(?![!()*+?@[\]{|}]))/g;
@@ -6969,7 +6969,7 @@ var require_path = __commonJS({
     }
     exports.unixify = unixify;
     function makeAbsolute(cwd, filepath) {
-      return path7.resolve(cwd, filepath);
+      return path9.resolve(cwd, filepath);
     }
     exports.makeAbsolute = makeAbsolute;
     function removeLeadingDotSegment(entry) {
@@ -8282,7 +8282,7 @@ var require_constants2 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/constants.js"(exports, module2) {
     "use strict";
     init_esm_shims();
-    var path7 = __require("path");
+    var path9 = __require("path");
     var WIN_SLASH = "\\\\/";
     var WIN_NO_SLASH = `[^${WIN_SLASH}]`;
     var DOT_LITERAL = "\\.";
@@ -8452,7 +8452,7 @@ var require_constants2 = __commonJS({
       /* | */
       CHAR_ZERO_WIDTH_NOBREAK_SPACE: 65279,
       /* \uFEFF */
-      SEP: path7.sep,
+      SEP: path9.sep,
       /**
        * Create EXTGLOB_CHARS
        */
@@ -8480,7 +8480,7 @@ var require_utils3 = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/utils.js"(exports) {
     "use strict";
     init_esm_shims();
-    var path7 = __require("path");
+    var path9 = __require("path");
     var win32 = process.platform === "win32";
     var {
       REGEX_BACKSLASH,
@@ -8509,7 +8509,7 @@ var require_utils3 = __commonJS({
       if (options && typeof options.windows === "boolean") {
         return options.windows;
       }
-      return win32 === true || path7.sep === "\\";
+      return win32 === true || path9.sep === "\\";
     };
     exports.escapeLast = (input, char, lastIdx) => {
       const idx = input.lastIndexOf(char, lastIdx);
@@ -9647,7 +9647,7 @@ var require_picomatch = __commonJS({
   "node_modules/.pnpm/picomatch@2.3.1/node_modules/picomatch/lib/picomatch.js"(exports, module2) {
     "use strict";
     init_esm_shims();
-    var path7 = __require("path");
+    var path9 = __require("path");
     var scan = require_scan();
     var parse3 = require_parse2();
     var utils = require_utils3();
@@ -9732,7 +9732,7 @@ var require_picomatch = __commonJS({
     };
     picomatch.matchBase = (input, glob, options, posix = utils.isWindows(options)) => {
       const regex = glob instanceof RegExp ? glob : picomatch.makeRe(glob, options);
-      return regex.test(path7.basename(input));
+      return regex.test(path9.basename(input));
     };
     picomatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
     picomatch.parse = (pattern, options) => {
@@ -9962,7 +9962,7 @@ var require_pattern2 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isAbsolute = exports.partitionAbsoluteAndRelative = exports.removeDuplicateSlashes = exports.matchAny = exports.convertPatternsToRe = exports.makeRe = exports.getPatternParts = exports.expandBraceExpansion = exports.expandPatternsWithBraceExpansion = exports.isAffectDepthOfReadingPattern = exports.endsWithSlashGlobStar = exports.hasGlobStar = exports.getBaseDirectory = exports.isPatternRelatedToParentDirectory = exports.getPatternsOutsideCurrentDirectory = exports.getPatternsInsideCurrentDirectory = exports.getPositivePatterns = exports.getNegativePatterns = exports.isPositivePattern = exports.isNegativePattern = exports.convertToNegativePattern = exports.convertToPositivePattern = exports.isDynamicPattern = exports.isStaticPattern = void 0;
-    var path7 = __require("path");
+    var path9 = __require("path");
     var globParent = require_glob_parent();
     var micromatch = require_micromatch();
     var GLOBSTAR = "**";
@@ -10057,7 +10057,7 @@ var require_pattern2 = __commonJS({
     }
     exports.endsWithSlashGlobStar = endsWithSlashGlobStar;
     function isAffectDepthOfReadingPattern(pattern) {
-      const basename = path7.basename(pattern);
+      const basename = path9.basename(pattern);
       return endsWithSlashGlobStar(pattern) || isStaticPattern(basename);
     }
     exports.isAffectDepthOfReadingPattern = isAffectDepthOfReadingPattern;
@@ -10115,7 +10115,7 @@ var require_pattern2 = __commonJS({
     }
     exports.partitionAbsoluteAndRelative = partitionAbsoluteAndRelative;
     function isAbsolute(pattern) {
-      return path7.isAbsolute(pattern);
+      return path9.isAbsolute(pattern);
     }
     exports.isAbsolute = isAbsolute;
   }
@@ -10294,10 +10294,10 @@ var require_utils4 = __commonJS({
     exports.array = array2;
     var errno = require_errno();
     exports.errno = errno;
-    var fs6 = require_fs();
-    exports.fs = fs6;
-    var path7 = require_path();
-    exports.path = path7;
+    var fs7 = require_fs();
+    exports.fs = fs7;
+    var path9 = require_path();
+    exports.path = path9;
     var pattern = require_pattern2();
     exports.pattern = pattern;
     var stream = require_stream();
@@ -10411,8 +10411,8 @@ var require_async = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.read = void 0;
-    function read(path7, settings, callback) {
-      settings.fs.lstat(path7, (lstatError, lstat) => {
+    function read(path9, settings, callback) {
+      settings.fs.lstat(path9, (lstatError, lstat) => {
         if (lstatError !== null) {
           callFailureCallback(callback, lstatError);
           return;
@@ -10421,7 +10421,7 @@ var require_async = __commonJS({
           callSuccessCallback(callback, lstat);
           return;
         }
-        settings.fs.stat(path7, (statError, stat) => {
+        settings.fs.stat(path9, (statError, stat) => {
           if (statError !== null) {
             if (settings.throwErrorOnBrokenSymbolicLink) {
               callFailureCallback(callback, statError);
@@ -10454,13 +10454,13 @@ var require_sync = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.read = void 0;
-    function read(path7, settings) {
-      const lstat = settings.fs.lstatSync(path7);
+    function read(path9, settings) {
+      const lstat = settings.fs.lstatSync(path9);
       if (!lstat.isSymbolicLink() || !settings.followSymbolicLink) {
         return lstat;
       }
       try {
-        const stat = settings.fs.statSync(path7);
+        const stat = settings.fs.statSync(path9);
         if (settings.markSymbolicLink) {
           stat.isSymbolicLink = () => true;
         }
@@ -10483,12 +10483,12 @@ var require_fs2 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
-    var fs6 = __require("fs");
+    var fs7 = __require("fs");
     exports.FILE_SYSTEM_ADAPTER = {
-      lstat: fs6.lstat,
-      stat: fs6.stat,
-      lstatSync: fs6.lstatSync,
-      statSync: fs6.statSync
+      lstat: fs7.lstat,
+      stat: fs7.stat,
+      lstatSync: fs7.lstatSync,
+      statSync: fs7.statSync
     };
     function createFileSystemAdapter(fsMethods) {
       if (fsMethods === void 0) {
@@ -10506,12 +10506,12 @@ var require_settings = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var fs6 = require_fs2();
+    var fs7 = require_fs2();
     var Settings = class {
       constructor(_options = {}) {
         this._options = _options;
         this.followSymbolicLink = this._getValue(this._options.followSymbolicLink, true);
-        this.fs = fs6.createFileSystemAdapter(this._options.fs);
+        this.fs = fs7.createFileSystemAdapter(this._options.fs);
         this.markSymbolicLink = this._getValue(this._options.markSymbolicLink, false);
         this.throwErrorOnBrokenSymbolicLink = this._getValue(this._options.throwErrorOnBrokenSymbolicLink, true);
       }
@@ -10534,17 +10534,17 @@ var require_out = __commonJS({
     var sync = require_sync();
     var settings_1 = require_settings();
     exports.Settings = settings_1.default;
-    function stat(path7, optionsOrSettingsOrCallback, callback) {
+    function stat(path9, optionsOrSettingsOrCallback, callback) {
       if (typeof optionsOrSettingsOrCallback === "function") {
-        async.read(path7, getSettings(), optionsOrSettingsOrCallback);
+        async.read(path9, getSettings(), optionsOrSettingsOrCallback);
         return;
       }
-      async.read(path7, getSettings(optionsOrSettingsOrCallback), callback);
+      async.read(path9, getSettings(optionsOrSettingsOrCallback), callback);
     }
     exports.stat = stat;
-    function statSync(path7, optionsOrSettings) {
+    function statSync(path9, optionsOrSettings) {
       const settings = getSettings(optionsOrSettings);
-      return sync.read(path7, settings);
+      return sync.read(path9, settings);
     }
     exports.statSync = statSync;
     function getSettings(settingsOrOptions = {}) {
@@ -10674,8 +10674,8 @@ var require_utils5 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.fs = void 0;
-    var fs6 = require_fs3();
-    exports.fs = fs6;
+    var fs7 = require_fs3();
+    exports.fs = fs7;
   }
 });
 
@@ -10769,16 +10769,16 @@ var require_async2 = __commonJS({
           return;
         }
         const tasks = names.map((name2) => {
-          const path7 = common.joinPathSegments(directory, name2, settings.pathSegmentSeparator);
+          const path9 = common.joinPathSegments(directory, name2, settings.pathSegmentSeparator);
           return (done) => {
-            fsStat.stat(path7, settings.fsStatSettings, (error, stats) => {
+            fsStat.stat(path9, settings.fsStatSettings, (error, stats) => {
               if (error !== null) {
                 done(error);
                 return;
               }
               const entry = {
                 name: name2,
-                path: path7,
+                path: path9,
                 dirent: utils.fs.createDirentFromStats(name2, stats)
               };
               if (settings.stats) {
@@ -10874,14 +10874,14 @@ var require_fs4 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createFileSystemAdapter = exports.FILE_SYSTEM_ADAPTER = void 0;
-    var fs6 = __require("fs");
+    var fs7 = __require("fs");
     exports.FILE_SYSTEM_ADAPTER = {
-      lstat: fs6.lstat,
-      stat: fs6.stat,
-      lstatSync: fs6.lstatSync,
-      statSync: fs6.statSync,
-      readdir: fs6.readdir,
-      readdirSync: fs6.readdirSync
+      lstat: fs7.lstat,
+      stat: fs7.stat,
+      lstatSync: fs7.lstatSync,
+      statSync: fs7.statSync,
+      readdir: fs7.readdir,
+      readdirSync: fs7.readdirSync
     };
     function createFileSystemAdapter(fsMethods) {
       if (fsMethods === void 0) {
@@ -10899,15 +10899,15 @@ var require_settings2 = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path7 = __require("path");
+    var path9 = __require("path");
     var fsStat = require_out();
-    var fs6 = require_fs4();
+    var fs7 = require_fs4();
     var Settings = class {
       constructor(_options = {}) {
         this._options = _options;
         this.followSymbolicLinks = this._getValue(this._options.followSymbolicLinks, false);
-        this.fs = fs6.createFileSystemAdapter(this._options.fs);
-        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path7.sep);
+        this.fs = fs7.createFileSystemAdapter(this._options.fs);
+        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path9.sep);
         this.stats = this._getValue(this._options.stats, false);
         this.throwErrorOnBrokenSymbolicLink = this._getValue(this._options.throwErrorOnBrokenSymbolicLink, true);
         this.fsStatSettings = new fsStat.Settings({
@@ -10935,17 +10935,17 @@ var require_out2 = __commonJS({
     var sync = require_sync2();
     var settings_1 = require_settings2();
     exports.Settings = settings_1.default;
-    function scandir(path7, optionsOrSettingsOrCallback, callback) {
+    function scandir(path9, optionsOrSettingsOrCallback, callback) {
       if (typeof optionsOrSettingsOrCallback === "function") {
-        async.read(path7, getSettings(), optionsOrSettingsOrCallback);
+        async.read(path9, getSettings(), optionsOrSettingsOrCallback);
         return;
       }
-      async.read(path7, getSettings(optionsOrSettingsOrCallback), callback);
+      async.read(path9, getSettings(optionsOrSettingsOrCallback), callback);
     }
     exports.scandir = scandir;
-    function scandirSync(path7, optionsOrSettings) {
+    function scandirSync(path9, optionsOrSettings) {
       const settings = getSettings(optionsOrSettings);
-      return sync.read(path7, settings);
+      return sync.read(path9, settings);
     }
     exports.scandirSync = scandirSync;
     function getSettings(settingsOrOptions = {}) {
@@ -11579,7 +11579,7 @@ var require_settings3 = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path7 = __require("path");
+    var path9 = __require("path");
     var fsScandir = require_out2();
     var Settings = class {
       constructor(_options = {}) {
@@ -11589,7 +11589,7 @@ var require_settings3 = __commonJS({
         this.deepFilter = this._getValue(this._options.deepFilter, null);
         this.entryFilter = this._getValue(this._options.entryFilter, null);
         this.errorFilter = this._getValue(this._options.errorFilter, null);
-        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path7.sep);
+        this.pathSegmentSeparator = this._getValue(this._options.pathSegmentSeparator, path9.sep);
         this.fsScandirSettings = new fsScandir.Settings({
           followSymbolicLinks: this._options.followSymbolicLinks,
           fs: this._options.fs,
@@ -11653,7 +11653,7 @@ var require_reader2 = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path7 = __require("path");
+    var path9 = __require("path");
     var fsStat = require_out();
     var utils = require_utils4();
     var Reader = class {
@@ -11666,7 +11666,7 @@ var require_reader2 = __commonJS({
         });
       }
       _getFullEntryPath(filepath) {
-        return path7.resolve(this._settings.cwd, filepath);
+        return path9.resolve(this._settings.cwd, filepath);
       }
       _makeEntry(stats, pattern) {
         const entry = {
@@ -12091,7 +12091,7 @@ var require_provider = __commonJS({
     "use strict";
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
-    var path7 = __require("path");
+    var path9 = __require("path");
     var deep_1 = require_deep();
     var entry_1 = require_entry();
     var error_1 = require_error();
@@ -12105,7 +12105,7 @@ var require_provider = __commonJS({
         this.entryTransformer = new entry_2.default(this._settings);
       }
       _getRootDirectory(task) {
-        return path7.resolve(this._settings.cwd, task.base);
+        return path9.resolve(this._settings.cwd, task.base);
       }
       _getReaderOptions(task) {
         const basePath = task.base === "." ? "" : task.base;
@@ -12291,16 +12291,16 @@ var require_settings4 = __commonJS({
     init_esm_shims();
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_FILE_SYSTEM_ADAPTER = void 0;
-    var fs6 = __require("fs");
+    var fs7 = __require("fs");
     var os2 = __require("os");
     var CPU_COUNT = Math.max(os2.cpus().length, 1);
     exports.DEFAULT_FILE_SYSTEM_ADAPTER = {
-      lstat: fs6.lstat,
-      lstatSync: fs6.lstatSync,
-      stat: fs6.stat,
-      statSync: fs6.statSync,
-      readdir: fs6.readdir,
-      readdirSync: fs6.readdirSync
+      lstat: fs7.lstat,
+      lstatSync: fs7.lstatSync,
+      stat: fs7.stat,
+      statSync: fs7.statSync,
+      readdir: fs7.readdir,
+      readdirSync: fs7.readdirSync
     };
     var Settings = class {
       constructor(_options = {}) {
@@ -15127,9 +15127,9 @@ ${file}:${line}:${column}: ERROR: ${pluginText}${e5.text}`;
       if (regexp.flags) result = `(?${regexp.flags})${result}`;
       return result;
     }
-    var fs6 = __require("fs");
+    var fs7 = __require("fs");
     var os2 = __require("os");
-    var path7 = __require("path");
+    var path9 = __require("path");
     var ESBUILD_BINARY_PATH = process.env.ESBUILD_BINARY_PATH || ESBUILD_BINARY_PATH;
     var isValidBinaryPath = (x2) => !!x2 && x2 !== "/usr/bin/esbuild";
     var packageDarwin_arm64 = "@esbuild/darwin-arm64";
@@ -15188,19 +15188,19 @@ ${file}:${line}:${column}: ERROR: ${pluginText}${e5.text}`;
     }
     function pkgForSomeOtherPlatform() {
       const libMainJS = __require.resolve("esbuild");
-      const nodeModulesDirectory = path7.dirname(path7.dirname(path7.dirname(libMainJS)));
-      if (path7.basename(nodeModulesDirectory) === "node_modules") {
+      const nodeModulesDirectory = path9.dirname(path9.dirname(path9.dirname(libMainJS)));
+      if (path9.basename(nodeModulesDirectory) === "node_modules") {
         for (const unixKey in knownUnixlikePackages) {
           try {
             const pkg = knownUnixlikePackages[unixKey];
-            if (fs6.existsSync(path7.join(nodeModulesDirectory, pkg))) return pkg;
+            if (fs7.existsSync(path9.join(nodeModulesDirectory, pkg))) return pkg;
           } catch {
           }
         }
         for (const windowsKey in knownWindowsPackages) {
           try {
             const pkg = knownWindowsPackages[windowsKey];
-            if (fs6.existsSync(path7.join(nodeModulesDirectory, pkg))) return pkg;
+            if (fs7.existsSync(path9.join(nodeModulesDirectory, pkg))) return pkg;
           } catch {
           }
         }
@@ -15208,12 +15208,12 @@ ${file}:${line}:${column}: ERROR: ${pluginText}${e5.text}`;
       return null;
     }
     function downloadedBinPath(pkg, subpath) {
-      const esbuildLibDir = path7.dirname(__require.resolve("esbuild"));
-      return path7.join(esbuildLibDir, `downloaded-${pkg.replace("/", "-")}-${path7.basename(subpath)}`);
+      const esbuildLibDir = path9.dirname(__require.resolve("esbuild"));
+      return path9.join(esbuildLibDir, `downloaded-${pkg.replace("/", "-")}-${path9.basename(subpath)}`);
     }
     function generateBinPath() {
       if (isValidBinaryPath(ESBUILD_BINARY_PATH)) {
-        if (!fs6.existsSync(ESBUILD_BINARY_PATH)) {
+        if (!fs7.existsSync(ESBUILD_BINARY_PATH)) {
           console.warn(`[esbuild] Ignoring bad configuration: ESBUILD_BINARY_PATH=${ESBUILD_BINARY_PATH}`);
         } else {
           return { binPath: ESBUILD_BINARY_PATH, isWASM: false };
@@ -15225,7 +15225,7 @@ ${file}:${line}:${column}: ERROR: ${pluginText}${e5.text}`;
         binPath = __require.resolve(`${pkg}/${subpath}`);
       } catch (e5) {
         binPath = downloadedBinPath(pkg, subpath);
-        if (!fs6.existsSync(binPath)) {
+        if (!fs7.existsSync(binPath)) {
           try {
             __require.resolve(pkg);
           } catch {
@@ -15299,17 +15299,17 @@ for your current platform.`);
         }
         if (pnpapi) {
           const root = pnpapi.getPackageInformation(pnpapi.topLevel).packageLocation;
-          const binTargetPath = path7.join(
+          const binTargetPath = path9.join(
             root,
             "node_modules",
             ".cache",
             "esbuild",
-            `pnpapi-${pkg.replace("/", "-")}-${"0.27.1"}-${path7.basename(subpath)}`
+            `pnpapi-${pkg.replace("/", "-")}-${"0.27.1"}-${path9.basename(subpath)}`
           );
-          if (!fs6.existsSync(binTargetPath)) {
-            fs6.mkdirSync(path7.dirname(binTargetPath), { recursive: true });
-            fs6.copyFileSync(binPath, binTargetPath);
-            fs6.chmodSync(binTargetPath, 493);
+          if (!fs7.existsSync(binTargetPath)) {
+            fs7.mkdirSync(path9.dirname(binTargetPath), { recursive: true });
+            fs7.copyFileSync(binPath, binTargetPath);
+            fs7.chmodSync(binTargetPath, 493);
           }
           return { binPath: binTargetPath, isWASM };
         }
@@ -19321,8 +19321,8 @@ function getErrorMap() {
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 init_esm_shims();
 var makeIssue = (params) => {
-  const { data, path: path7, errorMaps, issueData } = params;
-  const fullPath = [...path7, ...issueData.path || []];
+  const { data, path: path9, errorMaps, issueData } = params;
+  const fullPath = [...path9, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -19442,11 +19442,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path7, key) {
+  constructor(parent, value, path9, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path7;
+    this._path = path9;
     this._key = key;
   }
   get path() {
@@ -23097,10 +23097,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path9) {
+  if (!path9)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path9.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -23420,11 +23420,11 @@ function aborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path9, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path9);
     return iss;
   });
 }
@@ -33305,11 +33305,11 @@ async function Module2(moduleArg = {}) {
   }, "quit_");
   var _scriptName = import.meta.url;
   var scriptDirectory = "";
-  function locateFile(path7) {
+  function locateFile(path9) {
     if (Module["locateFile"]) {
-      return Module["locateFile"](path7, scriptDirectory);
+      return Module["locateFile"](path9, scriptDirectory);
     }
-    return scriptDirectory + path7;
+    return scriptDirectory + path9;
   }
   __name(locateFile, "locateFile");
   var readAsync, readBinary;
@@ -35833,7 +35833,8 @@ var TreeSitterService = class _TreeSitterService {
       case "tsx" /* Tsx */:
         return "tree-sitter-tsx.wasm";
       case "flow" /* Flow */:
-        return "tree-sitter-flow.wasm";
+        return "tree-sitter-typescript.wasm";
+      // Flow type syntax is closest to TypeScript; no dedicated Flow WASM
       case "cairo" /* Cairo */:
         return "tree-sitter-cairo.wasm";
       case "compact" /* Compact */:
@@ -35920,12 +35921,22 @@ var BaseAdapter = class {
   addCallee(callerId, callee) {
     const entry = this._symbolMap.get(callerId);
     if (!entry) return;
+    if (callee.targetKind === "external_unknown" && this.isKnownStdlib(callee.qualifiedName)) {
+      return;
+    }
     if (!entry.callees.some((c3) => c3.qualifiedName === callee.qualifiedName)) {
       entry.callees.push(callee);
       if (callee.targetKind !== "internal") {
         entry.callsExternal = true;
       }
     }
+  }
+  /**
+   * Override in language adapters to suppress well-known stdlib/builtin calls
+   * from appearing as gaps. Return true to drop the callee.
+   */
+  isKnownStdlib(_name) {
+    return false;
   }
   /**
    * Creates a CalleeEntry for the common case of a resolved internal call.
@@ -36410,8 +36421,12 @@ var Engine = class {
   getAdapter(languageId) {
     return this.adapters.get(languageId);
   }
-  detectLanguage(filePath) {
+  detectLanguage(filePath, content) {
     const ext = path4.extname(filePath).toLowerCase();
+    if ((ext === ".js" || ext === ".jsx") && content) {
+      const header = content.slice(0, 500);
+      if (/@flow/.test(header)) return "flow" /* Flow */;
+    }
     switch (ext) {
       case ".sol":
         return "solidity" /* Solidity */;
@@ -36774,7 +36789,59 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   }
   inheritanceGraph = /* @__PURE__ */ new Map();
   usingForMap = /* @__PURE__ */ new Map();
-  static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set(["require", "assert", "revert", "emit"]);
+  static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set([
+    // Control flow
+    "require",
+    "assert",
+    "revert",
+    "emit",
+    // Cryptographic
+    "keccak256",
+    "sha256",
+    "sha3",
+    "ripemd160",
+    "ecrecover",
+    // Math / misc globals
+    "addmod",
+    "mulmod",
+    "gasleft",
+    "blockhash",
+    "blobhash",
+    "selfdestruct",
+    "suicide",
+    // Type conversion / ABI globals (bare names — abi.* handled via BUILTIN_RECEIVERS)
+    "bytes",
+    "string",
+    "address",
+    "uint",
+    "int"
+  ]);
+  static BUILTIN_RECEIVERS = /* @__PURE__ */ new Set([
+    "abi",
+    "block",
+    "msg",
+    "tx",
+    "type"
+  ]);
+  static BUILTIN_MEMBER_FUNCTIONS = /* @__PURE__ */ new Set([
+    "push",
+    "pop",
+    "length",
+    "call",
+    "delegatecall",
+    "staticcall",
+    "transfer",
+    "send",
+    "balance",
+    "code",
+    "codehash",
+    "encode",
+    "encodePacked",
+    "encodeWithSelector",
+    "encodeWithSignature",
+    "encodeCall",
+    "decode"
+  ]);
   resetState() {
     super.resetState();
     this.inheritanceGraph.clear();
@@ -36801,6 +36868,9 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         await this.processCallType(functionNode, symbol, { callType: 2 /* This */ });
         await this.processCallType(functionNode, symbol, { callType: 0 /* Simple */ });
         await this.processAssemblyCalls(functionNode, symbol);
+        if (functionNode.type === "constructor_definition") {
+          this.processConstructorChains(functionNode, symbol);
+        }
       }
     }
   }
@@ -36819,7 +36889,6 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         const recvCapture = match.captures.find((c3) => c3.name === "RECV");
         memberName = recvCapture?.node.text;
       }
-      if (this.shouldSkipCall(funcName, memberName, callConfig.callType)) continue;
       const callee = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
       if (callee) {
         const kind = this.determineEdgeKind(callConfig.callType, callee);
@@ -36864,10 +36933,32 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       }
     }
   }
-  shouldSkipCall(funcName, memberName, callType) {
-    if (_SolidityAdapter.BUILTIN_FUNCTIONS.has(funcName)) return true;
-    if (callType === 1 /* Member */ && (memberName === "super" || memberName === "this")) return true;
-    if (callType === 0 /* Simple */ && funcName.includes(".")) return true;
+  processConstructorChains(constructorNode, symbol) {
+    if (!symbol.contract) return;
+    const parents = this.inheritanceGraph.get(symbol.contract);
+    if (!parents?.length) return;
+    const parentSet = new Set(parents);
+    for (const child of constructorNode.children) {
+      if (child.type !== "modifier_invocation") continue;
+      const baseName = child.child(0)?.text ?? child.text.split("(")[0].trim();
+      if (!parentSet.has(baseName)) continue;
+      const baseConstructorQN = `${baseName}.constructor()`;
+      const baseEntry = this.findInContract(baseName, "constructor");
+      const callee = baseEntry ?? { qualifiedName: baseConstructorQN };
+      this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, "internal"));
+    }
+  }
+  isKnownStdlib(name2) {
+    if (/[\s|&]/.test(name2)) return true;
+    const dot = name2.indexOf(".");
+    if (dot === -1) {
+      return _SolidityAdapter.BUILTIN_FUNCTIONS.has(name2);
+    }
+    const receiver = name2.slice(0, dot);
+    const method = name2.slice(dot + 1);
+    if (receiver === "super" || receiver === "this") return true;
+    if (_SolidityAdapter.BUILTIN_RECEIVERS.has(receiver)) return true;
+    if (_SolidityAdapter.BUILTIN_MEMBER_FUNCTIONS.has(method)) return true;
     return false;
   }
   resolveCallNode(type, name2, memberName, caller) {
@@ -37429,14 +37520,20 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       const callee = this.resolveCall(calleeName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
       }
     }
     for (const capture of fieldCallQuery.captures(node)) {
       if (capture.name !== "FUNC") continue;
       const methodName = capture.node.text;
+      const receiver = capture.node.parent?.childForFieldName("object")?.text ?? capture.node.parent?.childForFieldName("argument")?.text;
+      const fullName = receiver ? `${receiver}.${methodName}` : methodName;
       const callee = this.resolveMemberCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
       }
     }
     for (const capture of scopedCallQuery.captures(node)) {
@@ -37445,6 +37542,8 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       const callee = this.resolveCall(funcName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(funcName, "external_unknown"));
       }
     }
   }
@@ -37549,6 +37648,127 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       if (match) return match;
     }
     return this.symbolsByLabel.get(name2)?.[0];
+  }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    "std",
+    "boost",
+    "__builtin",
+    "__atomic",
+    "assert",
+    "printf",
+    "fprintf",
+    "sprintf",
+    "snprintf",
+    "scanf",
+    "sscanf",
+    "malloc",
+    "calloc",
+    "realloc",
+    "free",
+    "memcpy",
+    "memmove",
+    "memset",
+    "memcmp",
+    "strlen",
+    "strcpy",
+    "strncpy",
+    "strcmp",
+    "strncmp",
+    "strcat",
+    "strncat",
+    "strchr",
+    "strstr",
+    "fopen",
+    "fclose",
+    "fread",
+    "fwrite",
+    "fgets",
+    "fputs",
+    "feof",
+    "fseek",
+    "ftell",
+    "exit",
+    "abort",
+    "atexit",
+    "system",
+    "getenv",
+    "rand",
+    "srand",
+    "abs",
+    "new",
+    "delete"
+  ]);
+  static STDLIB_METHODS = /* @__PURE__ */ new Set([
+    "push_back",
+    "pop_back",
+    "push_front",
+    "pop_front",
+    "insert",
+    "erase",
+    "clear",
+    "begin",
+    "end",
+    "rbegin",
+    "rend",
+    "cbegin",
+    "cend",
+    "size",
+    "empty",
+    "capacity",
+    "reserve",
+    "resize",
+    "shrink_to_fit",
+    "find",
+    "count",
+    "at",
+    "front",
+    "back",
+    "data",
+    "get",
+    "set",
+    "reset",
+    "swap",
+    "emplace",
+    "emplace_back",
+    "make_shared",
+    "make_unique",
+    "make_pair",
+    "make_tuple",
+    "to_string",
+    "stoi",
+    "stol",
+    "stof",
+    "stod",
+    "c_str",
+    "length",
+    "substr",
+    "append",
+    "assign",
+    "open",
+    "close",
+    "read",
+    "write",
+    "getline",
+    "eof",
+    "fail",
+    "good",
+    "lock",
+    "unlock",
+    "try_lock",
+    "notify_one",
+    "notify_all",
+    "wait",
+    "first",
+    "second"
+  ]);
+  isKnownStdlib(name2) {
+    if (_CppAdapter.STDLIB_METHODS.has(name2)) return true;
+    const sep = name2.indexOf("::");
+    if (sep !== -1 && _CppAdapter.STDLIB_PREFIXES.has(name2.slice(0, sep))) return true;
+    const dot = name2.indexOf(".");
+    if (dot !== -1 && _CppAdapter.STDLIB_METHODS.has(name2.slice(dot + 1))) return true;
+    if (_CppAdapter.STDLIB_PREFIXES.has(name2)) return true;
+    return false;
   }
 };
 
@@ -37695,6 +37915,8 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
             const callee = this.resolveCall(calleeName, symbol);
             if (callee && callee.qualifiedName !== symbol.qualifiedName) {
               this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+              this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
             }
           }
         }
@@ -37789,6 +38011,201 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
     }
     return this.symbolsByLabel.get(name2)?.[0];
   }
+  static STDLIB_RECEIVERS = /* @__PURE__ */ new Set([
+    "System",
+    "String",
+    "Integer",
+    "Long",
+    "Double",
+    "Float",
+    "Short",
+    "Byte",
+    "Character",
+    "Boolean",
+    "Math",
+    "Object",
+    "Arrays",
+    "Collections",
+    "Objects",
+    "Optional",
+    "Thread",
+    "Runtime",
+    "Class",
+    "Enum",
+    "Iterable",
+    "Iterator",
+    "StringBuilder",
+    "StringBuffer",
+    "Number",
+    "Comparable",
+    "AutoCloseable",
+    "Throwable",
+    "Exception",
+    "Error",
+    "List",
+    "Map",
+    "Set",
+    "Queue",
+    "Deque",
+    "ArrayList",
+    "HashMap",
+    "HashSet",
+    "LinkedList",
+    "TreeMap",
+    "TreeSet",
+    "stream",
+    "Stream",
+    "Collectors",
+    "Optional",
+    // Logging frameworks
+    "log",
+    "logger",
+    "Logger",
+    "LOG"
+  ]);
+  static STDLIB_METHODS = /* @__PURE__ */ new Set([
+    "toString",
+    "equals",
+    "hashCode",
+    "compareTo",
+    "clone",
+    "finalize",
+    "println",
+    "print",
+    "printf",
+    "format",
+    "valueOf",
+    "parseInt",
+    "parseLong",
+    "parseDouble",
+    "of",
+    "get",
+    "put",
+    "add",
+    "remove",
+    "size",
+    "isEmpty",
+    "contains",
+    "iterator",
+    "stream",
+    "map",
+    "filter",
+    "collect",
+    "toList",
+    "orElse",
+    "orElseGet",
+    "orElseThrow",
+    "isPresent",
+    "ifPresent",
+    "length",
+    "charAt",
+    "substring",
+    "indexOf",
+    "lastIndexOf",
+    "replace",
+    "startsWith",
+    "endsWith",
+    "trim",
+    "split",
+    "toUpperCase",
+    "toLowerCase",
+    "sort",
+    "asList",
+    "emptyList",
+    "singletonList",
+    "unmodifiableList",
+    "append",
+    "insert",
+    "delete",
+    "reverse",
+    "capacity",
+    "currentTimeMillis",
+    "nanoTime",
+    "exit",
+    "gc",
+    "getenv",
+    "getProperty",
+    "start",
+    "run",
+    "join",
+    "sleep",
+    "wait",
+    "notify",
+    "notifyAll",
+    // Exception / Throwable methods
+    "getMessage",
+    "getCause",
+    "getStackTrace",
+    "printStackTrace",
+    "getLocalizedMessage",
+    // String methods not yet covered
+    "getBytes",
+    "equalsIgnoreCase",
+    "matches",
+    "replaceAll",
+    "replaceFirst",
+    "toCharArray",
+    "intern",
+    "chars",
+    "codePoints",
+    "strip",
+    "isBlank",
+    "repeat",
+    // I/O methods on streams, channels, sockets
+    "read",
+    "write",
+    "close",
+    "flush",
+    "available",
+    "readLine",
+    "readAllBytes",
+    "isClosed",
+    "isConnected",
+    "isInputShutdown",
+    "isOutputShutdown",
+    "remaining",
+    "position",
+    "limit",
+    "capacity",
+    "rewind",
+    "flip",
+    "clear",
+    // Tokenizer / scanner
+    "hasMoreTokens",
+    "nextToken",
+    "hasNext",
+    "next",
+    "nextLine",
+    "nextInt",
+    // Logging methods
+    "info",
+    "debug",
+    "warn",
+    "error",
+    "trace",
+    "fatal",
+    "isDebugEnabled",
+    // Collections / map additional
+    "values",
+    "keySet",
+    "entrySet",
+    "getOrDefault",
+    "putIfAbsent",
+    "computeIfAbsent",
+    "forEach",
+    "toArray",
+    "subList",
+    "listIterator",
+    "peek",
+    "poll",
+    "offer"
+  ]);
+  isKnownStdlib(name2) {
+    if (_JavaAdapter.STDLIB_METHODS.has(name2)) return true;
+    const dot = name2.indexOf(".");
+    if (dot !== -1 && _JavaAdapter.STDLIB_RECEIVERS.has(name2.slice(0, dot))) return true;
+    return false;
+  }
 };
 
 // src/languages/goAdapter.ts
@@ -37826,7 +38243,28 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     "println",
     "min",
     "max",
-    "clear"
+    "clear",
+    // Type conversions / primitives
+    "string",
+    "int",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uintptr",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
+    "byte",
+    "rune",
+    "bool",
+    "error"
   ]);
   constructor() {
     super({
@@ -37954,19 +38392,24 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
       const callName = capture.node.text;
-      if (_GoAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
       const callee = this.resolveSimpleCall(callName);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
       }
     }
     const selectorCaptures = selectorCallQuery.captures(functionNode);
     for (const capture of selectorCaptures) {
       if (capture.name !== "FUNC") continue;
       const methodName = capture.node.text;
+      const receiver = capture.node.parent?.childForFieldName("operand")?.text;
+      const fullName = receiver ? `${receiver}.${methodName}` : methodName;
       const callee = this.resolveSelectorCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
       }
     }
   }
@@ -38050,6 +38493,75 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     const packageFunc = packageFuncs?.find((n3) => !n3.contract);
     if (packageFunc) return packageFunc;
     return packageFuncs?.[0];
+  }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    "fmt",
+    "log",
+    "os",
+    "io",
+    "errors",
+    "strings",
+    "strconv",
+    "sync",
+    "context",
+    "time",
+    "net",
+    "math",
+    "sort",
+    "encoding",
+    "bytes",
+    "bufio",
+    "http",
+    "json",
+    "regexp",
+    "filepath",
+    "path",
+    "unicode",
+    "utf8",
+    "atomic",
+    "rand",
+    "flag",
+    "reflect",
+    "runtime",
+    "unsafe",
+    "testing",
+    "hex",
+    "base64",
+    "ioutil",
+    "exec",
+    "signal",
+    "url",
+    "crypto",
+    "tls",
+    "x509",
+    "sha256",
+    "sha512",
+    "md5",
+    "hmac",
+    // net/http subpackages
+    "httptest",
+    "httputil",
+    "cookiejar",
+    "httptrace",
+    // text/html/template
+    "template",
+    "html",
+    "tabwriter",
+    "csv",
+    "xml",
+    // common third-party used like stdlib
+    "render",
+    "chi",
+    "mux"
+  ]);
+  isKnownStdlib(name2) {
+    const dot = name2.indexOf(".");
+    if (dot !== -1) {
+      const pkg = name2.slice(0, dot);
+      if (_GoAdapter.STDLIB_PREFIXES.has(pkg)) return true;
+      if (pkg.length <= 2 && /^[a-z]+$/.test(pkg)) return true;
+    }
+    return _GoAdapter.BUILTIN_FUNCTIONS.has(name2);
   }
   resolveSelectorCall(methodName, caller) {
     if (caller.contract) {
@@ -38262,6 +38774,8 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
       const callee = this.resolveCall(callText, callType, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(callText, "external_unknown"));
       }
     }
   }
@@ -38413,6 +38927,154 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
     const free = freeFuncs?.find((n3) => !n3.contract);
     if (free) return free;
     return this.symbolsByLabel.get(callText)?.[0];
+  }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    "std",
+    "core",
+    "alloc",
+    "fmt",
+    "io",
+    "fs",
+    "str",
+    "slice",
+    "iter",
+    "ops",
+    "cmp",
+    "mem",
+    "ptr",
+    "sync",
+    "thread",
+    "collections",
+    "convert",
+    "clone",
+    "hash",
+    "marker",
+    "rc",
+    "cell",
+    "env",
+    "process",
+    "path",
+    "net",
+    "time",
+    "error",
+    "panic",
+    "any",
+    "borrow",
+    "boxed",
+    "vec",
+    "string",
+    "char",
+    "array",
+    "future",
+    "pin",
+    "task",
+    "stream",
+    "num"
+  ]);
+  static STDLIB_NAMES = /* @__PURE__ */ new Set([
+    "Some",
+    "None",
+    "Ok",
+    "Err",
+    "Box",
+    "Vec",
+    "String",
+    "Option",
+    "Result",
+    "map",
+    "filter",
+    "collect",
+    "iter",
+    "into_iter",
+    "iter_mut",
+    "fold",
+    "reduce",
+    "flat_map",
+    "flatten",
+    "zip",
+    "enumerate",
+    "take",
+    "skip",
+    "chain",
+    "any",
+    "all",
+    "find",
+    "position",
+    "count",
+    "sum",
+    "product",
+    "min",
+    "max",
+    "cloned",
+    "copied",
+    "rev",
+    "peekable",
+    "nth",
+    "last",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "expect",
+    "is_some",
+    "is_none",
+    "is_ok",
+    "is_err",
+    "ok",
+    "err",
+    "map_err",
+    "and_then",
+    "or_else",
+    "into",
+    "from",
+    "as_ref",
+    "as_mut",
+    "clone",
+    "default",
+    "to_string",
+    "to_owned",
+    "push",
+    "pop",
+    "len",
+    "is_empty",
+    "contains",
+    "get",
+    "insert",
+    "remove",
+    "retain",
+    "extend",
+    "drain",
+    "split",
+    "join",
+    "trim",
+    "println",
+    "eprintln",
+    "print",
+    "eprint",
+    "format",
+    "write",
+    "writeln",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "panic",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "drop",
+    "swap",
+    "replace",
+    "take",
+    "transmute",
+    "size_of",
+    "align_of"
+  ]);
+  isKnownStdlib(name2) {
+    if (_RustAdapter.STDLIB_NAMES.has(name2)) return true;
+    const sep = name2.indexOf("::");
+    if (sep !== -1 && _RustAdapter.STDLIB_PREFIXES.has(name2.slice(0, sep))) return true;
+    const dot = name2.lastIndexOf(".");
+    if (dot !== -1 && _RustAdapter.STDLIB_NAMES.has(name2.slice(dot + 1))) return true;
+    return false;
   }
 };
 
@@ -38598,6 +39260,8 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
       const callee = this.resolveCall(callText, callType, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(callText, "external_unknown"));
       }
     }
   }
@@ -38745,10 +39409,91 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     if (free) return free;
     return this.symbolsByLabel.get(callText)?.[0];
   }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    "starknet",
+    "core",
+    "array",
+    "dict",
+    "option",
+    "result",
+    "box",
+    "nullable",
+    "integer",
+    "felt252",
+    "bool",
+    "bytes31",
+    "byte_array",
+    "pedersen",
+    "poseidon",
+    "ec",
+    "ecdsa",
+    "keccak",
+    "sha256",
+    "secp256k1",
+    "secp256r1",
+    "contract_address",
+    "class_hash",
+    "storage",
+    "syscalls",
+    "traits",
+    "zeroable",
+    "clone",
+    "drop",
+    "serde",
+    "hash",
+    "default",
+    "into",
+    "try_into",
+    "fmt",
+    "debug",
+    "print",
+    "testing",
+    "alexandria",
+    "openzeppelin"
+  ]);
+  static STDLIB_NAMES = /* @__PURE__ */ new Set([
+    "assert",
+    "panic",
+    "panic_with_felt252",
+    "array",
+    "into",
+    "try_into",
+    "unwrap",
+    "expect",
+    "is_some",
+    "is_none",
+    "is_ok",
+    "is_err",
+    "append",
+    "pop_front",
+    "pop_front_consume",
+    "get",
+    "at",
+    "len",
+    "is_empty",
+    "span",
+    "clone",
+    "drop",
+    "copy",
+    "print",
+    "new",
+    "emit",
+    "read",
+    "write"
+  ]);
+  isKnownStdlib(name2) {
+    if (_CairoAdapter.STDLIB_NAMES.has(name2)) return true;
+    const sep = name2.indexOf("::");
+    if (sep !== -1 && _CairoAdapter.STDLIB_PREFIXES.has(name2.slice(0, sep))) return true;
+    const lastSep = name2.lastIndexOf("::");
+    if (lastSep !== -1 && _CairoAdapter.STDLIB_NAMES.has(name2.slice(lastSep + 2))) return true;
+    return false;
+  }
 };
 
 // src/languages/compactAdapter.ts
 init_esm_shims();
+import path5 from "path";
 var CompactAdapter = class _CompactAdapter extends BaseAdapter {
   static QUERIES = {
     FUNCTIONS: `(cdefn) @function`,
@@ -38878,6 +39623,7 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
+      const prefixMap = this.parseImportPrefixes(tree.rootNode, file.path);
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const funcNode = capture.node;
@@ -38888,13 +39634,96 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
           const callNode = callCapture.node;
           const calleeName = this.extractCalleeName(callNode);
           if (!calleeName) continue;
-          const callee = this.symbolsByLabel.get(calleeName)?.[0];
+          let callee = this.symbolsByLabel.get(calleeName)?.[0];
+          if (!callee && prefixMap.size > 0) {
+            for (const [prefix, modulePath] of prefixMap) {
+              if (calleeName.startsWith(prefix)) {
+                const funcName = calleeName.slice(prefix.length);
+                const candidates = this.symbolsByLabel.get(funcName) ?? [];
+                callee = candidates.find((s5) => path5.resolve(s5.file) === modulePath);
+                if (callee) break;
+              }
+            }
+          }
           if (callee && callee.qualifiedName !== symbol.qualifiedName) {
             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          } else if (!callee) {
+            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
           }
         }
       }
     }
+  }
+  // Parse `import "path" prefix Prefix_` declarations from the AST.
+  // Returns Map<prefix, absoluteFilePath> for cross-module call resolution.
+  parseImportPrefixes(root, sourceFile) {
+    const prefixMap = /* @__PURE__ */ new Map();
+    const sourceDir = path5.dirname(sourceFile);
+    const walk = (node) => {
+      if (node.type === "idecl") {
+        const importNameNode = node.childForFieldName("id");
+        const prefixField = node.childForFieldName("prefix");
+        if (importNameNode && prefixField) {
+          const text = importNameNode.text;
+          if (text.startsWith('"')) {
+            const importPath = text.slice(1, -1);
+            const prefixId = prefixField.childForFieldName("id");
+            if (prefixId) {
+              const absPath = path5.resolve(sourceDir, importPath + ".compact");
+              prefixMap.set(prefixId.text, absPath);
+            }
+          }
+        }
+      }
+      for (const child of node.children) {
+        walk(child);
+      }
+    };
+    walk(root);
+    return prefixMap;
+  }
+  static BUILTINS = /* @__PURE__ */ new Set([
+    // Compact/Midnight built-in functions and operations
+    "assert",
+    "require",
+    // Cryptographic primitives
+    "hash",
+    "merkle_root",
+    "pad",
+    "sign",
+    "verify",
+    "persistent_hash",
+    "transient_hash",
+    // ZK / circuit operations
+    "witness",
+    "reveal",
+    "disclose",
+    "const_check",
+    "zswap",
+    "ledger",
+    // Type constructors / conversions
+    "Uint",
+    "Bool",
+    "Bytes",
+    "Field",
+    "Vector",
+    "Maybe",
+    "Some",
+    "None",
+    // Standard operations
+    "length",
+    "append",
+    "slice",
+    "map",
+    "fold",
+    "zip",
+    "default",
+    "init",
+    "set",
+    "get"
+  ]);
+  isKnownStdlib(name2) {
+    return _CompactAdapter.BUILTINS.has(name2);
   }
   extractCalleeName(callNode) {
     const nameNode = callNode.childForFieldName("function") || callNode.childForFieldName("name") || callNode.firstChild;
@@ -39042,6 +39871,10 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
           const callee = this.resolveCallNode(callCapture.node, symbol);
           if (callee && callee.qualifiedName !== symbol.qualifiedName) {
             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          } else if (!callee) {
+            const callName = this.extractCallName(callCapture.node);
+            if (!callName) continue;
+            this.addCallee(symbol.qualifiedName, this.makeCallee(callName, "external_unknown"));
           }
         }
       }
@@ -39122,6 +39955,14 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
   resolveScope(containerName, _sourceFiles) {
     return this.symbolsByContainer.has(containerName) ? [containerName] : [];
   }
+  // Extract module::function name from a call_expr node (no arguments).
+  extractCallName(callNode) {
+    const nameChain = callNode.children.find((c3) => c3.type === "name_access_chain");
+    if (!nameChain) return null;
+    const ids = nameChain.children.filter((c3) => c3.type === "identifier").map((c3) => c3.text);
+    if (ids.length === 0) return null;
+    return ids.length >= 2 ? ids.slice(-2).join("::") : ids[ids.length - 1];
+  }
   resolveCallNode(callNode, caller) {
     const nameChain = callNode.children.find((c3) => c3.type === "name_access_chain");
     if (!nameChain) return void 0;
@@ -39142,6 +39983,112 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
     const free = this.symbolsByLabel.get(funcName)?.find((n3) => !n3.contract);
     if (free) return free;
     return this.symbolsByLabel.get(funcName)?.[0];
+  }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    // Aptos stdlib / framework modules
+    "aptos_framework",
+    "aptos_std",
+    "aptos_token",
+    "aptos_token_objects",
+    "std",
+    "vector",
+    "string",
+    "option",
+    "error",
+    "signer",
+    "hash",
+    "coin",
+    "fungible_asset",
+    "primary_fungible_store",
+    "object",
+    "event",
+    "table",
+    "table_with_length",
+    "account",
+    "timestamp",
+    "type_info",
+    "math64",
+    "math128",
+    "math_fixed",
+    "math_fixed64",
+    "bcs",
+    "from_bcs",
+    "copyable_any",
+    "comparator",
+    "fixed_point32",
+    "fixed_point64",
+    "transaction_context",
+    "chain_id",
+    "system_addresses",
+    "util",
+    "resource_account",
+    "multisig_account",
+    "code",
+    "block",
+    "stake",
+    "staking_config",
+    "governance",
+    "voting",
+    "storage_gas",
+    // Additional Aptos framework modules seen in practice
+    "features",
+    "ed25519",
+    "multi_ed25519",
+    "bls12381",
+    "crypto_algebra",
+    "secp256k1",
+    "secp256r1",
+    "single_key",
+    "multi_key",
+    "aptos_hash",
+    "cmp",
+    "pool_u64",
+    "pool_u64_unbound",
+    "big_vector",
+    "smart_vector",
+    "smart_table",
+    "string_utils",
+    "bcs_stream",
+    "ordered_map",
+    "dispatchable_fungible_asset",
+    "function_info",
+    "aggregator",
+    "aggregator_v2",
+    "optional_aggregator",
+    "permissioned_signer",
+    "delegation_pool",
+    "staking_proxy",
+    "genesis",
+    "randomness",
+    // Sui stdlib
+    "sui",
+    "transfer",
+    "tx_context",
+    "balance",
+    "pay",
+    "bag",
+    "vec_map",
+    "vec_set"
+  ]);
+  static STDLIB_FUNS = /* @__PURE__ */ new Set([
+    "assert",
+    "abort",
+    "move_to",
+    "move_from",
+    "borrow_global",
+    "borrow_global_mut",
+    "exists",
+    "freeze",
+    "destroy_empty",
+    "emit"
+  ]);
+  isKnownStdlib(name2) {
+    const sep = name2.indexOf("::");
+    if (sep !== -1 && _MoveAdapter.STDLIB_PREFIXES.has(name2.slice(0, sep))) return true;
+    for (const fn2 of _MoveAdapter.STDLIB_FUNS) {
+      if (name2 === fn2 || name2.startsWith(fn2 + "<") || name2.startsWith(fn2 + "(")) return true;
+    }
+    return false;
   }
 };
 
@@ -39313,6 +40260,8 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
           const callee = this.symbolsByLabel.get(callName)?.[0];
           if (callee && callee.qualifiedName !== symbol.qualifiedName) {
             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          } else if (!callee) {
+            this.addCallee(symbol.qualifiedName, this.makeCallee(callName, "external_unknown"));
           }
         }
         if (scopedCallQuery) {
@@ -39324,11 +40273,62 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
             const callee = this.symbolsByLabel.get(funcName)?.[0];
             if (callee && callee.qualifiedName !== symbol.qualifiedName) {
               this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+              this.addCallee(symbol.qualifiedName, this.makeCallee(callText, "external_unknown"));
             }
           }
         }
       }
     }
+  }
+  static STDLIB_NAMES = /* @__PURE__ */ new Set([
+    // Noir standard library
+    "assert",
+    "assert_eq",
+    "assert_constant",
+    "panic",
+    "std",
+    "dep",
+    "println",
+    "print",
+    "from_field",
+    "to_field",
+    "from_bits",
+    "to_bits",
+    "from_bytes",
+    "to_bytes",
+    "modulus",
+    "pow_32",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_mul",
+    "to_le_bytes",
+    "to_be_bytes",
+    "to_le_bits",
+    "to_be_bits",
+    "pedersen_hash",
+    "pedersen_commitment",
+    "sha256",
+    "blake2s",
+    "blake3",
+    "keccak256",
+    "poseidon",
+    "poseidon2",
+    "ecdsa_secp256k1",
+    "ecdsa_secp256r1",
+    "schnorr",
+    "ed25519",
+    "aes128_encrypt",
+    "sha256_compression"
+  ]);
+  isKnownStdlib(name2) {
+    if (_NoirAdapter.STDLIB_NAMES.has(name2)) return true;
+    const sep = name2.indexOf("::");
+    if (sep !== -1) {
+      const prefix = name2.slice(0, sep);
+      if (prefix === "std" || prefix === "dep") return true;
+    }
+    return false;
   }
 };
 
@@ -39470,10 +40470,71 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
           const callee = this.symbolsByLabel.get(calleeName)?.[0];
           if (callee && callee.qualifiedName !== symbol.qualifiedName) {
             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          } else if (!callee) {
+            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
           }
         }
       }
     }
+  }
+  static STDLIB_NAMES = /* @__PURE__ */ new Set([
+    // Tolk built-in functions and common FunC/Tolk stdlib
+    "send_raw_message",
+    "get_data",
+    "set_data",
+    "get_balance",
+    "accept_message",
+    "reserve_extra_currencies",
+    "slice_empty",
+    "slice_bits",
+    "slice_refs",
+    "slice_bits_refs",
+    "slice_data",
+    "load_bits",
+    "load_uint",
+    "load_int",
+    "load_ref",
+    "load_maybe_ref",
+    "load_coins",
+    "load_address",
+    "skip_bits",
+    "store_uint",
+    "store_int",
+    "store_ref",
+    "store_maybe_ref",
+    "store_bits",
+    "store_coins",
+    "store_address",
+    "store_builder",
+    "begin_cell",
+    "end_cell",
+    "begin_parse",
+    "cell_hash",
+    "slice_hash",
+    "string_hash",
+    "throw",
+    "throw_if",
+    "throw_unless",
+    "return",
+    "random",
+    "randomize_lt",
+    "cur_lt",
+    "now",
+    "is_address_none",
+    "pack_address",
+    "address_hash",
+    "tvm_hash",
+    "config_param",
+    "raw_commit",
+    "divmod",
+    "moddiv",
+    "muldiv",
+    "muldivr",
+    "muldivc",
+    "muldivmod"
+  ]);
+  isKnownStdlib(name2) {
+    return _TolkAdapter.STDLIB_NAMES.has(name2);
   }
 };
 
@@ -39527,44 +40588,49 @@ var JS_FAMILY_CONSTANTS = {
   commentFullBenefitDensity: 15,
   commentBenefitCap: 0.25
 };
-var JS_BUILTINS = /* @__PURE__ */ new Set([
-  "require",
-  "console",
-  "setTimeout",
-  "setInterval",
-  "clearTimeout",
-  "clearInterval",
-  "Promise",
-  "Array",
-  "Object",
-  "String",
-  "Number",
-  "Boolean",
-  "Math",
-  "JSON",
-  "Error",
-  "Date",
-  "RegExp",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Symbol",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "encodeURIComponent",
-  "decodeURIComponent",
-  "encodeURI",
-  "decodeURI",
-  "fetch",
-  "structuredClone",
-  "queueMicrotask",
-  "requestAnimationFrame",
-  "cancelAnimationFrame"
-]);
 var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
+  static BUILTINS = /* @__PURE__ */ new Set([
+    "require",
+    "console",
+    "setTimeout",
+    "setInterval",
+    "clearTimeout",
+    "clearInterval",
+    "Promise",
+    "Array",
+    "Object",
+    "String",
+    "Number",
+    "Boolean",
+    "Math",
+    "JSON",
+    "Error",
+    "Date",
+    "RegExp",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Symbol",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "encodeURIComponent",
+    "decodeURIComponent",
+    "encodeURI",
+    "decodeURI",
+    "fetch",
+    "structuredClone",
+    "queueMicrotask",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    "undefined",
+    "null",
+    "NaN",
+    "Infinity",
+    "globalThis"
+  ]);
   static CALL_QUERIES = {
     CLASSES: `(class_declaration) @class`,
     FUNCTIONS: `(function_declaration) @function`,
@@ -39583,7 +40649,7 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
       const classCaptures = classQuery.captures(tree.rootNode);
       for (const capture of classCaptures) {
         const classNode = capture.node;
-        const className = classNode.childForFieldName("name")?.text ?? "unknown";
+        const className = classNode.childForFieldName("name")?.text ?? classNode.children.find((c3) => c3.type === "identifier")?.text ?? "unknown";
         const bodyNode = classNode.childForFieldName("body");
         if (!bodyNode) continue;
         for (const child of bodyNode.children) {
@@ -39618,6 +40684,27 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
           node: funcNode,
           visibility
         }));
+      }
+      for (const child of tree.rootNode.children) {
+        const isExport = child.type === "export_statement";
+        const declNode = isExport ? child.children.find((c3) => c3.type === "lexical_declaration" || c3.type === "variable_declaration") : child.type === "lexical_declaration" || child.type === "variable_declaration" ? child : null;
+        if (!declNode) continue;
+        for (const declarator of declNode.children) {
+          if (declarator.type !== "variable_declarator") continue;
+          const nameNode = declarator.childForFieldName("name");
+          const valueNode = declarator.childForFieldName("value");
+          if (!nameNode || !valueNode) continue;
+          if (valueNode.type !== "arrow_function" && valueNode.type !== "function_expression") continue;
+          const fnName = nameNode.text;
+          const visibility = isExport ? "public" : "private";
+          this.indexSymbol(this.createEntry({
+            qualifiedName: fnName,
+            label: fnName,
+            file: file.path,
+            node: valueNode,
+            visibility
+          }));
+        }
       }
     }
   }
@@ -39674,6 +40761,20 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
         if (!symbol) continue;
         this.processCallsInNode(funcNode, symbol, simpleCallQuery, memberCallQuery);
       }
+      for (const child of tree.rootNode.children) {
+        const isExport = child.type === "export_statement";
+        const declNode = isExport ? child.children.find((c3) => c3.type === "lexical_declaration" || c3.type === "variable_declaration") : child.type === "lexical_declaration" || child.type === "variable_declaration" ? child : null;
+        if (!declNode) continue;
+        for (const declarator of declNode.children) {
+          if (declarator.type !== "variable_declarator") continue;
+          const valueNode = declarator.childForFieldName("value");
+          if (!valueNode) continue;
+          if (valueNode.type !== "arrow_function" && valueNode.type !== "function_expression") continue;
+          const symbol = this.findSymbolAtNode(valueNode, file.path);
+          if (!symbol) continue;
+          this.processCallsInNode(valueNode, symbol, simpleCallQuery, memberCallQuery);
+        }
+      }
     }
   }
   processCallsInNode(node, caller, simpleCallQuery, memberCallQuery) {
@@ -39681,10 +40782,11 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
       const callName = capture.node.text;
-      if (JS_BUILTINS.has(callName)) continue;
       const callee = this.resolveSimpleCall(callName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
       }
     }
     const memberCaptures = memberCallQuery.captures(node);
@@ -39694,6 +40796,10 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
       const callee = this.resolveMemberCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        const obj = capture.node.parent?.childForFieldName("object")?.text;
+        const fullName = obj && obj !== "this" && obj !== "self" ? `${obj}.${methodName}` : methodName;
+        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
       }
     }
   }
@@ -39808,6 +40914,187 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
     const candidates = this.symbolsByLabel.get(methodName);
     return candidates?.find((n3) => !!n3.contract);
   }
+  static STDLIB_RECEIVERS = /* @__PURE__ */ new Set([
+    // Global objects
+    "console",
+    "Math",
+    "JSON",
+    "Object",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "Date",
+    "RegExp",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Promise",
+    "Symbol",
+    "Error",
+    "Buffer",
+    "process",
+    "global",
+    "window",
+    "document",
+    "navigator",
+    "localStorage",
+    "sessionStorage",
+    "location",
+    "history",
+    // Node.js modules
+    "fs",
+    "path",
+    "os",
+    "crypto",
+    "http",
+    "https",
+    "net",
+    "url",
+    "util",
+    "events",
+    "stream",
+    "zlib",
+    "child_process",
+    "cluster",
+    "dns",
+    "readline",
+    "assert",
+    "querystring",
+    "vm",
+    "worker_threads",
+    "perf_hooks"
+  ]);
+  static STDLIB_METHODS = /* @__PURE__ */ new Set([
+    // Array methods
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "splice",
+    "slice",
+    "concat",
+    "join",
+    "reverse",
+    "sort",
+    "flat",
+    "flatMap",
+    "map",
+    "filter",
+    "reduce",
+    "reduceRight",
+    "forEach",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "indexOf",
+    "lastIndexOf",
+    "includes",
+    "some",
+    "every",
+    "fill",
+    "copyWithin",
+    "entries",
+    "keys",
+    "values",
+    // String methods
+    "split",
+    "trim",
+    "trimStart",
+    "trimEnd",
+    "padStart",
+    "padEnd",
+    "repeat",
+    "startsWith",
+    "endsWith",
+    "replace",
+    "replaceAll",
+    "match",
+    "matchAll",
+    "search",
+    "at",
+    "charAt",
+    "charCodeAt",
+    "codePointAt",
+    "normalize",
+    "toUpperCase",
+    "toLowerCase",
+    "toLocaleLowerCase",
+    "toLocaleUpperCase",
+    // Object/Promise methods
+    "then",
+    "catch",
+    "finally",
+    "resolve",
+    "reject",
+    "all",
+    "allSettled",
+    "any",
+    "race",
+    "assign",
+    "keys",
+    "values",
+    "entries",
+    "freeze",
+    "seal",
+    "create",
+    "defineProperty",
+    "hasOwnProperty",
+    "toString",
+    "valueOf",
+    "bind",
+    "call",
+    "apply",
+    // General
+    "log",
+    "warn",
+    "error",
+    "info",
+    "debug",
+    "trace",
+    "group",
+    "groupEnd",
+    "time",
+    "timeEnd",
+    "get",
+    "set",
+    "has",
+    "delete",
+    "clear",
+    "size",
+    "add",
+    "emit",
+    "on",
+    "off",
+    "once",
+    "removeListener",
+    "addListener",
+    "read",
+    "write",
+    "pipe",
+    "end",
+    "close",
+    "open",
+    "parse",
+    "stringify",
+    "test",
+    "exec",
+    "compile"
+  ]);
+  isKnownStdlib(name2) {
+    if (_JSFamilyAdapter.BUILTINS.has(name2)) return true;
+    if (_JSFamilyAdapter.STDLIB_METHODS.has(name2)) return true;
+    const dot = name2.indexOf(".");
+    if (dot !== -1) {
+      const receiver = name2.slice(0, dot);
+      const method = name2.slice(dot + 1);
+      if (_JSFamilyAdapter.STDLIB_RECEIVERS.has(receiver)) return true;
+      if (_JSFamilyAdapter.STDLIB_METHODS.has(method)) return true;
+    }
+    return false;
+  }
 };
 var JavaScriptAdapter = class extends JSFamilyAdapter {
   constructor() {
@@ -39848,7 +41135,10 @@ var FlowAdapter = class extends JSFamilyAdapter {
 
 // src/languages/masmAdapter.ts
 init_esm_shims();
+import path6 from "path";
 var MasmAdapter = class _MasmAdapter extends BaseAdapter {
+  // basename (no extension) → absolute file path, built from corpus files
+  _filesByBasename = /* @__PURE__ */ new Map();
   static QUERIES = {
     PROCEDURES: `(procedure) @proc`,
     ENTRY: `(entrypoint) @entry`,
@@ -39891,6 +41181,10 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("masm" /* Masm */);
     const parser = await service.createParser("masm" /* Masm */);
+    for (const file of files) {
+      const basename = path6.basename(file.path, ".masm");
+      this._filesByBasename.set(basename, file.path);
+    }
     const procQuery = new Query(lang, _MasmAdapter.QUERIES.PROCEDURES);
     const entryQuery = new Query(lang, _MasmAdapter.QUERIES.ENTRY);
     for (const file of files) {
@@ -39986,31 +41280,60 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
+      const moduleAliases = this.parseModuleAliases(file.content);
       const procCaptures = procQuery.captures(tree.rootNode);
       for (const capture of procCaptures) {
         const procNode = capture.node;
         const symbol = this.findSymbolAtNode(procNode, file.path);
         if (!symbol) continue;
-        this.processCallsInNode(procNode, symbol, callQuery);
+        this.processCallsInNode(procNode, symbol, callQuery, moduleAliases);
       }
       const entryCaptures = entryQuery.captures(tree.rootNode);
       for (const capture of entryCaptures) {
         const entryNode = capture.node;
         const symbol = this.findSymbolAtNode(entryNode, file.path);
         if (!symbol) continue;
-        this.processCallsInNode(entryNode, symbol, callQuery);
+        this.processCallsInNode(entryNode, symbol, callQuery, moduleAliases);
       }
     }
   }
-  processCallsInNode(node, caller, callQuery) {
+  // Parse `use module::path` and `use module::path -> alias` declarations.
+  // Returns Map<alias, filePath> using the corpus basename index.
+  parseModuleAliases(content) {
+    const aliasMap = /* @__PURE__ */ new Map();
+    const useRe = /^use\s+([\w:]+)(?:\s*->\s*(\w+))?/gm;
+    let m8;
+    while ((m8 = useRe.exec(content)) !== null) {
+      const modulePath = m8[1];
+      const segments = modulePath.split("::");
+      const defaultAlias = segments[segments.length - 1];
+      const alias = m8[2] ?? defaultAlias;
+      const filePath = this._filesByBasename.get(defaultAlias);
+      if (filePath) aliasMap.set(alias, filePath);
+    }
+    return aliasMap;
+  }
+  processCallsInNode(node, caller, callQuery, moduleAliases) {
     const callCaptures = callQuery.captures(node);
     for (const capture of callCaptures) {
       const callNode = capture.node;
       const calleeName = this.extractCalleeName(callNode);
       if (!calleeName) continue;
-      const callee = this.symbolsByLabel.get(calleeName)?.[0];
+      let callee = this.symbolsByLabel.get(calleeName)?.[0];
+      if (!callee && calleeName.includes("::")) {
+        const sep = calleeName.indexOf("::");
+        const alias = calleeName.slice(0, sep);
+        const funcName = calleeName.slice(sep + 2);
+        const modulePath = moduleAliases.get(alias);
+        if (modulePath) {
+          const candidates = this.symbolsByLabel.get(funcName) ?? [];
+          callee = candidates.find((s5) => s5.file === modulePath);
+        }
+      }
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
       }
     }
   }
@@ -40020,6 +41343,35 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     const text = callNode.text.trim();
     const match = text.match(/(?:exec|call|syscall)\.(\S+)/);
     return match?.[1];
+  }
+  static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
+    // Miden VM standard library modules
+    "mem",
+    "sys",
+    "math",
+    "crypto",
+    "collections",
+    "io",
+    "std",
+    // Common Miden stdlib paths
+    "mem::pipe",
+    "mem::storew",
+    "mem::loadw",
+    "crypto::hashes",
+    "crypto::dsa",
+    "crypto::fri",
+    "crypto::stark",
+    "math::u64",
+    "math::u32",
+    "math::poly",
+    "collections::mmr",
+    "collections::smt"
+  ]);
+  isKnownStdlib(name2) {
+    for (const prefix of _MasmAdapter.STDLIB_PREFIXES) {
+      if (name2 === prefix || name2.startsWith(prefix + "::") || name2.startsWith(prefix + ".")) return true;
+    }
+    return false;
   }
 };
 
@@ -40046,7 +41398,7 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
             (call function: (attribute object: (call function: (identifier) @super_call (#eq? @super_call "super")) attribute: (identifier) @FUNC))
         `
   };
-  static BUILTIN_FUNCTIONS = /* @__PURE__ */ new Set([
+  static BUILTINS = /* @__PURE__ */ new Set([
     "print",
     "len",
     "range",
@@ -40063,6 +41415,7 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     "hasattr",
     "getattr",
     "setattr",
+    "delattr",
     "super",
     "property",
     "staticmethod",
@@ -40112,7 +41465,110 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     "globals",
     "locals",
     "help",
-    "ascii"
+    "ascii",
+    "assert"
+  ]);
+  static STDLIB_MODULE_PREFIXES = /* @__PURE__ */ new Set([
+    "os",
+    "sys",
+    "re",
+    "json",
+    "math",
+    "datetime",
+    "time",
+    "logging",
+    "pathlib",
+    "hashlib",
+    "base64",
+    "urllib",
+    "collections",
+    "functools",
+    "itertools",
+    "io",
+    "random",
+    "struct",
+    "typing",
+    "abc",
+    "copy",
+    "pickle",
+    "socket",
+    "threading",
+    "subprocess",
+    "shutil",
+    "tempfile",
+    "glob",
+    "fnmatch",
+    "signal",
+    "traceback",
+    "warnings",
+    "contextlib",
+    "dataclasses",
+    "enum",
+    "inspect",
+    "operator",
+    "string",
+    "textwrap",
+    "unittest",
+    "pytest",
+    "csv",
+    "xml",
+    "html",
+    "http",
+    "uuid",
+    "decimal",
+    "fractions",
+    "statistics",
+    "zlib",
+    "gzip",
+    "bz2",
+    "lzma",
+    "tarfile",
+    "zipfile",
+    "configparser",
+    "argparse",
+    "pprint",
+    "reprlib"
+  ]);
+  static COMMON_METHODS = /* @__PURE__ */ new Set([
+    "append",
+    "extend",
+    "pop",
+    "push",
+    "insert",
+    "remove",
+    "clear",
+    "copy",
+    "update",
+    "keys",
+    "values",
+    "items",
+    "get",
+    "setdefault",
+    "count",
+    "index",
+    "split",
+    "join",
+    "strip",
+    "lstrip",
+    "rstrip",
+    "replace",
+    "find",
+    "startswith",
+    "endswith",
+    "upper",
+    "lower",
+    "capitalize",
+    "encode",
+    "decode",
+    "format",
+    "read",
+    "write",
+    "close",
+    "seek",
+    "tell",
+    "flush",
+    "readline",
+    "readlines"
   ]);
   inheritanceGraph = /* @__PURE__ */ new Map();
   constructor() {
@@ -40313,20 +41769,24 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
       const callName = capture.node.text;
-      if (_PythonAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
       const callee = this.resolveSimpleCall(callName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee) {
+        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
       }
     }
     const attrCaptures = attributeCallQuery.captures(functionNode);
     for (const capture of attrCaptures) {
       if (capture.name !== "FUNC") continue;
       const methodName = capture.node.text;
-      if (_PythonAdapter.BUILTIN_FUNCTIONS.has(methodName)) continue;
       const callee = this.resolveAttributeCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
         this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      } else if (!callee && !superMethodNames.has(methodName)) {
+        const receiver = capture.node.parent?.childForFieldName("object")?.text;
+        const fullName = receiver && receiver !== "self" && receiver !== "cls" ? `${receiver}.${methodName}` : methodName;
+        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
       }
     }
   }
@@ -40440,6 +41900,18 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     }
     const candidates = this.symbolsByLabel.get(methodName);
     return candidates?.find((n3) => !!n3.contract);
+  }
+  isKnownStdlib(name2) {
+    if (_PythonAdapter.BUILTINS.has(name2)) return true;
+    if (_PythonAdapter.COMMON_METHODS.has(name2)) return true;
+    const dot = name2.indexOf(".");
+    if (dot !== -1) {
+      const prefix = name2.slice(0, dot);
+      const method = name2.slice(dot + 1);
+      if (_PythonAdapter.STDLIB_MODULE_PREFIXES.has(prefix)) return true;
+      if (_PythonAdapter.COMMON_METHODS.has(method)) return true;
+    }
+    return false;
   }
 };
 
@@ -41178,10 +42650,21 @@ function extractSnippet(caller, sourceFiles) {
 // src/static/persistence.ts
 init_esm_shims();
 import fs5 from "fs/promises";
-import path5 from "path";
+import path7 from "path";
 import os from "os";
+function buildLocatorIndex(symbolMap) {
+  const index = {};
+  for (const [qn2, entry] of symbolMap) {
+    if (entry.range) {
+      index[`${entry.file}:${entry.range.start.line}`] = qn2;
+    } else if (entry.line) {
+      index[`${entry.file}:${entry.line}`] = qn2;
+    }
+  }
+  return index;
+}
 function getScanPath(id) {
-  return path5.join(os.tmpdir(), `saist-${id}.json`);
+  return path7.join(os.tmpdir(), `saist-${id}.json`);
 }
 async function writeScanState(state) {
   const filePath = getScanPath(state.scanId);
@@ -41262,6 +42745,7 @@ async function runScan(filesByLanguage, context, sourceFiles) {
     status,
     findings: [],
     sourceFiles: serializedSources,
+    locatorIndex: buildLocatorIndex(combined),
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
@@ -41301,7 +42785,7 @@ function createSastInitScanHandler(engine2) {
       const sourceFiles = /* @__PURE__ */ new Map();
       for (const file of files) {
         sourceFiles.set(file.path, file.content);
-        const lang = engine2.detectLanguage(file.path);
+        const lang = engine2.detectLanguage(file.path, file.content);
         if (!lang) continue;
         if (!input.languages.includes(lang)) continue;
         const adapter = engine2.getAdapter(lang);
@@ -41347,19 +42831,20 @@ function createSastInitScanHandler(engine2) {
 
 // src/mcp/tools/sastResolveGaps.ts
 init_esm_shims();
+import fs6 from "fs/promises";
 var sastResolveGapsSchema = {
-  description: "Resolve gaps in a SAiST scan by providing facts the static pass could not determine. Merges resolutions into the persisted symbol map.",
+  description: "Resolve gaps in a SAiST scan by providing facts the static pass could not determine. Merges resolutions into the persisted symbol map. Supply resolvedTo: { file, line } to redirect the walker to the concrete implementation.",
   inputSchema: {
     scanId: external_exports.string().describe("Scan ID from sast_init_scan"),
     resolutions: external_exports.array(external_exports.object({
       gapId: external_exports.string().describe("Gap ID to resolve"),
-      facts: external_exports.record(external_exports.unknown()).describe("Partial SymbolEntry facts to merge"),
+      facts: external_exports.record(external_exports.unknown()).describe("Partial SymbolEntry facts to merge. Include resolvedTo: { file, line } to redirect the walker to the concrete symbol."),
       resolvedBy: external_exports.enum(["agent", "manual"]).describe("Who resolved this gap"),
       confidence: external_exports.enum(["high", "medium", "low"]).describe("Confidence in the resolution")
     })).describe("Array of gap resolutions")
   }
 };
-function createSastResolveGapsHandler() {
+function createSastResolveGapsHandler(engine2) {
   return async (input) => {
     try {
       const state = await readScanState(input.scanId);
@@ -41369,26 +42854,65 @@ function createSastResolveGapsHandler() {
         };
       }
       const symbolMap = recordToSymbolMap(state.symbolMap);
+      const missingFiles = /* @__PURE__ */ new Map();
+      for (const resolution of input.resolutions) {
+        const resolvedTo = resolution.facts.resolvedTo;
+        if (resolvedTo && !state.sourceFiles[resolvedTo.file] && !missingFiles.has(resolvedTo.file)) {
+          try {
+            const content = await fs6.readFile(resolvedTo.file, "utf-8");
+            missingFiles.set(resolvedTo.file, content);
+          } catch {
+          }
+        }
+      }
+      if (missingFiles.size > 0) {
+        const byLanguage = /* @__PURE__ */ new Map();
+        for (const [filePath, content] of missingFiles) {
+          const lang = engine2.detectLanguage(filePath, content);
+          if (!lang) continue;
+          const adapter = engine2.getAdapter(lang);
+          if (!adapter) continue;
+          if (!byLanguage.has(lang)) byLanguage.set(lang, []);
+          byLanguage.get(lang).push({ path: filePath, content });
+        }
+        for (const [lang, files] of byLanguage) {
+          const adapter = engine2.getAdapter(lang);
+          try {
+            const newSymbols = await adapter.generateSymbolMap(files);
+            for (const [qn2, entry] of newSymbols) {
+              symbolMap.set(qn2, entry);
+            }
+          } catch {
+          }
+        }
+        for (const [filePath, content] of missingFiles) {
+          state.sourceFiles[filePath] = content;
+        }
+        state.locatorIndex = buildLocatorIndex(symbolMap);
+      }
       let applied = 0;
       for (const resolution of input.resolutions) {
         const gap = state.gaps.find((g2) => g2.id === resolution.gapId);
         if (!gap) continue;
+        const resolvedTo = resolution.facts.resolvedTo;
+        const redirectTo = resolvedTo ? state.locatorIndex[`${resolvedTo.file}:${resolvedTo.line}`] : void 0;
+        const { resolvedTo: _stripped, ...entryFacts } = resolution.facts;
         const existing = symbolMap.get(gap.qualifiedName);
         if (existing) {
-          const merged = {
+          symbolMap.set(gap.qualifiedName, {
             ...existing,
-            ...resolution.facts,
+            ...entryFacts,
             resolvedBy: resolution.resolvedBy,
-            confidence: resolution.confidence
-          };
-          symbolMap.set(gap.qualifiedName, merged);
-        } else if (resolution.facts.qualifiedName) {
+            confidence: resolution.confidence,
+            ...redirectTo ? { redirectTo } : {}
+          });
+        } else {
           symbolMap.set(gap.qualifiedName, {
             qualifiedName: gap.qualifiedName,
+            kind: "function",
             file: gap.callSite.file,
             line: gap.callSite.line,
             language: "solidity",
-            // will be overridden by facts
             label: gap.qualifiedName.split(".").pop() ?? gap.qualifiedName,
             writesState: [],
             readsState: [],
@@ -41400,7 +42924,8 @@ function createSastResolveGapsHandler() {
             resolvedBy: resolution.resolvedBy,
             confidence: resolution.confidence,
             visibility: "internal",
-            ...resolution.facts
+            ...entryFacts,
+            ...redirectTo ? { redirectTo } : {}
           });
         }
         applied++;
@@ -41421,6 +42946,7 @@ function createSastResolveGapsHandler() {
           text: encode({
             scanId: input.scanId,
             applied,
+            expandedFiles: missingFiles.size,
             remainingCount: remaining.length,
             status
           })
@@ -41442,7 +42968,7 @@ init_esm_shims();
 
 // src/static/rule-loader.ts
 init_esm_shims();
-import path6 from "path";
+import path8 from "path";
 function isRule(rule) {
   return typeof rule === "object" && rule !== null && "id" in rule && "finalize" in rule && typeof rule.finalize === "function";
 }
@@ -41453,7 +42979,7 @@ async function loadCustomRules(paths) {
   const rules = [];
   const failed = [];
   for (const rulePath of paths) {
-    const fullPath = path6.resolve(rulePath);
+    const fullPath = path8.resolve(rulePath);
     try {
       let mod;
       if (fullPath.endsWith(".ts")) {
@@ -41501,10 +43027,13 @@ async function walkDeep(node, rule, ctx, visited, depth, maxDepth) {
   rule.enter?.(node, ctx);
   const callee = ctx.trait.resolveCallee(node, ctx.symbolMap, ctx.sourceFiles);
   if (callee && !visited.has(callee.qualifiedName)) {
-    const calleeNode = await lookupFunctionNode(callee.qualifiedName, ctx.symbolMap, ctx);
+    const gapEntry = ctx.symbolMap.get(callee.qualifiedName);
+    const targetQN = gapEntry?.redirectTo ?? callee.qualifiedName;
+    const calleeNode = await lookupFunctionNode(targetQN, ctx.symbolMap, ctx);
     if (calleeNode) {
       visited.add(callee.qualifiedName);
-      const entry = ctx.symbolMap.get(callee.qualifiedName);
+      visited.add(targetQN);
+      const entry = ctx.symbolMap.get(targetQN);
       const prevFile = ctx.currentFile;
       ctx.currentFile = entry.file;
       await walkDeep(calleeNode, rule, ctx, visited, depth + 1, maxDepth);
@@ -43470,7 +44999,7 @@ server.registerTool(
 server.registerTool(
   "sast_resolve_gaps",
   sastResolveGapsSchema,
-  createSastResolveGapsHandler()
+  createSastResolveGapsHandler(engine)
 );
 server.registerTool(
   "sast_run_rules",

@@ -245,6 +245,8 @@ export class CppAdapter extends BaseAdapter {
             const callee = this.resolveCall(calleeName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
             }
         }
 
@@ -252,10 +254,14 @@ export class CppAdapter extends BaseAdapter {
         for (const capture of fieldCallQuery.captures(node)) {
             if (capture.name !== 'FUNC') continue;
             const methodName = capture.node.text;
-            // Try same class first, then any match
+            const receiver = capture.node.parent?.childForFieldName('object')?.text
+                ?? capture.node.parent?.childForFieldName('argument')?.text;
+            const fullName = receiver ? `${receiver}.${methodName}` : methodName;
             const callee = this.resolveMemberCall(methodName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
             }
         }
 
@@ -266,6 +272,8 @@ export class CppAdapter extends BaseAdapter {
             const callee = this.resolveCall(funcName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(funcName, 'external_unknown'));
             }
         }
     }
@@ -402,5 +410,39 @@ export class CppAdapter extends BaseAdapter {
         }
         // 2. Any class with that method name
         return this.symbolsByLabel.get(name)?.[0];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        'std', 'boost', '__builtin', '__atomic', 'assert', 'printf', 'fprintf',
+        'sprintf', 'snprintf', 'scanf', 'sscanf', 'malloc', 'calloc', 'realloc', 'free',
+        'memcpy', 'memmove', 'memset', 'memcmp', 'strlen', 'strcpy', 'strncpy',
+        'strcmp', 'strncmp', 'strcat', 'strncat', 'strchr', 'strstr',
+        'fopen', 'fclose', 'fread', 'fwrite', 'fgets', 'fputs', 'feof', 'fseek', 'ftell',
+        'exit', 'abort', 'atexit', 'system', 'getenv', 'rand', 'srand', 'abs',
+        'new', 'delete',
+    ]);
+
+    private static readonly STDLIB_METHODS = new Set([
+        'push_back', 'pop_back', 'push_front', 'pop_front', 'insert', 'erase', 'clear',
+        'begin', 'end', 'rbegin', 'rend', 'cbegin', 'cend',
+        'size', 'empty', 'capacity', 'reserve', 'resize', 'shrink_to_fit',
+        'find', 'count', 'at', 'front', 'back', 'data',
+        'get', 'set', 'reset', 'swap', 'emplace', 'emplace_back',
+        'make_shared', 'make_unique', 'make_pair', 'make_tuple',
+        'to_string', 'stoi', 'stol', 'stof', 'stod',
+        'c_str', 'length', 'substr', 'append', 'assign',
+        'open', 'close', 'read', 'write', 'getline', 'eof', 'fail', 'good',
+        'lock', 'unlock', 'try_lock', 'notify_one', 'notify_all', 'wait',
+        'first', 'second',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (CppAdapter.STDLIB_METHODS.has(name)) return true;
+        const sep = name.indexOf('::');
+        if (sep !== -1 && CppAdapter.STDLIB_PREFIXES.has(name.slice(0, sep))) return true;
+        const dot = name.indexOf('.');
+        if (dot !== -1 && CppAdapter.STDLIB_METHODS.has(name.slice(dot + 1))) return true;
+        if (CppAdapter.STDLIB_PREFIXES.has(name)) return true;
+        return false;
     }
 }

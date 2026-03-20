@@ -29,17 +29,36 @@ export class PythonAdapter extends BaseAdapter {
         `
     } as const;
 
-    private static readonly BUILTIN_FUNCTIONS = new Set([
+    private static readonly BUILTINS = new Set([
         'print', 'len', 'range', 'int', 'str', 'float', 'list', 'dict',
         'set', 'tuple', 'type', 'isinstance', 'issubclass', 'hasattr',
-        'getattr', 'setattr', 'super', 'property', 'staticmethod',
+        'getattr', 'setattr', 'delattr', 'super', 'property', 'staticmethod',
         'classmethod', 'enumerate', 'zip', 'map', 'filter', 'sorted',
         'reversed', 'min', 'max', 'sum', 'abs', 'round', 'open', 'input',
         'bool', 'bytes', 'bytearray', 'memoryview', 'object', 'id',
         'hash', 'repr', 'format', 'vars', 'dir', 'callable', 'iter',
         'next', 'slice', 'frozenset', 'chr', 'ord', 'hex', 'oct', 'bin',
         'pow', 'divmod', 'any', 'all', 'breakpoint', 'compile', 'eval',
-        'exec', 'globals', 'locals', 'help', 'ascii'
+        'exec', 'globals', 'locals', 'help', 'ascii', 'assert',
+    ]);
+
+    private static readonly STDLIB_MODULE_PREFIXES = new Set([
+        'os', 'sys', 're', 'json', 'math', 'datetime', 'time', 'logging', 'pathlib',
+        'hashlib', 'base64', 'urllib', 'collections', 'functools', 'itertools', 'io',
+        'random', 'struct', 'typing', 'abc', 'copy', 'pickle', 'socket', 'threading',
+        'subprocess', 'shutil', 'tempfile', 'glob', 'fnmatch', 'signal', 'traceback',
+        'warnings', 'contextlib', 'dataclasses', 'enum', 'inspect', 'operator',
+        'string', 'textwrap', 'unittest', 'pytest', 'csv', 'xml', 'html', 'http',
+        'uuid', 'decimal', 'fractions', 'statistics', 'zlib', 'gzip', 'bz2', 'lzma',
+        'tarfile', 'zipfile', 'configparser', 'argparse', 'pprint', 'reprlib',
+    ]);
+
+    private static readonly COMMON_METHODS = new Set([
+        'append', 'extend', 'pop', 'push', 'insert', 'remove', 'clear', 'copy',
+        'update', 'keys', 'values', 'items', 'get', 'setdefault', 'count', 'index',
+        'split', 'join', 'strip', 'lstrip', 'rstrip', 'replace', 'find', 'startswith',
+        'endswith', 'upper', 'lower', 'capitalize', 'encode', 'decode', 'format',
+        'read', 'write', 'close', 'seek', 'tell', 'flush', 'readline', 'readlines',
     ]);
 
     private inheritanceGraph: Map<string, string[]> = new Map();
@@ -295,11 +314,11 @@ export class PythonAdapter extends BaseAdapter {
             if (capture.name !== 'FUNC') continue;
 
             const callName = capture.node.text;
-            if (PythonAdapter.BUILTIN_FUNCTIONS.has(callName)) continue;
-
             const callee = this.resolveSimpleCall(callName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(callName, 'external_unknown'));
             }
         }
 
@@ -310,11 +329,15 @@ export class PythonAdapter extends BaseAdapter {
             if (capture.name !== 'FUNC') continue;
 
             const methodName = capture.node.text;
-            if (PythonAdapter.BUILTIN_FUNCTIONS.has(methodName)) continue;
-
             const callee = this.resolveAttributeCall(methodName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee && !superMethodNames.has(methodName)) {
+                const receiver = capture.node.parent?.childForFieldName('object')?.text;
+                const fullName = receiver && receiver !== 'self' && receiver !== 'cls'
+                    ? `${receiver}.${methodName}`
+                    : methodName;
+                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
             }
         }
     }
@@ -470,6 +493,19 @@ export class PythonAdapter extends BaseAdapter {
         // 3. Fallback: any class with that method name
         const candidates = this.symbolsByLabel.get(methodName);
         return candidates?.find(n => !!n.contract);
+    }
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (PythonAdapter.BUILTINS.has(name)) return true;
+        if (PythonAdapter.COMMON_METHODS.has(name)) return true;
+        const dot = name.indexOf('.');
+        if (dot !== -1) {
+            const prefix = name.slice(0, dot);
+            const method = name.slice(dot + 1);
+            if (PythonAdapter.STDLIB_MODULE_PREFIXES.has(prefix)) return true;
+            if (PythonAdapter.COMMON_METHODS.has(method)) return true;
+        }
+        return false;
     }
 
 }

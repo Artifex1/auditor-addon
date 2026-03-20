@@ -172,6 +172,11 @@ export class MoveAdapter extends BaseAdapter {
                     const callee = this.resolveCallNode(callCapture.node, symbol);
                     if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                         this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    } else if (!callee) {
+                        // Use extracted name (module::func), not the full call text
+                        const callName = this.extractCallName(callCapture.node);
+                        if (!callName) continue;
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(callName, 'external_unknown'));
                     }
                 }
             }
@@ -281,6 +286,16 @@ export class MoveAdapter extends BaseAdapter {
         return this.symbolsByContainer.has(containerName) ? [containerName] : [];
     }
 
+    // Extract module::function name from a call_expr node (no arguments).
+    private extractCallName(callNode: Node): string | null {
+        const nameChain = callNode.children.find(c => c.type === 'name_access_chain');
+        if (!nameChain) return null;
+        const ids = nameChain.children.filter(c => c.type === 'identifier').map(c => c.text);
+        if (ids.length === 0) return null;
+        // Return last two identifiers joined with :: for qualified calls, or just the last for bare calls
+        return ids.length >= 2 ? ids.slice(-2).join('::') : ids[ids.length - 1];
+    }
+
     private resolveCallNode(callNode: Node, caller: SymbolEntry): SymbolEntry | undefined {
         // call_expr → name_access_chain → (identifier (:: identifier)*)
         const nameChain = callNode.children.find(c => c.type === 'name_access_chain');
@@ -313,6 +328,44 @@ export class MoveAdapter extends BaseAdapter {
         if (free) return free;
 
         return this.symbolsByLabel.get(funcName)?.[0];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        // Aptos stdlib / framework modules
+        'aptos_framework', 'aptos_std', 'aptos_token', 'aptos_token_objects',
+        'std', 'vector', 'string', 'option', 'error', 'signer', 'hash',
+        'coin', 'fungible_asset', 'primary_fungible_store', 'object', 'event',
+        'table', 'table_with_length', 'account', 'timestamp', 'type_info',
+        'math64', 'math128', 'math_fixed', 'math_fixed64', 'bcs', 'from_bcs',
+        'copyable_any', 'comparator', 'fixed_point32', 'fixed_point64',
+        'transaction_context', 'chain_id', 'system_addresses', 'util',
+        'resource_account', 'multisig_account', 'code', 'block', 'stake',
+        'staking_config', 'governance', 'voting', 'storage_gas',
+        // Additional Aptos framework modules seen in practice
+        'features', 'ed25519', 'multi_ed25519', 'bls12381', 'crypto_algebra',
+        'secp256k1', 'secp256r1', 'single_key', 'multi_key', 'aptos_hash',
+        'cmp', 'pool_u64', 'pool_u64_unbound', 'big_vector', 'smart_vector',
+        'smart_table', 'string_utils', 'bcs_stream', 'ordered_map',
+        'dispatchable_fungible_asset', 'function_info', 'aggregator',
+        'aggregator_v2', 'optional_aggregator', 'permissioned_signer',
+        'delegation_pool', 'staking_proxy', 'genesis', 'randomness',
+        // Sui stdlib
+        'sui', 'transfer', 'tx_context', 'balance', 'pay', 'bag', 'vec_map', 'vec_set',
+    ]);
+
+    private static readonly STDLIB_FUNS = new Set([
+        'assert', 'abort', 'move_to', 'move_from', 'borrow_global', 'borrow_global_mut',
+        'exists', 'freeze', 'destroy_empty', 'emit',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        const sep = name.indexOf('::');
+        if (sep !== -1 && MoveAdapter.STDLIB_PREFIXES.has(name.slice(0, sep))) return true;
+        // Bare function names — check with startsWith to handle type params like borrow_global<T>
+        for (const fn of MoveAdapter.STDLIB_FUNS) {
+            if (name === fn || name.startsWith(fn + '<') || name.startsWith(fn + '(')) return true;
+        }
+        return false;
     }
 
 }

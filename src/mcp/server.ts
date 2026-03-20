@@ -89,7 +89,7 @@ server.registerTool(
 server.registerTool(
     "sast_resolve_gaps",
     sastResolveGapsSchema,
-    createSastResolveGapsHandler()
+    createSastResolveGapsHandler(engine)
 );
 
 server.registerTool(

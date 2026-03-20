@@ -176,6 +176,8 @@ export class JavaAdapter extends BaseAdapter {
                         const callee = this.resolveCall(calleeName, symbol);
                         if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                             this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                        } else if (!callee) {
+                            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
                         }
                     }
                 }
@@ -298,5 +300,54 @@ export class JavaAdapter extends BaseAdapter {
         }
         // 2. Any method with that name
         return this.symbolsByLabel.get(name)?.[0];
+    }
+
+    private static readonly STDLIB_RECEIVERS = new Set([
+        'System', 'String', 'Integer', 'Long', 'Double', 'Float', 'Short', 'Byte',
+        'Character', 'Boolean', 'Math', 'Object', 'Arrays', 'Collections', 'Objects',
+        'Optional', 'Thread', 'Runtime', 'Class', 'Enum', 'Iterable', 'Iterator',
+        'StringBuilder', 'StringBuffer', 'Number', 'Comparable', 'AutoCloseable',
+        'Throwable', 'Exception', 'Error', 'List', 'Map', 'Set', 'Queue', 'Deque',
+        'ArrayList', 'HashMap', 'HashSet', 'LinkedList', 'TreeMap', 'TreeSet',
+        'stream', 'Stream', 'Collectors', 'Optional',
+        // Logging frameworks
+        'log', 'logger', 'Logger', 'LOG',
+    ]);
+
+    private static readonly STDLIB_METHODS = new Set([
+        'toString', 'equals', 'hashCode', 'compareTo', 'clone', 'finalize',
+        'println', 'print', 'printf', 'format', 'valueOf', 'parseInt', 'parseLong',
+        'parseDouble', 'of', 'get', 'put', 'add', 'remove', 'size', 'isEmpty',
+        'contains', 'iterator', 'stream', 'map', 'filter', 'collect', 'toList',
+        'orElse', 'orElseGet', 'orElseThrow', 'isPresent', 'ifPresent',
+        'length', 'charAt', 'substring', 'indexOf', 'lastIndexOf', 'replace',
+        'startsWith', 'endsWith', 'trim', 'split', 'toUpperCase', 'toLowerCase',
+        'sort', 'asList', 'emptyList', 'singletonList', 'unmodifiableList',
+        'append', 'insert', 'delete', 'reverse', 'capacity',
+        'currentTimeMillis', 'nanoTime', 'exit', 'gc', 'getenv', 'getProperty',
+        'start', 'run', 'join', 'sleep', 'wait', 'notify', 'notifyAll',
+        // Exception / Throwable methods
+        'getMessage', 'getCause', 'getStackTrace', 'printStackTrace', 'getLocalizedMessage',
+        // String methods not yet covered
+        'getBytes', 'equalsIgnoreCase', 'matches', 'replaceAll', 'replaceFirst', 'toCharArray',
+        'intern', 'chars', 'codePoints', 'strip', 'isBlank', 'repeat',
+        // I/O methods on streams, channels, sockets
+        'read', 'write', 'close', 'flush', 'available', 'readLine', 'readAllBytes',
+        'isClosed', 'isConnected', 'isInputShutdown', 'isOutputShutdown',
+        'remaining', 'position', 'limit', 'capacity', 'rewind', 'flip', 'clear',
+        // Tokenizer / scanner
+        'hasMoreTokens', 'nextToken', 'hasNext', 'next', 'nextLine', 'nextInt',
+        // Logging methods
+        'info', 'debug', 'warn', 'error', 'trace', 'fatal', 'isDebugEnabled',
+        // Collections / map additional
+        'values', 'keySet', 'entrySet', 'getOrDefault', 'putIfAbsent', 'computeIfAbsent',
+        'forEach', 'toArray', 'subList', 'listIterator', 'peek', 'poll', 'offer',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        if (JavaAdapter.STDLIB_METHODS.has(name)) return true;
+        const dot = name.indexOf('.');
+        if (dot !== -1 && JavaAdapter.STDLIB_RECEIVERS.has(name.slice(0, dot))) return true;
+        return false;
     }
 }

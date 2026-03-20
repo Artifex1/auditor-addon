@@ -1,3 +1,4 @@
+import path from "path";
 import {
     FileContent, SupportedLanguage, SymbolEntry, Visibility,
     SymbolMap, CallTargetKind
@@ -172,6 +173,9 @@ export class CompactAdapter extends BaseAdapter {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
+            // Build prefix→absolutePath map from this file's import declarations
+            const prefixMap = this.parseImportPrefixes(tree.rootNode, file.path);
+
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 const funcNode = capture.node;
@@ -184,13 +188,81 @@ export class CompactAdapter extends BaseAdapter {
                     const calleeName = this.extractCalleeName(callNode);
                     if (!calleeName) continue;
 
-                    const callee = this.symbolsByLabel.get(calleeName)?.[0];
+                    // First: direct label match (same-file or already-qualified)
+                    let callee = this.symbolsByLabel.get(calleeName)?.[0];
+
+                    // Second: prefix-based cross-module resolution
+                    // e.g. "Initializable_initialize" → prefix "Initializable_" → func "initialize"
+                    if (!callee && prefixMap.size > 0) {
+                        for (const [prefix, modulePath] of prefixMap) {
+                            if (calleeName.startsWith(prefix)) {
+                                const funcName = calleeName.slice(prefix.length);
+                                const candidates = this.symbolsByLabel.get(funcName) ?? [];
+                                callee = candidates.find(s => path.resolve(s.file) === modulePath);
+                                if (callee) break;
+                            }
+                        }
+                    }
+
                     if (callee && callee.qualifiedName !== symbol.qualifiedName) {
                         this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    } else if (!callee) {
+                        this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
                     }
                 }
             }
         }
+    }
+
+    // Parse `import "path" prefix Prefix_` declarations from the AST.
+    // Returns Map<prefix, absoluteFilePath> for cross-module call resolution.
+    private parseImportPrefixes(root: Node, sourceFile: string): Map<string, string> {
+        const prefixMap = new Map<string, string>();
+        const sourceDir = path.dirname(sourceFile);
+
+        const walk = (node: Node) => {
+            if (node.type === 'idecl') {
+                const importNameNode = node.childForFieldName('id');
+                const prefixField = node.childForFieldName('prefix');
+                if (importNameNode && prefixField) {
+                    // File imports have quoted text; stdlib (e.g. CompactStandardLibrary) is unquoted
+                    const text = importNameNode.text;
+                    if (text.startsWith('"')) {
+                        const importPath = text.slice(1, -1); // strip quotes
+                        const prefixId = prefixField.childForFieldName('id');
+                        if (prefixId) {
+                            const absPath = path.resolve(sourceDir, importPath + '.compact');
+                            prefixMap.set(prefixId.text, absPath);
+                        }
+                    }
+                }
+            }
+            for (const child of node.children) {
+                walk(child);
+            }
+        };
+        walk(root);
+        return prefixMap;
+    }
+
+    private static readonly BUILTINS = new Set([
+        // Compact/Midnight built-in functions and operations
+        'assert', 'require',
+        // Cryptographic primitives
+        'hash', 'merkle_root', 'pad', 'sign', 'verify',
+        'persistent_hash', 'transient_hash',
+        // ZK / circuit operations
+        'witness', 'reveal', 'disclose', 'const_check',
+        'zswap', 'ledger',
+        // Type constructors / conversions
+        'Uint', 'Bool', 'Bytes', 'Field', 'Vector', 'Maybe', 'Some', 'None',
+        // Standard operations
+        'length', 'append', 'slice', 'map', 'fold', 'zip',
+        'default', 'init', 'set', 'get',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        return CompactAdapter.BUILTINS.has(name);
     }
 
     private extractCalleeName(callNode: Node): string | undefined {

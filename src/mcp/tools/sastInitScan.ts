@@ -39,7 +39,7 @@ export function createSastInitScanHandler(engine: Engine) {
 
             for (const file of files) {
                 sourceFiles.set(file.path, file.content);
-                const lang = engine.detectLanguage(file.path);
+                const lang = engine.detectLanguage(file.path, file.content);
                 if (!lang) continue;
                 if (!input.languages.includes(lang)) continue;
 

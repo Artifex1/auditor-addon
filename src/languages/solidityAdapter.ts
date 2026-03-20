@@ -82,7 +82,28 @@ export class SolidityAdapter extends BaseAdapter {
 
     private inheritanceGraph: Map<string, string[]> = new Map();
     private usingForMap: Map<string, string[]> = new Map();
-    private static readonly BUILTIN_FUNCTIONS = new Set(['require', 'assert', 'revert', 'emit']);
+    private static readonly BUILTIN_FUNCTIONS = new Set([
+        // Control flow
+        'require', 'assert', 'revert', 'emit',
+        // Cryptographic
+        'keccak256', 'sha256', 'sha3', 'ripemd160', 'ecrecover',
+        // Math / misc globals
+        'addmod', 'mulmod', 'gasleft', 'blockhash', 'blobhash',
+        'selfdestruct', 'suicide',
+        // Type conversion / ABI globals (bare names — abi.* handled via BUILTIN_RECEIVERS)
+        'bytes', 'string', 'address', 'uint', 'int',
+    ]);
+
+    private static readonly BUILTIN_RECEIVERS = new Set([
+        'abi', 'block', 'msg', 'tx', 'type',
+    ]);
+
+    private static readonly BUILTIN_MEMBER_FUNCTIONS = new Set([
+        'push', 'pop', 'length', 'call', 'delegatecall', 'staticcall',
+        'transfer', 'send', 'balance', 'code', 'codehash',
+        'encode', 'encodePacked', 'encodeWithSelector', 'encodeWithSignature',
+        'encodeCall', 'decode',
+    ]);
 
     protected override resetState(): void {
         super.resetState();
@@ -115,6 +136,9 @@ export class SolidityAdapter extends BaseAdapter {
                 await this.processCallType(functionNode, symbol, { callType: CallType.This });
                 await this.processCallType(functionNode, symbol, { callType: CallType.Simple });
                 await this.processAssemblyCalls(functionNode, symbol);
+                if (functionNode.type === 'constructor_definition') {
+                    this.processConstructorChains(functionNode, symbol);
+                }
             }
         }
     }
@@ -141,8 +165,6 @@ export class SolidityAdapter extends BaseAdapter {
                 const recvCapture = match.captures.find(c => c.name === 'RECV');
                 memberName = recvCapture?.node.text;
             }
-
-            if (this.shouldSkipCall(funcName, memberName, callConfig.callType)) continue;
 
             const callee = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
             if (callee) {
@@ -192,10 +214,39 @@ export class SolidityAdapter extends BaseAdapter {
         }
     }
 
-    private shouldSkipCall(funcName: string, memberName: string | undefined, callType: CallType): boolean {
-        if (SolidityAdapter.BUILTIN_FUNCTIONS.has(funcName)) return true;
-        if (callType === CallType.Member && (memberName === 'super' || memberName === 'this')) return true;
-        if (callType === CallType.Simple && funcName.includes('.')) return true;
+    private processConstructorChains(constructorNode: Node, symbol: SymbolEntry): void {
+        if (!symbol.contract) return;
+        const parents = this.inheritanceGraph.get(symbol.contract);
+        if (!parents?.length) return;
+        const parentSet = new Set(parents);
+
+        for (const child of constructorNode.children) {
+            if (child.type !== 'modifier_invocation') continue;
+            const baseName = child.child(0)?.text ?? child.text.split('(')[0].trim();
+            if (!parentSet.has(baseName)) continue;
+
+            // This modifier_invocation is a base constructor call.
+            const baseConstructorQN = `${baseName}.constructor()`;
+            const baseEntry = this.findInContract(baseName, 'constructor');
+            const callee = baseEntry ?? { qualifiedName: baseConstructorQN } as SymbolEntry;
+            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, 'internal'));
+        }
+    }
+
+    protected override isKnownStdlib(name: string): boolean {
+        // Parser artifacts: compound conditions or bitwise expressions captured as callee text
+        if (/[\s|&]/.test(name)) return true;
+        const dot = name.indexOf('.');
+        if (dot === -1) {
+            // Simple call: require(), keccak256(), etc.
+            return SolidityAdapter.BUILTIN_FUNCTIONS.has(name);
+        }
+        // Member call: receiver.method
+        const receiver = name.slice(0, dot);
+        const method = name.slice(dot + 1);
+        if (receiver === 'super' || receiver === 'this') return true;
+        if (SolidityAdapter.BUILTIN_RECEIVERS.has(receiver)) return true;
+        if (SolidityAdapter.BUILTIN_MEMBER_FUNCTIONS.has(method)) return true;
         return false;
     }
 

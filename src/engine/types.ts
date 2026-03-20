@@ -196,6 +196,14 @@ export interface BuiltinContextValue {
 // --- Symbol kind discriminator ---
 export type SymbolKind = 'function' | 'state_variable';
 
+// --- Symbol locator (§4.1) ---
+// Uniquely identifies any symbol by position. Unambiguous across overloads and
+// same-named methods in different classes/files.
+export interface SymbolLocator {
+    file: string;   // absolute path
+    line: number;   // 1-indexed start line of the function definition
+}
+
 // --- Symbol table (§4.1) ---
 export interface CalleeEntry {
     qualifiedName: string;
@@ -217,6 +225,9 @@ export interface SymbolEntry {
     modifiers: ModifierInfo[];
     resolvedBy: ResolvedBy;
     confidence: Confidence;
+    // Agent-provided redirect: this gap QN should walk the target symbol instead.
+    // Set by sast_resolve_gaps when the agent identifies the concrete implementation.
+    redirectTo?: string;
     // Retained for call graph compat
     label: string;
     contract?: string;

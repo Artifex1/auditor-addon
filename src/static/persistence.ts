@@ -6,6 +6,7 @@ import {
     ScanContext, EffectiveLanguageMeta, ScanStatus,
     RuleFinding
 } from "../engine/types.js";
+export type LocatorIndex = Record<string, string>; // "file:line" → qualifiedName
 import { SymbolGap } from "./symbol-table.js";
 
 export type SerializedSymbolMap = Record<string, SymbolEntry>;
@@ -21,8 +22,24 @@ export interface ScanState {
     status: ScanStatus;
     findings: RuleFinding[];
     sourceFiles: Record<string, string>;
+    // "file:line" → qualifiedName — built at init, updated on dynamic expansion.
+    // Enables unambiguous resolution of overloaded and same-named symbols.
+    locatorIndex: LocatorIndex;
     createdAt: string;
     updatedAt: string;
+}
+
+/** Build a locator index from a symbol map. O(n) over the map. */
+export function buildLocatorIndex(symbolMap: SymbolMap): LocatorIndex {
+    const index: LocatorIndex = {};
+    for (const [qn, entry] of symbolMap) {
+        if (entry.range) {
+            index[`${entry.file}:${entry.range.start.line}`] = qn;
+        } else if (entry.line) {
+            index[`${entry.file}:${entry.line}`] = qn;
+        }
+    }
+    return index;
 }
 
 function getScanPath(id: string): string {

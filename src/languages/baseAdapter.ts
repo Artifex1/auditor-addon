@@ -128,12 +128,24 @@ export abstract class BaseAdapter implements LanguageAdapter {
     protected addCallee(callerId: string, callee: CalleeEntry): void {
         const entry = this._symbolMap.get(callerId);
         if (!entry) return;
+        // Drop stdlib/builtin calls so they don't generate noise in gap detection
+        if (callee.targetKind === 'external_unknown' && this.isKnownStdlib(callee.qualifiedName)) {
+            return;
+        }
         if (!entry.callees.some(c => c.qualifiedName === callee.qualifiedName)) {
             entry.callees.push(callee);
             if (callee.targetKind !== 'internal') {
                 entry.callsExternal = true;
             }
         }
+    }
+
+    /**
+     * Override in language adapters to suppress well-known stdlib/builtin calls
+     * from appearing as gaps. Return true to drop the callee.
+     */
+    protected isKnownStdlib(_name: string): boolean {
+        return false;
     }
 
     /**

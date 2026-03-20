@@ -95,7 +95,7 @@ export class TreeSitterService {
             case SupportedLanguage.Tsx:
                 return 'tree-sitter-tsx.wasm';
             case SupportedLanguage.Flow:
-                return 'tree-sitter-flow.wasm';
+                return 'tree-sitter-typescript.wasm'; // Flow type syntax is closest to TypeScript; no dedicated Flow WASM
             case SupportedLanguage.Cairo:
                 return 'tree-sitter-cairo.wasm';
             case SupportedLanguage.Compact:

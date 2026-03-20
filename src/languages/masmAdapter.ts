@@ -1,3 +1,4 @@
+import path from "path";
 import {
     FileContent, SupportedLanguage, SymbolEntry, Visibility,
     SymbolMap, CallTargetKind
@@ -8,6 +9,9 @@ import { Query, Node } from "web-tree-sitter";
 
 
 export class MasmAdapter extends BaseAdapter {
+    // basename (no extension) → absolute file path, built from corpus files
+    private _filesByBasename = new Map<string, string>();
+
     private static readonly QUERIES = {
         PROCEDURES: `(procedure) @proc`,
         ENTRY: `(entrypoint) @entry`,
@@ -52,6 +56,12 @@ export class MasmAdapter extends BaseAdapter {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Masm);
         const parser = await service.createParser(SupportedLanguage.Masm);
+
+        // Build basename → filePath index for cross-module resolution
+        for (const file of files) {
+            const basename = path.basename(file.path, '.masm');
+            this._filesByBasename.set(basename, file.path);
+        }
 
         const procQuery = new Query(lang, MasmAdapter.QUERIES.PROCEDURES);
         const entryQuery = new Query(lang, MasmAdapter.QUERIES.ENTRY);
@@ -177,6 +187,9 @@ export class MasmAdapter extends BaseAdapter {
             const tree = parser.parse(file.content);
             if (!tree) continue;
 
+            // Parse `use module::path` declarations for cross-module resolution
+            const moduleAliases = this.parseModuleAliases(file.content);
+
             // Process procedures
             const procCaptures = procQuery.captures(tree.rootNode);
             for (const capture of procCaptures) {
@@ -184,7 +197,7 @@ export class MasmAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(procNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInNode(procNode, symbol, callQuery);
+                this.processCallsInNode(procNode, symbol, callQuery, moduleAliases);
             }
 
             // Process entrypoints
@@ -194,21 +207,60 @@ export class MasmAdapter extends BaseAdapter {
                 const symbol = this.findSymbolAtNode(entryNode, file.path);
                 if (!symbol) continue;
 
-                this.processCallsInNode(entryNode, symbol, callQuery);
+                this.processCallsInNode(entryNode, symbol, callQuery, moduleAliases);
             }
         }
     }
 
-    private processCallsInNode(node: Node, caller: SymbolEntry, callQuery: Query) {
+    // Parse `use module::path` and `use module::path -> alias` declarations.
+    // Returns Map<alias, filePath> using the corpus basename index.
+    private parseModuleAliases(content: string): Map<string, string> {
+        const aliasMap = new Map<string, string>();
+        // Matches: use path::to::module  or  use path::to::module -> alias
+        const useRe = /^use\s+([\w:]+)(?:\s*->\s*(\w+))?/gm;
+        let m: RegExpExecArray | null;
+        while ((m = useRe.exec(content)) !== null) {
+            const modulePath = m[1];
+            const segments = modulePath.split('::');
+            const defaultAlias = segments[segments.length - 1];
+            const alias = m[2] ?? defaultAlias;
+            const filePath = this._filesByBasename.get(defaultAlias);
+            if (filePath) aliasMap.set(alias, filePath);
+        }
+        return aliasMap;
+    }
+
+    private processCallsInNode(
+        node: Node,
+        caller: SymbolEntry,
+        callQuery: Query,
+        moduleAliases: Map<string, string>
+    ) {
         const callCaptures = callQuery.captures(node);
         for (const capture of callCaptures) {
             const callNode = capture.node;
             const calleeName = this.extractCalleeName(callNode);
             if (!calleeName) continue;
 
-            const callee = this.symbolsByLabel.get(calleeName)?.[0];
+            // Direct label match (same-module call)
+            let callee = this.symbolsByLabel.get(calleeName)?.[0];
+
+            // Cross-module: alias::func → strip alias, look up func in that module's symbols
+            if (!callee && calleeName.includes('::')) {
+                const sep = calleeName.indexOf('::');
+                const alias = calleeName.slice(0, sep);
+                const funcName = calleeName.slice(sep + 2);
+                const modulePath = moduleAliases.get(alias);
+                if (modulePath) {
+                    const candidates = this.symbolsByLabel.get(funcName) ?? [];
+                    callee = candidates.find(s => s.file === modulePath);
+                }
+            }
+
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
                 this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            } else if (!callee) {
+                this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
             }
         }
     }
@@ -226,6 +278,23 @@ export class MasmAdapter extends BaseAdapter {
         const text = callNode.text.trim();
         const match = text.match(/(?:exec|call|syscall)\.(\S+)/);
         return match?.[1];
+    }
+
+    private static readonly STDLIB_PREFIXES = new Set([
+        // Miden VM standard library modules
+        'mem', 'sys', 'math', 'crypto', 'collections', 'io', 'std',
+        // Common Miden stdlib paths
+        'mem::pipe', 'mem::storew', 'mem::loadw',
+        'crypto::hashes', 'crypto::dsa', 'crypto::fri', 'crypto::stark',
+        'math::u64', 'math::u32', 'math::poly',
+        'collections::mmr', 'collections::smt',
+    ]);
+
+    protected override isKnownStdlib(name: string): boolean {
+        for (const prefix of MasmAdapter.STDLIB_PREFIXES) {
+            if (name === prefix || name.startsWith(prefix + '::') || name.startsWith(prefix + '.')) return true;
+        }
+        return false;
     }
 
 }

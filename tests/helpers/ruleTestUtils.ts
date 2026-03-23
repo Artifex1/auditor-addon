@@ -1,7 +1,7 @@
 import { TreeSitterService } from '../../src/util/treeSitter.js';
 import { walkShallow } from '../../src/static/walker.js';
 import type {
-    RuleContext, SymbolMap, FindingInstance, FileContent, Rule, MapRule,
+    RuleContext, SymbolGraph, FindingInstance, FileContent, Rule, MapRule,
     LanguageAdapter, SupportedLanguage, EffectiveLanguageMeta,
 } from '../../src/engine/types.js';
 import { LANGUAGE_META } from '../../src/engine/types.js';
@@ -11,9 +11,9 @@ export async function buildContextForAdapter(
     adapter: LanguageAdapter,
     lang: SupportedLanguage,
     sources: Record<string, string>,
-): Promise<{ ctx: RuleContext; symbolMap: SymbolMap }> {
+): Promise<{ ctx: RuleContext; graph: SymbolGraph }> {
     const files: FileContent[] = Object.entries(sources).map(([path, content]) => ({ path, content }));
-    const symbolMap = await adapter.generateSymbolMap(files);
+    const graph = await adapter.generateGraph(files);
 
     const service = TreeSitterService.getInstance();
     const treeCache = new Map<string, Tree>();
@@ -37,7 +37,7 @@ export async function buildContextForAdapter(
 
     return {
         ctx: {
-            symbolMap,
+            graph,
             trait: adapter,
             effective,
             sourceFiles,
@@ -45,7 +45,7 @@ export async function buildContextForAdapter(
             currentFile: '',
             getTree,
         },
-        symbolMap,
+        graph,
     };
 }
 
@@ -63,8 +63,8 @@ export async function runRule(
 
 export async function runMapRule(
     ctx: RuleContext,
-    symbolMap: SymbolMap,
+    graph: SymbolGraph,
     rule: MapRule,
 ): Promise<FindingInstance[]> {
-    return rule.check(symbolMap, ctx);
+    return rule.check(graph, ctx);
 }

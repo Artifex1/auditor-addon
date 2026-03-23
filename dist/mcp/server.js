@@ -15317,7 +15317,7 @@ for your current platform.`);
       return { binPath, isWASM };
     }
     var child_process = __require("child_process");
-    var crypto3 = __require("crypto");
+    var crypto4 = __require("crypto");
     var path22 = __require("path");
     var fs22 = __require("fs");
     var os22 = __require("os");
@@ -15625,7 +15625,7 @@ More information: The file containing the code for esbuild's JavaScript API (${_
       afterClose(null);
     };
     var randomFileName = () => {
-      return path22.join(os22.tmpdir(), `esbuild-${crypto3.randomBytes(32).toString("hex")}`);
+      return path22.join(os22.tmpdir(), `esbuild-${crypto4.randomBytes(32).toString("hex")}`);
     };
     var workerThreadService = null;
     var startWorkerThreadService = (worker_threads2) => {
@@ -31671,6 +31671,173 @@ init_esm_shims();
 
 // src/engine/types.ts
 init_esm_shims();
+var SymbolGraph = class _SymbolGraph {
+  _nodes = /* @__PURE__ */ new Map();
+  _outEdges = /* @__PURE__ */ new Map();
+  _inEdges = /* @__PURE__ */ new Map();
+  _byLocator = /* @__PURE__ */ new Map();
+  // "file:line:col" → NodeId
+  _byLine = /* @__PURE__ */ new Map();
+  // "file:line" → NodeId
+  _byName = /* @__PURE__ */ new Map();
+  // qualifiedName → NodeId[]
+  addNode(node) {
+    this._nodes.set(node.id, node);
+    const existing = this._byName.get(node.qualifiedName) ?? [];
+    if (!existing.includes(node.id)) {
+      this._byName.set(node.qualifiedName, [...existing, node.id]);
+    }
+    if (node.locator) {
+      const { file, line, column } = node.locator;
+      this._byLocator.set(`${file}:${line}:${column}`, node.id);
+      this._byLine.set(`${file}:${line}`, node.id);
+    }
+  }
+  addEdge(edge) {
+    const out2 = this._outEdges.get(edge.from) ?? [];
+    out2.push(edge);
+    this._outEdges.set(edge.from, out2);
+    const inList = this._inEdges.get(edge.to) ?? [];
+    inList.push(edge);
+    this._inEdges.set(edge.to, inList);
+  }
+  /** Update fields on an existing node. Maintains locator indexes. */
+  updateNode(id, updates) {
+    const node = this._nodes.get(id);
+    if (!node) return;
+    if (updates.locator && !node.locator) {
+      const { file, line, column } = updates.locator;
+      this._byLocator.set(`${file}:${line}:${column}`, id);
+      this._byLine.set(`${file}:${line}`, id);
+    }
+    Object.assign(node, updates);
+  }
+  /** Remove a node and all its incident edges. */
+  removeNode(id) {
+    const node = this._nodes.get(id);
+    if (!node) return;
+    const nameList = this._byName.get(node.qualifiedName) ?? [];
+    this._byName.set(node.qualifiedName, nameList.filter((n3) => n3 !== id));
+    if (node.locator) {
+      const { file, line, column } = node.locator;
+      this._byLocator.delete(`${file}:${line}:${column}`);
+      this._byLine.delete(`${file}:${line}`);
+    }
+    for (const edge of this._outEdges.get(id) ?? []) {
+      const inList = this._inEdges.get(edge.to) ?? [];
+      this._inEdges.set(edge.to, inList.filter((e5) => e5.from !== id));
+    }
+    for (const edge of this._inEdges.get(id) ?? []) {
+      const outList = this._outEdges.get(edge.from) ?? [];
+      this._outEdges.set(edge.from, outList.filter((e5) => e5.to !== id));
+    }
+    this._outEdges.delete(id);
+    this._inEdges.delete(id);
+    this._nodes.delete(id);
+  }
+  getNode(id) {
+    return this._nodes.get(id);
+  }
+  getOutEdges(id) {
+    return this._outEdges.get(id) ?? [];
+  }
+  getInEdges(id) {
+    return this._inEdges.get(id) ?? [];
+  }
+  /** Outgoing edges of a specific kind from a node. */
+  getOutEdgesOfKind(id, kind) {
+    return this.getOutEdges(id).filter((e5) => e5.kind === kind);
+  }
+  /** Incoming edges of a specific kind to a node. */
+  getInEdgesOfKind(id, kind) {
+    return this.getInEdges(id).filter((e5) => e5.kind === kind);
+  }
+  /** Members reached by outgoing `contains` edges from a container node. */
+  getContainerMembers(containerId) {
+    return this.getOutEdgesOfKind(containerId, "contains").map((e5) => this._nodes.get(e5.to)).filter((n3) => !!n3);
+  }
+  /** Container reached by incoming `contains` edge to a member node. */
+  getContainerOf(memberId) {
+    const edge = this.getInEdgesOfKind(memberId, "contains")[0];
+    return edge ? this._nodes.get(edge.from) : void 0;
+  }
+  /** BFS walk of outgoing `inherits` edges from a container. */
+  getInheritanceChain(containerId) {
+    const result = [];
+    const visited = /* @__PURE__ */ new Set();
+    const queue = [containerId];
+    while (queue.length > 0) {
+      const id = queue.shift();
+      for (const edge of this.getOutEdgesOfKind(id, "inherits")) {
+        if (visited.has(edge.to)) continue;
+        visited.add(edge.to);
+        const node = this._nodes.get(edge.to);
+        if (node) {
+          result.push(node);
+          queue.push(edge.to);
+        }
+      }
+    }
+    return result;
+  }
+  /** Functions with incoming `writes` edges to a state variable node. */
+  getWriters(stateVarId) {
+    return this.getInEdgesOfKind(stateVarId, "writes").map((e5) => this._nodes.get(e5.from)).filter((n3) => !!n3);
+  }
+  /** Functions with incoming `reads` edges to a state variable node. */
+  getReaders(stateVarId) {
+    return this.getInEdgesOfKind(stateVarId, "reads").map((e5) => this._nodes.get(e5.from)).filter((n3) => !!n3);
+  }
+  /** Exact lookup by file + line + column. Used by adapters during identifyCalls. */
+  findByLocatorExact(file, line, column) {
+    const id = this._byLocator.get(`${file}:${line}:${column}`);
+    return id ? this._nodes.get(id) : void 0;
+  }
+  /** Line-only lookup. Used by gap resolution (agent provides file:line). */
+  findByLine(file, line) {
+    const id = this._byLine.get(`${file}:${line}`);
+    return id ? this._nodes.get(id) : void 0;
+  }
+  /** Line-only lookup returning NodeId. */
+  findIdByLine(file, line) {
+    return this._byLine.get(`${file}:${line}`);
+  }
+  findByName(qualifiedName) {
+    return (this._byName.get(qualifiedName) ?? []).map((id) => this._nodes.get(id)).filter(Boolean);
+  }
+  nodes() {
+    return this._nodes.values();
+  }
+  *edges() {
+    for (const edgeList of this._outEdges.values()) yield* edgeList;
+  }
+  get size() {
+    return this._nodes.size;
+  }
+  /** Merge all nodes and edges from another graph. Skips duplicate node IDs. */
+  merge(other) {
+    for (const node of other.nodes()) {
+      if (!this._nodes.has(node.id)) this.addNode(node);
+    }
+    for (const edge of other.edges()) {
+      const out2 = this._outEdges.get(edge.from) ?? [];
+      if (!out2.some((e5) => e5.to === edge.to && e5.kind === edge.kind)) this.addEdge(edge);
+    }
+  }
+  toJSON() {
+    const nodes = {};
+    for (const [id, node] of this._nodes) nodes[id] = node;
+    const edges = [];
+    for (const edgeList of this._outEdges.values()) edges.push(...edgeList);
+    return { nodes, edges };
+  }
+  static fromJSON(data) {
+    const graph = new _SymbolGraph();
+    for (const node of Object.values(data.nodes)) graph.addNode(node);
+    for (const edge of data.edges) graph.addEdge(edge);
+    return graph;
+  }
+};
 var LANGUAGE_META = {
   ["solidity" /* Solidity */]: { domain: "on-chain", inheritanceModel: "classical" },
   ["cairo" /* Cairo */]: { domain: "on-chain", inheritanceModel: "trait-based" },
@@ -31777,6 +31944,7 @@ function getFileAtRef(ref, filePath, cwd = process.cwd()) {
 
 // src/languages/baseAdapter.ts
 init_esm_shims();
+import crypto from "crypto";
 
 // src/util/treeSitter.ts
 init_esm_shims();
@@ -35865,132 +36033,226 @@ var BaseAdapter = class {
     this.languageId = config2.languageId;
     this.config = config2;
   }
-  _symbolMap = /* @__PURE__ */ new Map();
-  symbolsByLabel = /* @__PURE__ */ new Map();
-  symbolsByContainer = /* @__PURE__ */ new Map();
-  symbolsByLocation = /* @__PURE__ */ new Map();
-  /**
-   * Normalizes a function signature by cleaning up whitespace.
-   * Converts multi-line signatures to single line with consistent spacing.
-   */
+  _graph = new SymbolGraph();
+  // Per-scan gap node cache: qualifiedName → NodeId. Reset on each generateGraph call.
+  _gapNodesByName = /* @__PURE__ */ new Map();
+  // Container index: containerName → NodeId[]. Shared by all adapters; reset per scan.
+  _nodesByContainer = /* @__PURE__ */ new Map();
+  // Container node index: containerName → NodeId of the container node itself.
+  _containerNodesByName = /* @__PURE__ */ new Map();
+  // Event node cache: eventName → NodeId.
+  _eventNodesByName = /* @__PURE__ */ new Map();
+  // Modifier node cache: modifierName → NodeId.
+  _modifierNodesByName = /* @__PURE__ */ new Map();
   cleanSignature(raw) {
     return raw.replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/\s*,\s*/g, ", ").trim();
   }
   // ==========================================
-  // Primary: SymbolMap generation
+  // Primary: graph generation
   // ==========================================
-  /**
-   * Generates the symbol map for the source files.
-   * Template method: resets state, builds symbol table, identifies calls.
-   * This is the primary code path — all analysis runs through here.
-   */
-  async generateSymbolMap(files) {
+  async generateGraph(files) {
     this.resetState();
     await this.buildSymbolTable(files);
     await this.identifyCalls(files);
-    await this.enrichEntries(files);
-    return this._symbolMap;
+    await this.enrichNodes(files);
+    return this._graph;
   }
   // ==========================================
   // Internal state management
   // ==========================================
   resetState() {
-    this._symbolMap.clear();
-    this.symbolsByLabel.clear();
-    this.symbolsByContainer.clear();
-    this.symbolsByLocation.clear();
+    this._graph = new SymbolGraph();
+    this._gapNodesByName.clear();
+    this._nodesByContainer.clear();
+    this._containerNodesByName.clear();
+    this._eventNodesByName.clear();
+    this._modifierNodesByName.clear();
   }
-  indexSymbol(entry) {
-    this._symbolMap.set(entry.qualifiedName, entry);
-    const labelEntries = this.symbolsByLabel.get(entry.label) ?? [];
-    labelEntries.push(entry);
-    this.symbolsByLabel.set(entry.label, labelEntries);
-    if (entry.contract) {
-      const containerEntries = this.symbolsByContainer.get(entry.contract) ?? [];
-      containerEntries.push(entry);
-      this.symbolsByContainer.set(entry.contract, containerEntries);
-    }
-    if (entry.range) {
-      const key = `${entry.file}:${entry.range.start.line}:${entry.range.start.column}`;
-      this.symbolsByLocation.set(key, entry);
-    }
-  }
-  /**
-   * Adds a callee to a symbol's callees list, deduplicating by qualifiedName.
-   */
-  addCallee(callerId, callee) {
-    const entry = this._symbolMap.get(callerId);
-    if (!entry) return;
-    if (callee.targetKind === "external_unknown" && this.isKnownStdlib(callee.qualifiedName)) {
-      return;
-    }
-    if (!entry.callees.some((c3) => c3.qualifiedName === callee.qualifiedName)) {
-      entry.callees.push(callee);
-      if (callee.targetKind !== "internal") {
-        entry.callsExternal = true;
+  /** Add a node to the graph, index by container name, emit `contains` edge. */
+  addNode(node, containerName) {
+    this._graph.addNode(node);
+    if (containerName) {
+      const list = this._nodesByContainer.get(containerName) ?? [];
+      list.push(node.id);
+      this._nodesByContainer.set(containerName, list);
+      const containerId = this._containerNodesByName.get(containerName);
+      if (containerId) {
+        this._graph.addEdge({ from: containerId, to: node.id, kind: "contains" });
       }
     }
   }
-  /**
-   * Override in language adapters to suppress well-known stdlib/builtin calls
-   * from appearing as gaps. Return true to drop the callee.
-   */
-  isKnownStdlib(_name) {
-    return false;
+  /** Get the container name for a node via its incoming `contains` edge. */
+  getContainerName(nodeId) {
+    return this._graph.getContainerOf(nodeId)?.label;
   }
   /**
-   * Creates a CalleeEntry for the common case of a resolved internal call.
+   * Creates a container node (contract, class, impl, module) and registers it.
+   * Call BEFORE adding member nodes so that `contains` edges are emitted automatically.
    */
-  makeCallee(qualifiedName, kind = "internal") {
-    return {
-      qualifiedName,
-      targetKind: kind
-    };
-  }
-  findSymbolAtNode(node, filePath) {
-    const line = node.startPosition.row + 1;
-    const col = node.startPosition.column;
-    return this.symbolsByLocation.get(`${filePath}:${line}:${col}`);
-  }
-  /**
-   * Creates a SymbolEntry with sensible defaults. Adapters call this from
-   * their createFunctionNode / createMethodNode methods.
-   */
-  createEntry(opts) {
-    return {
-      qualifiedName: opts.qualifiedName,
-      kind: "function",
-      label: opts.label,
-      file: opts.file,
-      line: opts.node.startPosition.row + 1,
+  addContainerNode(opts) {
+    const id = crypto.randomUUID();
+    const graphNode = {
+      id,
+      kind: "container",
+      qualifiedName: opts.name,
+      status: "concrete",
       language: this.languageId,
-      writesState: [],
-      readsState: [],
-      callsExternal: false,
-      callees: [],
-      isPublic: opts.visibility === "public" || opts.visibility === "external",
-      hasAccessControl: (opts.modifiers?.length ?? 0) > 0,
-      modifiers: opts.modifiers ?? [],
-      resolvedBy: "static",
-      confidence: "high",
-      contract: opts.contract,
-      range: {
-        start: { line: opts.node.startPosition.row + 1, column: opts.node.startPosition.column },
-        end: { line: opts.node.endPosition.row + 1, column: opts.node.endPosition.column }
+      label: opts.name,
+      locator: {
+        file: opts.file,
+        startIndex: opts.node.startIndex,
+        endIndex: opts.node.endIndex,
+        line: opts.node.startPosition.row + 1,
+        column: opts.node.startPosition.column
       },
       visibility: opts.visibility,
+      resolvedBy: "static",
+      confidence: "high",
       containerKind: opts.containerKind
     };
+    this._graph.addNode(graphNode);
+    this._containerNodesByName.set(opts.name, id);
+    return id;
+  }
+  /**
+   * Emits an `inherits` edge from child container to parent container.
+   * Creates a gap container node for the parent if it doesn't exist yet.
+   */
+  addInheritsEdge(childName, parentName) {
+    const childId = this._containerNodesByName.get(childName);
+    if (!childId) return;
+    let parentId = this._containerNodesByName.get(parentName);
+    if (!parentId) {
+      parentId = crypto.randomUUID();
+      this._graph.addNode({
+        id: parentId,
+        kind: "container",
+        qualifiedName: parentName,
+        status: "gap",
+        language: this.languageId,
+        label: parentName,
+        visibility: "public",
+        resolvedBy: "static",
+        confidence: "low"
+      });
+      this._containerNodesByName.set(parentName, parentId);
+    }
+    this._graph.addEdge({ from: childId, to: parentId, kind: "inherits" });
+  }
+  /** Find a node by container name and label. Uses contains edges when available, falls back to index. */
+  findInContainer(container, label) {
+    const containerId = this._containerNodesByName.get(container);
+    if (containerId) {
+      for (const member of this._graph.getContainerMembers(containerId)) {
+        if (member.label === label) return member;
+      }
+    }
+    const ids = this._nodesByContainer.get(container);
+    if (!ids) return void 0;
+    for (const id of ids) {
+      const n3 = this._graph.getNode(id);
+      if (n3?.label === label) return n3;
+    }
+    return void 0;
+  }
+  /**
+   * Creates a GraphNode with sensible defaults from a tree-sitter AST node.
+   * Uses byte offsets (startIndex/endIndex) for precise, O(log n) AST re-entry.
+   */
+  createNode(opts) {
+    return {
+      id: crypto.randomUUID(),
+      kind: opts.kind ?? "function",
+      qualifiedName: opts.qualifiedName,
+      status: "concrete",
+      language: this.languageId,
+      label: opts.label,
+      locator: {
+        file: opts.file,
+        startIndex: opts.node.startIndex,
+        endIndex: opts.node.endIndex,
+        line: opts.node.startPosition.row + 1,
+        column: opts.node.startPosition.column
+      },
+      visibility: opts.visibility,
+      resolvedBy: "static",
+      confidence: "high"
+    };
+  }
+  /**
+   * Emits has_modifier edges from a node to modifier nodes.
+   * Call after addNode() for nodes that have modifiers.
+   */
+  addModifiers(nodeId, modifiers, containerName) {
+    for (const mod of modifiers) {
+      const modNodeId = this._getOrCreateModifierNode(mod.name, mod.pattern, containerName);
+      this._graph.addEdge({ from: nodeId, to: modNodeId, kind: "has_modifier" });
+    }
+  }
+  /**
+   * Find the graph node whose source position exactly matches the given AST node.
+   * Used during identifyCalls to locate the caller.
+   */
+  findNodeAtPosition(node, filePath) {
+    return this._graph.findByLocatorExact(
+      filePath,
+      node.startPosition.row + 1,
+      node.startPosition.column
+    );
+  }
+  /**
+   * Add a call edge from caller to target. Resolves target by name in the graph;
+   * creates a gap node if unresolved. Filters known stdlib calls.
+   */
+  addCallEdge(callerId, targetQn, targetKind, callSite) {
+    if (targetKind === "external_unknown" && this.isKnownStdlib(targetQn)) return;
+    let targetId;
+    if (targetKind !== "external_unknown" && targetKind !== "interface_dispatch") {
+      const candidates = this._graph.findByName(targetQn);
+      const concrete = candidates.find((n3) => n3.status === "concrete");
+      targetId = concrete?.id ?? this._getOrCreateGapNode(targetQn);
+    } else {
+      targetId = this._getOrCreateGapNode(targetQn);
+    }
+    const existing = this._graph.getOutEdges(callerId);
+    if (existing.some((e5) => e5.to === targetId && e5.kind === "calls")) return;
+    this._graph.addEdge({
+      from: callerId,
+      to: targetId,
+      kind: "calls",
+      attrs: { targetKind, callSite }
+    });
+  }
+  _getOrCreateGapNode(qualifiedName) {
+    const existing = this._gapNodesByName.get(qualifiedName);
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    this._graph.addNode({
+      id,
+      kind: "function",
+      qualifiedName,
+      status: "gap",
+      language: this.languageId,
+      label: qualifiedName.split(/[.:(]/).shift() ?? qualifiedName,
+      visibility: "internal",
+      resolvedBy: "static",
+      confidence: "low"
+    });
+    this._gapNodesByName.set(qualifiedName, id);
+    return id;
+  }
+  isKnownStdlib(_name) {
+    return false;
   }
   async buildSymbolTable(_files) {
   }
   async identifyCalls(_files) {
   }
   /**
-   * Enriches symbol entries with writesState, readsState, and modifiers
-   * by walking each function's AST body and calling trait methods.
+   * Enriches function nodes: extracts modifiers, state writes/reads, and emits
+   * by walking each function's AST body. All results become graph edges.
    */
-  async enrichEntries(files) {
+  async enrichNodes(files) {
     const service = TreeSitterService.getInstance();
     const parser = await service.createParser(this.languageId);
     const treeCache = /* @__PURE__ */ new Map();
@@ -35998,35 +36260,110 @@ var BaseAdapter = class {
       const tree = parser.parse(file.content);
       if (tree) treeCache.set(file.path, tree);
     }
-    for (const entry of this._symbolMap.values()) {
-      const tree = treeCache.get(entry.file);
-      if (!tree || !entry.range) continue;
-      const targetRow = entry.range.start.line - 1;
-      const targetCol = entry.range.start.column;
-      const funcNode = findNodeAt(tree.rootNode, targetRow, targetCol);
+    for (const node of this._graph.nodes()) {
+      if (node.status !== "concrete" || !node.locator) continue;
+      if (node.kind !== "function") continue;
+      const tree = treeCache.get(node.locator.file);
+      if (!tree) continue;
+      const funcNode = tree.rootNode.descendantForIndex(
+        node.locator.startIndex,
+        node.locator.endIndex
+      );
       if (!funcNode) continue;
-      if (entry.modifiers.length === 0) {
+      const containerName = this.getContainerName(node.id);
+      const existingModEdges = this._graph.getOutEdgesOfKind(node.id, "has_modifier");
+      if (existingModEdges.length === 0) {
         const mods = this.getModifiers(funcNode);
         if (mods.length > 0) {
-          entry.modifiers = mods;
-          entry.hasAccessControl = true;
+          this.addModifiers(node.id, mods, containerName);
         }
       }
-      const writes = new Set(entry.writesState);
-      const reads = new Set(entry.readsState);
-      walkDescendants(funcNode, (node) => {
-        if (this.isStateWrite(node)) {
-          const varName = this.getWrittenVar(node);
-          if (varName) writes.add(varName);
+      const seenWrites = /* @__PURE__ */ new Set();
+      const seenReads = /* @__PURE__ */ new Set();
+      walkDescendants(funcNode, (child) => {
+        if (this.isStateWrite(child)) {
+          const varName = this.getWrittenVar(child);
+          if (varName && !seenWrites.has(varName)) {
+            seenWrites.add(varName);
+            const svId = this._resolveStateVar(varName, containerName);
+            if (svId) this._graph.addEdge({ from: node.id, to: svId, kind: "writes" });
+          }
         }
-        if (this.isStateRead(node)) {
-          const text = node.text;
-          if (text && text.length < 80) reads.add(text);
+        if (this.isStateRead(child)) {
+          const text = child.text;
+          if (text && text.length < 80 && !seenReads.has(text)) {
+            seenReads.add(text);
+            const svId = this._resolveStateVar(text, containerName);
+            if (svId) this._graph.addEdge({ from: node.id, to: svId, kind: "reads" });
+          }
+        }
+        if (this.isEmitStatement(child)) {
+          const eventName = this.getEventName(child);
+          if (eventName) {
+            const eventNodeId = this._getOrCreateEventNode(eventName, containerName);
+            this._graph.addEdge({ from: node.id, to: eventNodeId, kind: "emits" });
+          }
         }
       });
-      entry.writesState = [...writes];
-      entry.readsState = [...reads];
     }
+  }
+  /** Resolve a state variable name to its NodeId, trying qualified then unqualified names. */
+  _resolveStateVar(varName, containerName) {
+    if (containerName) {
+      const qualified = `${containerName}.${varName}`;
+      const candidates2 = this._graph.findByName(qualified);
+      const sv2 = candidates2.find((n3) => n3.kind === "state_variable");
+      if (sv2) return sv2.id;
+    }
+    const candidates = this._graph.findByName(varName);
+    const sv = candidates.find((n3) => n3.kind === "state_variable");
+    return sv?.id;
+  }
+  /** Get or create an event node by name. */
+  _getOrCreateEventNode(eventName, containerName) {
+    const existing = this._eventNodesByName.get(eventName);
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    this._graph.addNode({
+      id,
+      kind: "event",
+      qualifiedName: containerName ? `${containerName}.${eventName}` : eventName,
+      status: "gap",
+      language: this.languageId,
+      label: eventName,
+      visibility: "public",
+      resolvedBy: "static",
+      confidence: "medium"
+    });
+    this._eventNodesByName.set(eventName, id);
+    return id;
+  }
+  /** Get or create a modifier node by name. */
+  _getOrCreateModifierNode(modName, pattern, containerName) {
+    const key = containerName ? `${containerName}.${modName}` : modName;
+    const existing = this._modifierNodesByName.get(key);
+    if (existing) return existing;
+    const candidates = this._graph.findByName(key);
+    const concrete = candidates.find((n3) => n3.kind === "modifier" && n3.status === "concrete");
+    if (concrete) {
+      this._modifierNodesByName.set(key, concrete.id);
+      return concrete.id;
+    }
+    const id = crypto.randomUUID();
+    this._graph.addNode({
+      id,
+      kind: "modifier",
+      qualifiedName: key,
+      status: "gap",
+      language: this.languageId,
+      label: modName,
+      visibility: "internal",
+      resolvedBy: "static",
+      confidence: "medium",
+      pattern
+    });
+    this._modifierNodesByName.set(key, id);
+    return id;
   }
   // ==========================================
   // Node classifier stubs (override in adapters)
@@ -36070,25 +36407,18 @@ var BaseAdapter = class {
   getModifiers(_node) {
     return [];
   }
+  getEventName(_node) {
+    return null;
+  }
   // ==========================================
   // Resolution stubs (override in adapters)
   // ==========================================
-  resolveCallee(_node, _symbolMap, _sourceFiles) {
-    return null;
-  }
-  resolveExtensionMethod(_receiverType, _methodName, _sourceFiles) {
-    return null;
-  }
-  resolveScope(_containerName, _sourceFiles) {
-    return [];
-  }
   isBuiltinContextValue(_node) {
     return null;
   }
-  /**
-   * Extracts function signatures from source files.
-   * Returns signatures without function bodies, truncated to 80 characters.
-   */
+  // ==========================================
+  // Signatures, metrics, diff (unchanged)
+  // ==========================================
   async extractSignatures(files) {
     const signaturesByFile = {};
     const service = TreeSitterService.getInstance();
@@ -36105,31 +36435,18 @@ var BaseAdapter = class {
           if (capture.name === "function") {
             const node = capture.node;
             const bodyNode = node.childForFieldName("body") || node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
-            let rawSignature = "";
-            if (bodyNode) {
-              rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
-            } else {
-              rawSignature = node.text;
-            }
+            const rawSignature = bodyNode ? file.content.substring(node.startIndex, bodyNode.startIndex) : node.text;
             const signature = this.cleanSignature(rawSignature);
-            const truncated = signature.length > 80 ? signature.substring(0, 77) + "..." : signature;
-            signatures.push(truncated);
+            signatures.push(signature.length > 80 ? signature.substring(0, 77) + "..." : signature);
           }
         }
-        if (signatures.length > 0) {
-          signaturesByFile[file.path] = signatures;
-        }
+        if (signatures.length > 0) signaturesByFile[file.path] = signatures;
       } catch (e5) {
-        const errorMessage = e5 instanceof Error ? e5.message : String(e5);
-        console.error(`Error extracting signatures for ${file.path}: ${errorMessage}`);
+        console.error(`Error extracting signatures for ${file.path}: ${e5 instanceof Error ? e5.message : String(e5)}`);
       }
     }
     return signaturesByFile;
   }
-  /**
-   * Calculates code metrics for source files.
-   * Computes NLoC, complexity, comment density, and estimated review time.
-   */
   async calculateMetrics(files) {
     const results = [];
     const service = TreeSitterService.getInstance();
@@ -36140,102 +36457,81 @@ var BaseAdapter = class {
     const normQuery = this.config.queries.normalization ? new Query(lang, this.config.queries.normalization) : null;
     for (const file of files) {
       const lines = file.content.split("\n");
-      const totalLines = lines.length;
       const tree = parser.parse(file.content);
       if (!tree) continue;
-      const { linesWithComments, onlyCommentLinesCount } = this.calculateCommentMetrics(
-        commentQuery,
-        tree.rootNode,
-        lines
-      );
+      const { linesWithComments, onlyCommentLinesCount } = this.calculateCommentMetrics(commentQuery, tree.rootNode, lines);
       const cognitiveComplexity = this.calculateCognitiveComplexity(branchQuery, tree.rootNode);
       const blankLines = lines.filter((line) => line.trim() === "").length;
       const normalizationAdjustment = normQuery ? this.calculateNormalizationAdjustment(normQuery, tree.rootNode) : 0;
-      const nloc = Math.max(0, totalLines - blankLines - onlyCommentLinesCount - normalizationAdjustment);
+      const nloc = Math.max(0, lines.length - blankLines - onlyCommentLinesCount - normalizationAdjustment);
       const commentDensity = nloc > 0 ? parseFloat((linesWithComments / nloc * 100).toFixed(2)) : 0;
       const normalizedComplexity = nloc > 0 ? cognitiveComplexity / nloc * 100 : 0;
-      const estimatedHours = this.calculateEstimation(nloc, normalizedComplexity, commentDensity);
       results.push({
         file: file.path,
         nloc,
         linesWithComments,
         commentDensity,
         cognitiveComplexity,
-        estimatedHours
+        estimatedHours: this.calculateEstimation(nloc, normalizedComplexity, commentDensity)
       });
     }
     return results;
   }
   calculateCommentMetrics(commentQuery, rootNode, lines) {
     const commentLinesSet = /* @__PURE__ */ new Set();
-    let onlyCommentLinesCount = 0;
-    const commentCaptures = commentQuery.captures(rootNode);
-    for (const capture of commentCaptures) {
+    for (const capture of commentQuery.captures(rootNode)) {
       for (let i7 = capture.node.startPosition.row; i7 <= capture.node.endPosition.row; i7++) {
         commentLinesSet.add(i7);
       }
     }
-    const linesWithComments = commentLinesSet.size;
+    let onlyCommentLinesCount = 0;
     for (const lineIdx of commentLinesSet) {
       if (lineIdx >= lines.length) continue;
-      const lineContent = lines[lineIdx].trim();
-      if (/^(\/\/|\/\*|\*|#)/.test(lineContent)) {
-        onlyCommentLinesCount++;
-      }
+      if (/^(\/\/|\/\*|\*|#)/.test(lines[lineIdx].trim())) onlyCommentLinesCount++;
     }
-    return { linesWithComments, onlyCommentLinesCount };
+    return { linesWithComments: commentLinesSet.size, onlyCommentLinesCount };
   }
   calculateCognitiveComplexity(branchQuery, rootNode) {
-    const branchCaptures = branchQuery.captures(rootNode);
-    let cognitiveComplexity = 0;
-    const branches = branchCaptures.map((c3) => c3.node);
+    const branches = branchQuery.captures(rootNode).map((c3) => c3.node);
+    let complexity = 0;
     for (const branch of branches) {
-      let nestingLevel = 0;
+      let nesting = 0;
       for (const other of branches) {
         if (branch === other) continue;
-        const isInside = other.startIndex <= branch.startIndex && other.endIndex >= branch.endIndex && (other.startIndex < branch.startIndex || other.endIndex > branch.endIndex);
-        if (isInside) {
-          nestingLevel++;
+        if (other.startIndex <= branch.startIndex && other.endIndex >= branch.endIndex && (other.startIndex < branch.startIndex || other.endIndex > branch.endIndex)) {
+          nesting++;
         }
       }
-      cognitiveComplexity += 1 + nestingLevel;
+      complexity += 1 + nesting;
     }
-    return cognitiveComplexity;
+    return complexity;
   }
   calculateNormalizationAdjustment(normQuery, rootNode) {
-    const normCaptures = normQuery.captures(rootNode);
-    const allConstructs = normCaptures.map((c3) => ({ node: c3.node, name: c3.name }));
-    const topLevelConstructs = allConstructs.filter((construct) => {
-      const isNested = allConstructs.some((other) => {
+    const allConstructs = normQuery.captures(rootNode).map((c3) => ({ node: c3.node, name: c3.name }));
+    const topLevel = allConstructs.filter((construct) => {
+      return !allConstructs.some((other) => {
         if (construct === other) return false;
-        const isOtherFunction = other.name.includes("function") || other.name.includes("method") || other.node.type.includes("function") || other.node.type.includes("method");
-        if (isOtherFunction) {
-          const bodyNode = other.node.childForFieldName("body") || other.node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
-          if (bodyNode && construct.node.startIndex >= bodyNode.startIndex) {
-            return false;
-          }
+        const isOtherFn = other.name.includes("function") || other.name.includes("method") || other.node.type.includes("function") || other.node.type.includes("method");
+        if (isOtherFn) {
+          const body2 = other.node.childForFieldName("body") || other.node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
+          if (body2 && construct.node.startIndex >= body2.startIndex) return false;
         }
         return other.node.startIndex <= construct.node.startIndex && other.node.endIndex >= construct.node.endIndex && (other.node.startIndex < construct.node.startIndex || other.node.endIndex > construct.node.endIndex);
       });
-      return !isNested;
     });
-    let normalizationAdjustment = 0;
-    for (const construct of topLevelConstructs) {
+    let adjustment = 0;
+    for (const construct of topLevel) {
       let startLine = construct.node.startPosition.row;
       let endLine = construct.node.endPosition.row;
-      const isFunction = construct.name.includes("function") || construct.name.includes("method") || construct.node.type.includes("function") || construct.node.type.includes("method");
-      if (isFunction) {
-        const bodyNode = construct.node.childForFieldName("body") || construct.node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
-        if (bodyNode) {
-          endLine = bodyNode.startPosition.row - 1;
-        }
+      const isFn = construct.name.includes("function") || construct.name.includes("method") || construct.node.type.includes("function") || construct.node.type.includes("method");
+      if (isFn) {
+        const body2 = construct.node.childForFieldName("body") || construct.node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
+        if (body2) endLine = body2.startPosition.row - 1;
       }
-      const linesSpanned = endLine - startLine + 1;
-      if (linesSpanned > 1) {
-        normalizationAdjustment += linesSpanned - 1;
-      }
+      const span = endLine - startLine + 1;
+      if (span > 1) adjustment += span - 1;
     }
-    return normalizationAdjustment;
+    return adjustment;
   }
   calculateEstimation(nloc, normalizedComplexity, commentDensity) {
     const {
@@ -36251,54 +36547,30 @@ var BaseAdapter = class {
     const complexityDelta = normalizedComplexity - complexityMidpoint;
     const complexityShape = Math.tanh(complexityDelta / complexitySteepness);
     const complexityAdjustment = complexityShape >= 0 ? complexityShape * complexityPenaltyCap : complexityShape * complexityBenefitCap;
-    const commentDensityProgress = Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity);
-    const commentShape = Math.tanh(commentDensityProgress * 2.646);
-    const commentAdjustment = commentShape * commentBenefitCap;
-    let factor = 1 + complexityAdjustment - commentAdjustment;
+    const commentShape = Math.tanh(Math.max(0, commentDensity) / Math.max(1, commentFullBenefitDensity) * 2.646);
+    let factor = 1 + complexityAdjustment - commentShape * commentBenefitCap;
     factor = Math.max(0.5, Math.min(1 + complexityPenaltyCap, factor));
     return parseFloat((baseHours * factor).toFixed(2));
   }
   async calculateDiffMetrics(file, addedLines, removedLines, status) {
     if (status === "deleted") {
-      return {
-        file: file.path,
-        status,
-        addedLines: 0,
-        removedLines: removedLines.length,
-        diffNloc: 0,
-        diffComplexity: 0,
-        commentDensity: 0,
-        estimatedHours: 0
-      };
+      return { file: file.path, status, addedLines: 0, removedLines: removedLines.length, diffNloc: 0, diffComplexity: 0, commentDensity: 0, estimatedHours: 0 };
     }
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage(this.languageId);
     const parser = await service.createParser(this.languageId);
     const tree = parser.parse(file.content);
     if (!tree) {
-      return {
-        file: file.path,
-        status,
-        addedLines: addedLines.length,
-        removedLines: removedLines.length,
-        diffNloc: addedLines.length,
-        diffComplexity: 0,
-        commentDensity: 0,
-        estimatedHours: 0
-      };
+      return { file: file.path, status, addedLines: addedLines.length, removedLines: removedLines.length, diffNloc: addedLines.length, diffComplexity: 0, commentDensity: 0, estimatedHours: 0 };
     }
     const lines = file.content.split("\n");
     const commentQuery = new Query(lang, this.config.queries.comments);
-    const commentCaptures = commentQuery.captures(tree.rootNode);
     const commentOnlyLines = /* @__PURE__ */ new Set();
-    for (const capture of commentCaptures) {
+    for (const capture of commentQuery.captures(tree.rootNode)) {
       for (let i7 = capture.node.startPosition.row; i7 <= capture.node.endPosition.row; i7++) {
         const lineNum = i7 + 1;
-        if (lineNum < lines.length) {
-          const lineContent = lines[i7].trim();
-          if (/^(\/\/|\/\*|\*|#|--|;;)/.test(lineContent)) {
-            commentOnlyLines.add(lineNum);
-          }
+        if (lineNum < lines.length && /^(\/\/|\/\*|\*|#|--|;;)/.test(lines[i7].trim())) {
+          commentOnlyLines.add(lineNum);
         }
       }
     }
@@ -36306,32 +36578,25 @@ var BaseAdapter = class {
     let linesWithComments = 0;
     for (const lineNum of addedLines) {
       const lineIdx = lineNum - 1;
-      if (lineIdx >= 0 && lineIdx < lines.length) {
-        const lineContent = lines[lineIdx].trim();
-        if (lineContent === "") continue;
-        if (commentOnlyLines.has(lineNum)) {
-          linesWithComments++;
-          continue;
-        }
-        diffNloc++;
+      if (lineIdx < 0 || lineIdx >= lines.length) continue;
+      if (lines[lineIdx].trim() === "") continue;
+      if (commentOnlyLines.has(lineNum)) {
+        linesWithComments++;
+        continue;
       }
+      diffNloc++;
     }
     const branchQuery = new Query(lang, this.config.queries.branching);
-    const branchCaptures = branchQuery.captures(tree.rootNode);
-    const branches = branchCaptures.map((c3) => c3.node);
+    const branches = branchQuery.captures(tree.rootNode).map((c3) => c3.node);
     let diffComplexity = 0;
     for (const lineNum of addedLines) {
       const lineIdx = lineNum - 1;
-      if (lineIdx >= 0 && lineIdx < lines.length) {
-        const lineContent = lines[lineIdx].trim();
-        if (lineContent === "" || commentOnlyLines.has(lineNum)) continue;
-        const nestingDepth = this.calculateNestingDepthForLine(lineNum, branches);
-        diffComplexity += nestingDepth;
-      }
+      if (lineIdx < 0 || lineIdx >= lines.length) continue;
+      if (lines[lineIdx].trim() === "" || commentOnlyLines.has(lineNum)) continue;
+      diffComplexity += this.calculateNestingDepthForLine(lineNum, branches);
     }
     const commentDensity = diffNloc > 0 ? parseFloat((linesWithComments / diffNloc * 100).toFixed(2)) : 0;
     const normalizedComplexity = diffNloc > 0 ? diffComplexity / diffNloc * 100 : 0;
-    const estimatedHours = this.calculateEstimation(diffNloc, normalizedComplexity, commentDensity);
     return {
       file: file.path,
       status,
@@ -36340,18 +36605,14 @@ var BaseAdapter = class {
       diffNloc,
       diffComplexity,
       commentDensity,
-      estimatedHours
+      estimatedHours: this.calculateEstimation(diffNloc, normalizedComplexity, commentDensity)
     };
   }
   calculateNestingDepthForLine(lineNum, branches) {
     const lineIdx = lineNum - 1;
     let depth = 0;
     for (const branch of branches) {
-      const branchStartLine = branch.startPosition.row;
-      const branchEndLine = branch.endPosition.row;
-      if (lineIdx >= branchStartLine && lineIdx <= branchEndLine) {
-        depth++;
-      }
+      if (lineIdx >= branch.startPosition.row && lineIdx <= branch.endPosition.row) depth++;
     }
     return depth;
   }
@@ -36364,45 +36625,24 @@ var BaseAdapter = class {
     try {
       const tree = parser.parse(file.content);
       if (!tree) return results;
-      const captures = query.captures(tree.rootNode);
-      for (const capture of captures) {
-        if (capture.name === "function") {
-          const node = capture.node;
-          const bodyNode = node.childForFieldName("body") || node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
-          let rawSignature = "";
-          if (bodyNode) {
-            rawSignature = file.content.substring(node.startIndex, bodyNode.startIndex);
-          } else {
-            rawSignature = node.text;
-          }
-          const signature = this.cleanSignature(rawSignature);
-          const truncated = signature.length > 120 ? signature.substring(0, 117) + "..." : signature;
-          results.push({
-            signature: truncated,
-            startLine: node.startPosition.row + 1,
-            endLine: node.endPosition.row + 1
-          });
-        }
+      for (const capture of query.captures(tree.rootNode)) {
+        if (capture.name !== "function") continue;
+        const node = capture.node;
+        const bodyNode = node.childForFieldName("body") || node.children.find((c3) => c3.type.includes("body") || c3.type === "block");
+        const rawSignature = bodyNode ? file.content.substring(node.startIndex, bodyNode.startIndex) : node.text;
+        const signature = this.cleanSignature(rawSignature);
+        results.push({
+          signature: signature.length > 120 ? signature.substring(0, 117) + "..." : signature,
+          startLine: node.startPosition.row + 1,
+          endLine: node.endPosition.row + 1
+        });
       }
     } catch (e5) {
-      const errorMessage = e5 instanceof Error ? e5.message : String(e5);
-      console.error(`Error extracting signatures with ranges for ${file.path}: ${errorMessage}`);
+      console.error(`Error extracting signatures for ${file.path}: ${e5 instanceof Error ? e5.message : String(e5)}`);
     }
     return results;
   }
 };
-function findNodeAt(root, row, col) {
-  if (root.startPosition.row === row && root.startPosition.column === col) {
-    return root;
-  }
-  for (const child of root.children) {
-    if (child.startPosition.row > row) break;
-    if (child.endPosition.row < row) continue;
-    const found = findNodeAt(child, row, col);
-    if (found) return found;
-  }
-  return null;
-}
 function walkDescendants(node, callback) {
   for (const child of node.children) {
     callback(child);
@@ -36509,21 +36749,19 @@ var Engine = class {
     }
     return allMetrics;
   }
-  async processSymbolMap(patterns) {
+  async processGraph(patterns) {
     const filePaths = await resolveFiles(patterns);
     const files = await readFiles(filePaths);
     const filesByLanguage = this.groupFilesByLanguage(files);
-    const combined = /* @__PURE__ */ new Map();
+    const combined = new SymbolGraph();
     for (const [lang, langFiles] of filesByLanguage.entries()) {
       const adapter = this.getAdapter(lang);
       if (adapter) {
         try {
-          const symbolMap = await adapter.generateSymbolMap(langFiles);
-          for (const [id, entry] of symbolMap) {
-            combined.set(id, entry);
-          }
+          const graph = await adapter.generateGraph(langFiles);
+          combined.merge(graph);
         } catch (error) {
-          console.error(`Failed to generate symbol map for ${lang}:`, error);
+          console.error(`Failed to generate graph for ${lang}:`, error);
         }
       }
     }
@@ -36532,7 +36770,7 @@ var Engine = class {
   groupFilesByLanguage(files) {
     const filesByLanguage = /* @__PURE__ */ new Map();
     for (const file of files) {
-      const lang = this.detectLanguage(file.path);
+      const lang = this.detectLanguage(file.path, file.content);
       if (lang) {
         if (!filesByLanguage.has(lang)) {
           filesByLanguage.set(lang, []);
@@ -36753,6 +36991,12 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         `,
     STATE_VARIABLES: `
             (state_variable_declaration) @statevar
+        `,
+    EVENT_DEFINITIONS: `
+            (event_definition) @event
+        `,
+    MODIFIER_DEFINITIONS: `
+            (modifier_definition) @modifier
         `
   };
   constructor() {
@@ -36830,8 +37074,6 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     "call",
     "delegatecall",
     "staticcall",
-    "transfer",
-    "send",
     "balance",
     "code",
     "codehash",
@@ -36847,95 +37089,90 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     this.inheritanceGraph.clear();
     this.usingForMap.clear();
   }
-  findInContract(contract, label) {
-    return this.symbolsByContainer.get(contract)?.find((e5) => e5.label === label);
-  }
   async identifyCalls(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("solidity" /* Solidity */);
     const parser = await service.createParser("solidity" /* Solidity */);
     const functionQuery = new Query(lang, _SolidityAdapter.QUERIES.FUNCTIONS);
+    const callQueries = {
+      [3 /* Super */]: new Query(lang, _SolidityAdapter.QUERIES.SUPER_CALL),
+      [1 /* Member */]: new Query(lang, _SolidityAdapter.QUERIES.MEMBER_CALL),
+      [2 /* This */]: new Query(lang, _SolidityAdapter.QUERIES.THIS_CALL),
+      [0 /* Simple */]: new Query(lang, _SolidityAdapter.QUERIES.SIMPLE_CALL)
+    };
+    const assemblyQuery = new Query(lang, _SolidityAdapter.QUERIES.ASSEMBLY_CALL);
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
       const captures = functionQuery.captures(tree.rootNode);
       for (const capture of captures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
-        await this.processCallType(functionNode, symbol, { callType: 3 /* Super */ });
-        await this.processCallType(functionNode, symbol, { callType: 1 /* Member */, extractMember: true });
-        await this.processCallType(functionNode, symbol, { callType: 2 /* This */ });
-        await this.processCallType(functionNode, symbol, { callType: 0 /* Simple */ });
-        await this.processAssemblyCalls(functionNode, symbol);
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
+        this.processCallType(functionNode, callerNode, callQueries[3 /* Super */], { callType: 3 /* Super */ });
+        this.processCallType(functionNode, callerNode, callQueries[1 /* Member */], { callType: 1 /* Member */, extractMember: true });
+        this.processCallType(functionNode, callerNode, callQueries[2 /* This */], { callType: 2 /* This */ });
+        this.processCallType(functionNode, callerNode, callQueries[0 /* Simple */], { callType: 0 /* Simple */ });
+        this.processAssemblyCalls(functionNode, callerNode, assemblyQuery);
         if (functionNode.type === "constructor_definition") {
-          this.processConstructorChains(functionNode, symbol);
+          this.processConstructorChains(functionNode, callerNode);
         }
       }
     }
   }
-  async processCallType(functionNode, symbol, callConfig) {
-    const service = TreeSitterService.getInstance();
-    const lang = await service.getLanguage("solidity" /* Solidity */);
-    const querySource = this.getQueryForCallType(callConfig.callType);
-    const query = new Query(lang, querySource);
+  processCallType(functionNode, callerNode, query, callConfig) {
     const matches = query.matches(functionNode);
     for (const match of matches) {
       const functionCapture = match.captures.find((c3) => c3.name === "FUNC");
       if (!functionCapture) continue;
-      const funcName = functionCapture.node.text;
+      const callNode = functionCapture.node;
+      const funcName = callNode.text;
       let memberName;
       if (callConfig.extractMember) {
         const recvCapture = match.captures.find((c3) => c3.name === "RECV");
         memberName = recvCapture?.node.text;
       }
-      const callee = this.resolveCallNode(callConfig.callType, funcName, memberName, symbol);
-      if (callee) {
-        const kind = this.determineEdgeKind(callConfig.callType, callee);
-        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, kind));
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveCallNode(callConfig.callType, funcName, memberName, callerNode);
+      if (resolved) {
+        const kind = this.determineEdgeKind(callConfig.callType, resolved);
+        this.addCallEdge(callerNode.id, resolved.qualifiedName, kind, callSite);
       } else {
         const unresolvedName = memberName && callConfig.callType === 1 /* Member */ ? `${memberName}.${funcName}` : funcName;
-        this.addCallee(symbol.qualifiedName, this.makeCallee(unresolvedName, "external_unknown"));
+        this.addCallEdge(callerNode.id, unresolvedName, "external_unknown", callSite);
       }
-    }
-  }
-  getQueryForCallType(callType) {
-    switch (callType) {
-      case 3 /* Super */:
-        return _SolidityAdapter.QUERIES.SUPER_CALL;
-      case 2 /* This */:
-        return _SolidityAdapter.QUERIES.THIS_CALL;
-      case 1 /* Member */:
-        return _SolidityAdapter.QUERIES.MEMBER_CALL;
-      case 0 /* Simple */:
-        return _SolidityAdapter.QUERIES.SIMPLE_CALL;
     }
   }
   determineEdgeKind(callType, callee) {
     if (callType === 2 /* This */) return "cross_module";
     if (callType === 3 /* Super */) return "internal";
     if (callType === 0 /* Simple */) return "internal";
-    if (callee.containerKind === "library") {
+    const calleeContainer = this._graph.getContainerOf(callee.id);
+    if (calleeContainer?.containerKind === "library") {
       return callee.visibility === "internal" ? "internal" : "cross_module";
     }
     return "cross_module";
   }
-  async processAssemblyCalls(functionNode, symbol) {
-    const service = TreeSitterService.getInstance();
-    const lang = await service.getLanguage("solidity" /* Solidity */);
-    const query = new Query(lang, _SolidityAdapter.QUERIES.ASSEMBLY_CALL);
+  processAssemblyCalls(functionNode, callerNode, query) {
     const captures = query.captures(functionNode);
     for (const capture of captures) {
-      const callName = capture.node.text;
-      const callee = this.resolveCallNode(0 /* Simple */, callName, void 0, symbol);
-      if (callee) {
-        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, "internal"));
+      const callNode = capture.node;
+      const callName = callNode.text;
+      const resolved = this.resolveCallNode(0 /* Simple */, callName, void 0, callerNode);
+      if (resolved) {
+        this.addCallEdge(
+          callerNode.id,
+          resolved.qualifiedName,
+          "internal",
+          { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 }
+        );
       }
     }
   }
-  processConstructorChains(constructorNode, symbol) {
-    if (!symbol.contract) return;
-    const parents = this.inheritanceGraph.get(symbol.contract);
+  processConstructorChains(constructorNode, callerNode) {
+    const callerContainer = this.getContainerName(callerNode.id);
+    if (!callerContainer) return;
+    const parents = this.inheritanceGraph.get(callerContainer);
     if (!parents?.length) return;
     const parentSet = new Set(parents);
     for (const child of constructorNode.children) {
@@ -36943,9 +37180,14 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       const baseName = child.child(0)?.text ?? child.text.split("(")[0].trim();
       if (!parentSet.has(baseName)) continue;
       const baseConstructorQN = `${baseName}.constructor()`;
-      const baseEntry = this.findInContract(baseName, "constructor");
-      const callee = baseEntry ?? { qualifiedName: baseConstructorQN };
-      this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName, "internal"));
+      const baseEntry = this.findInContainer(baseName, "constructor");
+      const targetQN = baseEntry?.qualifiedName ?? baseConstructorQN;
+      this.addCallEdge(
+        callerNode.id,
+        targetQN,
+        "internal",
+        { startIndex: child.startIndex, line: child.startPosition.row + 1 }
+      );
     }
   }
   isKnownStdlib(name2) {
@@ -36973,23 +37215,25 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     }
   }
   resolveSuperCall(name2, caller) {
-    if (!caller.contract) return void 0;
-    const parents = this.inheritanceGraph.get(caller.contract);
+    const callerContainer = this.getContainerName(caller.id);
+    if (!callerContainer) return void 0;
+    const parents = this.inheritanceGraph.get(callerContainer);
     if (!parents?.length) return void 0;
     for (const parent of parents) {
-      const func2 = this.findInContract(parent, name2);
+      const func2 = this.findInContainer(parent, name2);
       if (func2) return func2;
     }
     return void 0;
   }
   resolveMemberCall(name2, memberName, caller) {
-    const func2 = this.findInContract(memberName, name2);
+    const func2 = this.findInContainer(memberName, name2);
     if (func2) return func2;
-    if (caller.contract) {
-      const libraries = this.usingForMap.get(caller.contract);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const libraries = this.usingForMap.get(callerContainer);
       if (libraries) {
         for (const lib of libraries) {
-          const libFunc = this.findInContract(lib, name2);
+          const libFunc = this.findInContainer(lib, name2);
           if (libFunc) return libFunc;
         }
       }
@@ -36997,16 +37241,17 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     return void 0;
   }
   resolveLocalOrInheritedCall(name2, caller) {
-    if (caller.contract) {
-      const local = this.findInContract(caller.contract, name2);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const local = this.findInContainer(callerContainer, name2);
       if (local) return local;
-      const inherited = this.resolveInheritedCall(name2, caller.contract);
+      const inherited = this.resolveInheritedCall(name2, callerContainer);
       if (inherited) return inherited;
     }
-    const freeFuncs = this.symbolsByLabel.get(name2);
-    const free = freeFuncs?.find((e5) => !e5.contract);
+    const candidates = this._graph.findByName(name2);
+    const free = candidates.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (free) return free;
-    return this.symbolsByLabel.get(name2)?.[0];
+    return candidates.find((n3) => n3.status === "concrete");
   }
   resolveInheritedCall(name2, contract, visited = /* @__PURE__ */ new Set()) {
     if (visited.has(contract)) return void 0;
@@ -37014,7 +37259,7 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const parents = this.inheritanceGraph.get(contract);
     if (!parents) return void 0;
     for (const parent of parents) {
-      const func2 = this.findInContract(parent, name2);
+      const func2 = this.findInContainer(parent, name2);
       if (func2) return func2;
       const inherited = this.resolveInheritedCall(name2, parent, visited);
       if (inherited) return inherited;
@@ -37030,6 +37275,8 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const usingQuery = new Query(lang, _SolidityAdapter.QUERIES.USING_FOR);
     const functionQuery = new Query(lang, _SolidityAdapter.QUERIES.FUNCTIONS);
     const stateVarQuery = new Query(lang, _SolidityAdapter.QUERIES.STATE_VARIABLES);
+    const eventDefQuery = new Query(lang, _SolidityAdapter.QUERIES.EVENT_DEFINITIONS);
+    const modifierDefQuery = new Query(lang, _SolidityAdapter.QUERIES.MODIFIER_DEFINITIONS);
     for (const file of files) {
       const tree = parser.parse(file.content);
       if (!tree) continue;
@@ -37040,6 +37287,13 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         const nameNode = containerNode.childForFieldName("name");
         if (!nameNode) continue;
         const contractName = nameNode.text;
+        this.addContainerNode({
+          name: contractName,
+          containerKind: kind,
+          visibility: "public",
+          node: containerNode,
+          file: file.path
+        });
         const inheritanceCaptures = inheritanceQuery.captures(containerNode);
         const parentsText = inheritanceCaptures.filter((c3) => c3.name === "parent").map((c3) => c3.node.text);
         if (parentsText.length > 0) {
@@ -37054,19 +37308,52 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
         if (bodyNode) {
           const functions = functionQuery.captures(bodyNode);
           for (const fnCapture of functions) {
-            this.indexSymbol(this.createFunctionNode(fnCapture.node, file.path, kind, contractName));
+            this.createFunctionNode(fnCapture.node, file.path, kind, contractName);
           }
           const stateVars = stateVarQuery.captures(bodyNode);
           for (const svCapture of stateVars) {
-            const entry = this.createStateVarEntry(svCapture.node, file.path, contractName, kind);
-            if (entry) this.indexSymbol(entry);
+            this.createStateVarNode(svCapture.node, file.path, contractName);
+          }
+          const eventDefs = eventDefQuery.captures(bodyNode);
+          for (const evCapture of eventDefs) {
+            const evNameNode = evCapture.node.childForFieldName("name") ?? evCapture.node.children.find((c3) => c3.type === "identifier");
+            if (!evNameNode) continue;
+            const evNode = this.createNode({
+              qualifiedName: `${contractName}.${evNameNode.text}`,
+              label: evNameNode.text,
+              file: file.path,
+              node: evCapture.node,
+              visibility: "public",
+              kind: "event"
+            });
+            this.addNode(evNode, contractName);
+          }
+          const modifierDefs = modifierDefQuery.captures(bodyNode);
+          for (const modCapture of modifierDefs) {
+            const modNameNode = modCapture.node.childForFieldName("name") ?? modCapture.node.children.find((c3) => c3.type === "identifier");
+            if (!modNameNode) continue;
+            const modNode = this.createNode({
+              qualifiedName: `${contractName}.${modNameNode.text}`,
+              label: modNameNode.text,
+              file: file.path,
+              node: modCapture.node,
+              visibility: "internal",
+              kind: "modifier"
+            });
+            modNode.pattern = "explicit";
+            this.addNode(modNode, contractName);
           }
         }
       }
       for (const child of tree.rootNode.children) {
         if (child.type === "function_definition" || child.type === "fallback_receive_definition") {
-          this.indexSymbol(this.createFunctionNode(child, file.path));
+          this.createFunctionNode(child, file.path);
         }
+      }
+    }
+    for (const [childName, parents] of this.inheritanceGraph) {
+      for (const parentName of parents) {
+        this.addInheritsEdge(childName, parentName);
       }
     }
   }
@@ -37102,18 +37389,20 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const signature = this.cleanSignature(`${fnName}(${params})`);
     const qualifiedName = contract ? `${contract}.${signature}` : signature;
     const finalVisibility = visibility ?? (containerKind === "interface" ? "external" : "internal");
-    return this.createEntry({
+    const graphNode = this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility: finalVisibility,
-      contract,
-      containerKind,
-      modifiers
+      visibility: finalVisibility
     });
+    this.addNode(graphNode, contract);
+    if (modifiers.length > 0) {
+      this.addModifiers(graphNode.id, modifiers, contract);
+    }
+    return graphNode;
   }
-  createStateVarEntry(node, file, contract, containerKind) {
+  createStateVarNode(node, file, contract) {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return null;
     const varName = nameNode.text;
@@ -37122,34 +37411,23 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
     const isConstant = node.children.some((c3) => c3.type === "constant");
     const isImmutable = node.children.some((c3) => c3.type === "immutable");
     const hasInitializer = node.childForFieldName("value") !== null;
-    const entry = {
+    const modifiers = [];
+    if (isConstant) modifiers.push({ name: "constant", pattern: "declarative" });
+    if (isImmutable) modifiers.push({ name: "immutable", pattern: "declarative" });
+    if (hasInitializer) modifiers.push({ name: "has_initializer", pattern: "declarative" });
+    const graphNode = this.createNode({
       qualifiedName,
-      kind: "state_variable",
       label: varName,
       file,
-      line: node.startPosition.row + 1,
-      language: this.languageId,
-      writesState: [],
-      readsState: [],
-      callsExternal: false,
-      callees: [],
-      isPublic: visibility === "public",
-      hasAccessControl: false,
-      modifiers: [],
-      resolvedBy: "static",
-      confidence: "high",
-      contract,
-      range: {
-        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-        end: { line: node.endPosition.row + 1, column: node.endPosition.column }
-      },
+      node,
       visibility,
-      containerKind
-    };
-    if (isConstant) entry.modifiers.push({ name: "constant", pattern: "declarative" });
-    if (isImmutable) entry.modifiers.push({ name: "immutable", pattern: "declarative" });
-    if (hasInitializer) entry.modifiers.push({ name: "has_initializer", pattern: "declarative" });
-    return entry;
+      kind: "state_variable"
+    });
+    this.addNode(graphNode, contract);
+    if (modifiers.length > 0) {
+      this.addModifiers(graphNode.id, modifiers, contract);
+    }
+    return graphNode;
   }
   extractVisibility(node) {
     for (const child of node.children) {
@@ -37221,6 +37499,20 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
   isEmitStatement(node) {
     return node.type === "emit_statement";
   }
+  getEventName(node) {
+    if (node.type !== "emit_statement") return null;
+    for (const child of node.children) {
+      if (child.type === "call_expression") {
+        const func2 = child.childForFieldName("function");
+        if (func2) {
+          const inner = func2.type === "expression" ? func2.child(0) : func2;
+          if (inner?.type === "identifier") return inner.text;
+        }
+      }
+      if (child.type === "identifier") return child.text;
+    }
+    return null;
+  }
   isAccessModifier(node) {
     return node.type === "modifier_invocation";
   }
@@ -37256,31 +37548,6 @@ var SolidityAdapter = class _SolidityAdapter extends BaseAdapter {
       }
     }
     return result;
-  }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    if (this.isExternalCall(node)) {
-      return { qualifiedName: target, targetKind: "external_unknown" };
-    }
-    return null;
-  }
-  resolveExtensionMethod(_receiverType, methodName, _sourceFiles) {
-    for (const [_contract, libs] of this.usingForMap) {
-      for (const lib of libs) {
-        const entry = this.findInContract(lib, methodName);
-        if (entry) return entry.qualifiedName;
-      }
-    }
-    return null;
-  }
-  resolveScope(containerName, _sourceFiles) {
-    return this.inheritanceGraph.get(containerName) ?? [];
   }
   isBuiltinContextValue(node) {
     if (node.type !== "member_expression") return null;
@@ -37399,6 +37666,13 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       for (const capture of classCaptures) {
         const classNode = capture.node;
         const className = classNode.children.find((c3) => c3.type === "type_identifier")?.text ?? "unknown";
+        this.addContainerNode({
+          name: className,
+          containerKind: "class",
+          visibility: "public",
+          node: classNode,
+          file: file.path
+        });
         const bodyNode = classNode.childForFieldName("body");
         if (!bodyNode) continue;
         let currentVisibility = "private";
@@ -37406,8 +37680,8 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
           if (child.type === "access_specifier") {
             currentVisibility = this.parseAccessSpecifier(child.text);
           } else if (child.type === "function_definition") {
-            const entry = this.createMethodNode(child, file.path, className, currentVisibility);
-            if (entry) this.indexSymbol(entry);
+            const node = this.createMethodNode(child, file.path, className, currentVisibility);
+            if (node) this.addNode(node, className);
           } else if (child.type === "field_declaration") {
             const nameNode = child.childForFieldName("declarator")?.children.find((c3) => c3.type === "field_identifier");
             if (nameNode) {
@@ -37427,22 +37701,21 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
           const methodName = qualifiedId.children.find((c3) => c3.type === "identifier")?.text;
           if (className && methodName) {
             const key = `${className}::${methodName}`;
-            const existing = this.symbolsByContainer.get(className)?.find((n3) => n3.label === methodName);
+            const existing = this.findInContainer(className, methodName);
             if (!existing) {
               const visibility = this.declaredVisibility.get(key) ?? "public";
-              this.indexSymbol(this.createEntry({
+              this.addNode(this.createNode({
                 qualifiedName: key,
                 label: methodName,
                 file: file.path,
                 node: funcNode,
-                visibility,
-                contract: className
-              }));
+                visibility
+              }), className);
             }
           }
         } else {
-          const entry = this.createFreeFunctionNode(funcNode, file.path);
-          if (entry) this.indexSymbol(entry);
+          const node = this.createFreeFunctionNode(funcNode, file.path);
+          if (node) this.addNode(node);
         }
       }
     }
@@ -37461,13 +37734,12 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     if (!nameNode) return void 0;
     const fnName = nameNode.text;
     const qualifiedName = `${className}::${fnName}`;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: className
+      visibility
     });
   }
   createFreeFunctionNode(node, file) {
@@ -37476,7 +37748,7 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     const nameNode = declarator.children.find((c3) => c3.type === "identifier");
     if (!nameNode) return void 0;
     const fnName = nameNode.text;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -37507,43 +37779,49 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const funcNode = capture.node;
-        const symbol = this.findSymbolAtNode(funcNode, file.path);
-        if (!symbol) continue;
-        this.processCallsInNode(funcNode, symbol, simpleCallQuery, fieldCallQuery, scopedCallQuery);
+        const callerNode = this.findNodeAtPosition(funcNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInNode(funcNode, callerNode, simpleCallQuery, fieldCallQuery, scopedCallQuery);
       }
     }
   }
   processCallsInNode(node, caller, simpleCallQuery, fieldCallQuery, scopedCallQuery) {
     for (const capture of simpleCallQuery.captures(node)) {
       if (capture.name !== "FUNC") continue;
-      const calleeName = capture.node.text;
+      const callNode = capture.node;
+      const calleeName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveCall(calleeName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
+        this.addCallEdge(caller.id, calleeName, "external_unknown", callSite);
       }
     }
     for (const capture of fieldCallQuery.captures(node)) {
       if (capture.name !== "FUNC") continue;
-      const methodName = capture.node.text;
-      const receiver = capture.node.parent?.childForFieldName("object")?.text ?? capture.node.parent?.childForFieldName("argument")?.text;
+      const callNode = capture.node;
+      const methodName = callNode.text;
+      const receiver = callNode.parent?.childForFieldName("object")?.text ?? callNode.parent?.childForFieldName("argument")?.text;
       const fullName = receiver ? `${receiver}.${methodName}` : methodName;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveMemberCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
+        this.addCallEdge(caller.id, fullName, "external_unknown", callSite);
       }
     }
     for (const capture of scopedCallQuery.captures(node)) {
       if (capture.name !== "FUNC") continue;
-      const funcName = capture.node.text;
+      const callNode = capture.node;
+      const funcName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveCall(funcName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(funcName, "external_unknown"));
+        this.addCallEdge(caller.id, funcName, "external_unknown", callSite);
       }
     }
   }
@@ -37622,32 +37900,22 @@ var CppAdapter = class _CppAdapter extends BaseAdapter {
     if (node.type !== "assignment_expression" && node.type !== "compound_assignment_expr") return null;
     return node.childForFieldName("left")?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   resolveCall(name2, caller) {
-    if (caller.contract) {
-      const classNodes = this.symbolsByContainer.get(caller.contract);
-      const match = classNodes?.find((n3) => n3.label === name2);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, name2);
       if (match) return match;
     }
-    const candidates = this.symbolsByLabel.get(name2);
-    return candidates?.find((n3) => !n3.contract) ?? candidates?.[0];
+    const candidates = this._graph.findByName(name2);
+    return candidates.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete") ?? candidates.find((n3) => n3.status === "concrete");
   }
   resolveMemberCall(name2, caller) {
-    if (caller.contract) {
-      const classNodes = this.symbolsByContainer.get(caller.contract);
-      const match = classNodes?.find((n3) => n3.label === name2);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, name2);
       if (match) return match;
     }
-    return this.symbolsByLabel.get(name2)?.[0];
+    return this._graph.findByName(name2).find((n3) => n3.status === "concrete");
   }
   static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
     "std",
@@ -37813,18 +38081,10 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
       },
       constants: {
         baseRateNlocPerDay: 250,
-        //  Java tends to be verbose but structurally simpler than C++/Rust.
-        //  We expect slightly lower CC density before considering it "complex."
         complexityMidpoint: 13,
-        //  Once Java control flow gets significantly more tangled than normal
-        //  business logic, we ramp penalties a bit faster.
         complexitySteepness: 9,
-        //  Deep OO / branching can add up to ~90% extra review time, while
-        //  simple Java can give ~25% speedup at best.
         complexityBenefitCap: 0.25,
         complexityPenaltyCap: 0.9,
-        //  Many Java codebases rely on readable code plus moderate Javadoc.
-        //  Around 25% comments unlocks most of the doc benefit (up to ~25%).
         commentFullBenefitDensity: 25,
         commentBenefitCap: 0.25
       }
@@ -37843,14 +38103,21 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
       for (const capture of classCaptures) {
         const classNode = capture.node;
         const className = classNode.childForFieldName("name")?.text ?? classNode.children.find((c3) => c3.type === "identifier")?.text ?? "unknown";
+        this.addContainerNode({
+          name: className,
+          containerKind: "class",
+          visibility: this.extractVisibility(classNode),
+          node: classNode,
+          file: file.path
+        });
         const bodyNode = classNode.childForFieldName("body");
         if (!bodyNode) continue;
         const methodCaptures = methodQuery.captures(bodyNode);
         for (const mCapture of methodCaptures) {
           const methodNode = mCapture.node;
           if (this.isInsideNestedClass(methodNode, bodyNode)) continue;
-          const entry = this.createMethodNode(methodNode, file.path, className);
-          if (entry) this.indexSymbol(entry);
+          const node = this.createMethodNode(methodNode, file.path, className);
+          if (node) this.addNode(node, className);
         }
       }
     }
@@ -37861,13 +38128,12 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
     const fnName = nameNode.text;
     const visibility = this.extractVisibility(node);
     const qualifiedName = `${className}.${fnName}`;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: className
+      visibility
     });
   }
   extractVisibility(node) {
@@ -37906,17 +38172,19 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
         for (const mCapture of methodCaptures) {
           const methodNode = mCapture.node;
           if (this.isInsideNestedClass(methodNode, bodyNode)) continue;
-          const symbol = this.findSymbolAtNode(methodNode, file.path);
-          if (!symbol) continue;
+          const callerNode = this.findNodeAtPosition(methodNode, file.path);
+          if (!callerNode) continue;
           const callCaptures = callQuery.captures(methodNode);
           for (const callCapture of callCaptures) {
             if (callCapture.name !== "FUNC") continue;
-            const calleeName = callCapture.node.text;
-            const callee = this.resolveCall(calleeName, symbol);
-            if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-              this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee) {
-              this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
+            const callNode = callCapture.node;
+            const calleeName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveCall(calleeName, callerNode);
+            if (resolved && resolved.qualifiedName !== callerNode.qualifiedName) {
+              this.addCallEdge(callerNode.id, resolved.qualifiedName, "internal", callSite);
+            } else if (!resolved) {
+              this.addCallEdge(callerNode.id, calleeName, "external_unknown", callSite);
             }
           }
         }
@@ -37993,23 +38261,13 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
     }
     return result;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   resolveCall(name2, caller) {
-    if (caller.contract) {
-      const classNodes = this.symbolsByContainer.get(caller.contract);
-      const match = classNodes?.find((n3) => n3.label === name2);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, name2);
       if (match) return match;
     }
-    return this.symbolsByLabel.get(name2)?.[0];
+    return this._graph.findByName(name2).find((n3) => n3.status === "concrete");
   }
   static STDLIB_RECEIVERS = /* @__PURE__ */ new Set([
     "System",
@@ -38056,7 +38314,6 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
     "stream",
     "Stream",
     "Collectors",
-    "Optional",
     // Logging frameworks
     "log",
     "logger",
@@ -38166,7 +38423,6 @@ var JavaAdapter = class _JavaAdapter extends BaseAdapter {
     "remaining",
     "position",
     "limit",
-    "capacity",
     "rewind",
     "flip",
     "clear",
@@ -38311,13 +38567,21 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
       if (!tree) continue;
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
-        const entry = this.createFunctionNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        this.addNode(this.createFunctionNode(capture.node, file.path));
       }
       const methodCaptures = methodQuery.captures(tree.rootNode);
       for (const capture of methodCaptures) {
-        const entry = this.createMethodNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        const receiverType = this.extractReceiverType(capture.node);
+        if (receiverType && !this._containerNodesByName.has(receiverType)) {
+          this.addContainerNode({
+            name: receiverType,
+            containerKind: "struct",
+            visibility: "public",
+            node: capture.node,
+            file: file.path
+          });
+        }
+        this.addNode(this.createMethodNode(capture.node, file.path), receiverType);
       }
     }
   }
@@ -38325,7 +38589,7 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     const nameNode = node.childForFieldName("name");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(fnName);
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -38339,13 +38603,12 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     const receiverType = this.extractReceiverType(node);
     const visibility = this.extractVisibility(fnName);
     const qualifiedName = receiverType ? `${receiverType}.${fnName}` : fnName;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: receiverType
+      visibility
     });
   }
   extractReceiverType(node) {
@@ -38374,42 +38637,46 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
-        await this.processCallsInFunction(functionNode, symbol, simpleCallQuery, selectorCallQuery);
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInFunction(functionNode, callerNode, simpleCallQuery, selectorCallQuery);
       }
       const methodCaptures = methodQuery.captures(tree.rootNode);
       for (const capture of methodCaptures) {
         const methodNode = capture.node;
-        const symbol = this.findSymbolAtNode(methodNode, file.path);
-        if (!symbol) continue;
-        await this.processCallsInFunction(methodNode, symbol, simpleCallQuery, selectorCallQuery);
+        const callerNode = this.findNodeAtPosition(methodNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInFunction(methodNode, callerNode, simpleCallQuery, selectorCallQuery);
       }
     }
   }
-  async processCallsInFunction(functionNode, caller, simpleCallQuery, selectorCallQuery) {
+  processCallsInFunction(functionNode, caller, simpleCallQuery, selectorCallQuery) {
     const simpleCaptures = simpleCallQuery.captures(functionNode);
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
-      const callName = capture.node.text;
-      const callee = this.resolveSimpleCall(callName);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-      } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
+      const callNode = capture.node;
+      const callName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveSimpleCall(callName);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
+      } else if (!resolved) {
+        this.addCallEdge(caller.id, callName, "external_unknown", callSite);
       }
     }
     const selectorCaptures = selectorCallQuery.captures(functionNode);
     for (const capture of selectorCaptures) {
       if (capture.name !== "FUNC") continue;
-      const methodName = capture.node.text;
-      const receiver = capture.node.parent?.childForFieldName("operand")?.text;
+      const callNode = capture.node;
+      const methodName = callNode.text;
+      const receiver = callNode.parent?.childForFieldName("operand")?.text;
       const fullName = receiver ? `${receiver}.${methodName}` : methodName;
-      const callee = this.resolveSelectorCall(methodName, caller);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-      } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveSelectorCall(methodName, caller);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
+      } else if (!resolved) {
+        this.addCallEdge(caller.id, fullName, "external_unknown", callSite);
       }
     }
   }
@@ -38473,26 +38740,11 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     if (node.type !== "assignment_statement" && node.type !== "short_var_declaration") return null;
     return node.childForFieldName("left")?.text ?? node.children[0]?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
-  resolveExtensionMethod(receiverType, methodName, _sourceFiles) {
-    const methods = this.symbolsByContainer.get(receiverType);
-    const match = methods?.find((m8) => m8.label === methodName);
-    return match?.qualifiedName ?? null;
-  }
   resolveSimpleCall(callName) {
-    const packageFuncs = this.symbolsByLabel.get(callName);
-    const packageFunc = packageFuncs?.find((n3) => !n3.contract);
+    const allByName = this._graph.findByName(callName);
+    const packageFunc = allByName.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (packageFunc) return packageFunc;
-    return packageFuncs?.[0];
+    return allByName.find((n3) => n3.status === "concrete");
   }
   static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
     "fmt",
@@ -38564,13 +38816,12 @@ var GoAdapter = class _GoAdapter extends BaseAdapter {
     return _GoAdapter.BUILTIN_FUNCTIONS.has(name2);
   }
   resolveSelectorCall(methodName, caller) {
-    if (caller.contract) {
-      const receiverMethods = this.symbolsByContainer.get(caller.contract);
-      const match = receiverMethods?.find((n3) => n3.label === methodName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, methodName);
       if (match) return match;
     }
-    const methods = this.symbolsByLabel.get(methodName);
-    return methods?.[0];
+    return this._graph.findByName(methodName).find((n3) => n3.status === "concrete");
   }
 };
 
@@ -38646,17 +38897,24 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
       for (const capture of implCaptures) {
         const implNode = capture.node;
         const containerName = this.extractImplTypeName(implNode);
+        this.addContainerNode({
+          name: containerName,
+          containerKind: "impl",
+          visibility: "public",
+          node: implNode,
+          file: file.path
+        });
         const bodyNode = implNode.childForFieldName("body");
         if (bodyNode) {
           const funcCaptures = functionQuery.captures(bodyNode);
           for (const funcCapture of funcCaptures) {
             if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-            const entry = this.createFunctionNode(
+            const node = this.createFunctionNode(
               funcCapture.node,
               file.path,
               containerName
             );
-            this.indexSymbol(entry);
+            this.addNode(node, containerName);
           }
         }
       }
@@ -38667,29 +38925,35 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
             return body2 && child.startIndex >= body2.startIndex && child.endIndex <= body2.endIndex;
           });
           if (!isInImpl) {
-            const entry = this.createFunctionNode(child, file.path);
-            this.indexSymbol(entry);
+            this.addNode(this.createFunctionNode(child, file.path));
           }
         }
         if (child.type === "mod_item") {
-          await this.processModItem(child, file.path, functionQuery);
+          this.processModItem(child, file.path, functionQuery);
         }
       }
     }
   }
-  async processModItem(modNode, filePath, functionQuery) {
+  processModItem(modNode, filePath, functionQuery) {
     const modName = modNode.childForFieldName("name")?.text;
     const bodyNode = modNode.childForFieldName("body");
     if (bodyNode && modName) {
+      this.addContainerNode({
+        name: modName,
+        containerKind: "module",
+        visibility: "public",
+        node: modNode,
+        file: filePath
+      });
       const funcCaptures = functionQuery.captures(bodyNode);
       for (const funcCapture of funcCaptures) {
         if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-        const entry = this.createFunctionNode(
+        const node = this.createFunctionNode(
           funcCapture.node,
           filePath,
           modName
         );
-        this.indexSymbol(entry);
+        this.addNode(node, modName);
       }
     }
   }
@@ -38717,13 +38981,12 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(node);
     const qualifiedName = container ? `${container}::${fnName}` : fnName;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: container
+      visibility
     });
   }
   extractVisibility(node) {
@@ -38755,27 +39018,29 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
-        await this.processCallQuery(simpleCallQuery, functionNode, symbol, "simple");
-        await this.processCallQuery(methodCallQuery, functionNode, symbol, "method");
-        await this.processCallQuery(scopedCallQuery, functionNode, symbol, "scoped");
-        await this.processCallQuery(genericCallQuery, functionNode, symbol, "simple");
-        await this.processCallQuery(genericScopedCallQuery, functionNode, symbol, "scoped");
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
+        this.processCallQuery(simpleCallQuery, functionNode, callerNode, "simple");
+        this.processCallQuery(methodCallQuery, functionNode, callerNode, "method");
+        this.processCallQuery(scopedCallQuery, functionNode, callerNode, "scoped");
+        this.processCallQuery(genericCallQuery, functionNode, callerNode, "simple");
+        this.processCallQuery(genericScopedCallQuery, functionNode, callerNode, "scoped");
       }
     }
   }
-  async processCallQuery(query, functionNode, caller, callType) {
+  processCallQuery(query, functionNode, caller, callType) {
     const captures = query.captures(functionNode);
     for (const capture of captures) {
       if (capture.name !== "FUNC") continue;
-      const callText = capture.node.text;
-      if (this.isMacroCall(capture.node)) continue;
-      const callee = this.resolveCall(callText, callType, caller);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-      } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callText, "external_unknown"));
+      const callNode = capture.node;
+      const callText = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      if (this.isMacroCall(callNode)) continue;
+      const resolved = this.resolveCall(callText, callType, caller);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
+      } else if (!resolved) {
+        this.addCallEdge(caller.id, callText, "external_unknown", callSite);
       }
     }
   }
@@ -38863,70 +39128,31 @@ var RustAdapter = class _RustAdapter extends BaseAdapter {
     }
     return result;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    if (node.type !== "call_expression") return null;
-    const funcExpr = node.childForFieldName("function");
-    if (!funcExpr) return null;
-    let callText;
-    let callType;
-    if (funcExpr.type === "identifier") {
-      callText = funcExpr.text;
-      callType = "simple";
-    } else if (funcExpr.type === "field_expression") {
-      callText = funcExpr.childForFieldName("field")?.text ?? funcExpr.text;
-      callType = "method";
-    } else if (funcExpr.type === "scoped_identifier") {
-      callText = funcExpr.text;
-      callType = "scoped";
-    } else {
-      return null;
-    }
-    if (callType === "scoped") {
-      const parts2 = callText.split("::");
-      const funcName = parts2[parts2.length - 1];
-      for (const [qn2, entry] of symbolMap) {
-        if (entry.label === funcName && qn2.includes(parts2[0])) {
-          return { qualifiedName: qn2, targetKind: "internal" };
-        }
-      }
-    }
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === (callType === "scoped" ? callText.split("::").pop() : callText)) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
-  resolveScope(containerName, _sourceFiles) {
-    return this.symbolsByContainer.has(containerName) ? [containerName] : [];
-  }
   resolveCall(callText, callType, caller) {
     if (callType === "scoped") {
       const parts2 = callText.split("::");
       const funcName = parts2[parts2.length - 1];
       const containerName = parts2.slice(0, -1).join("::");
-      const containerFuncs = this.symbolsByContainer.get(containerName);
-      const match = containerFuncs?.find((n3) => n3.label === funcName);
+      const match = this.findInContainer(containerName, funcName);
       if (match) return match;
-      return this.symbolsByLabel.get(funcName)?.[0];
+      return this._graph.findByName(funcName).find((n3) => n3.status === "concrete");
     }
+    const callerContainer = this.getContainerName(caller.id);
     if (callType === "method") {
-      if (caller.contract) {
-        const containerFuncs = this.symbolsByContainer.get(caller.contract);
-        const match = containerFuncs?.find((n3) => n3.label === callText);
+      if (callerContainer) {
+        const match = this.findInContainer(callerContainer, callText);
         if (match) return match;
       }
-      return this.symbolsByLabel.get(callText)?.[0];
+      return this._graph.findByName(callText).find((n3) => n3.status === "concrete");
     }
-    if (caller.contract) {
-      const containerFuncs = this.symbolsByContainer.get(caller.contract);
-      const match = containerFuncs?.find((n3) => n3.label === callText);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, callText);
       if (match) return match;
     }
-    const freeFuncs = this.symbolsByLabel.get(callText);
-    const free = freeFuncs?.find((n3) => !n3.contract);
+    const allByName = this._graph.findByName(callText);
+    const free = allByName.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (free) return free;
-    return this.symbolsByLabel.get(callText)?.[0];
+    return allByName.find((n3) => n3.status === "concrete");
   }
   static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
     "std",
@@ -39141,6 +39367,13 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
       for (const capture of implCaptures) {
         const implNode = capture.node;
         const containerName = this.extractImplName(implNode);
+        this.addContainerNode({
+          name: containerName,
+          containerKind: "impl",
+          visibility: "public",
+          node: implNode,
+          file: file.path
+        });
         const bodyNode = implNode.children.find(
           (c3) => c3.type === "declaration_list" || c3.type === "body"
         );
@@ -39148,8 +39381,8 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
         const funcCaptures = functionQuery.captures(bodyNode);
         for (const funcCapture of funcCaptures) {
           if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-          const entry = this.createFunctionNode(funcCapture.node, file.path, containerName);
-          this.indexSymbol(entry);
+          const node = this.createFunctionNode(funcCapture.node, file.path, containerName);
+          this.addNode(node, containerName);
         }
       }
       const allFuncCaptures = functionQuery.captures(tree.rootNode);
@@ -39162,7 +39395,7 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
           return body2 && funcNode.startIndex >= body2.startIndex && funcNode.endIndex <= body2.endIndex;
         });
         if (!isInImpl) {
-          this.indexSymbol(this.createFunctionNode(funcNode, file.path));
+          this.addNode(this.createFunctionNode(funcNode, file.path));
         }
       }
     }
@@ -39200,13 +39433,12 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     const fnName = this.extractFunctionName(node);
     const visibility = this.extractVisibility(node);
     const qualifiedName = container ? `${container}::${fnName}` : fnName;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: container
+      visibility
     });
   }
   extractVisibility(node) {
@@ -39242,12 +39474,12 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
-        this.processCallQuery(simpleCallQuery, functionNode, symbol, "simple");
-        this.processCallQuery(scopedCallQuery, functionNode, symbol, "scoped");
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
+        this.processCallQuery(simpleCallQuery, functionNode, callerNode, "simple");
+        this.processCallQuery(scopedCallQuery, functionNode, callerNode, "scoped");
         if (methodCallQuery) {
-          this.processCallQuery(methodCallQuery, functionNode, symbol, "method");
+          this.processCallQuery(methodCallQuery, functionNode, callerNode, "method");
         }
       }
     }
@@ -39256,12 +39488,14 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     const captures = query.captures(functionNode);
     for (const capture of captures) {
       if (capture.name !== "FUNC") continue;
-      const callText = capture.node.text;
+      const callNode = capture.node;
+      const callText = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveCall(callText, callType, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callText, "external_unknown"));
+        this.addCallEdge(caller.id, callText, "external_unknown", callSite);
       }
     }
   }
@@ -39278,7 +39512,8 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     return null;
   }
   isPublicFn(node) {
-    return this.extractVisibility(node) === "public" || this.extractVisibility(node) === "external";
+    const vis = this.extractVisibility(node);
+    return vis === "public" || vis === "external";
   }
   isEmitStatement(node) {
     if (node.type !== "call_expression") return false;
@@ -39289,6 +39524,20 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
       if (field?.text === "emit") return true;
     }
     return false;
+  }
+  getEventName(node) {
+    if (!this.isEmitStatement(node)) return null;
+    const args2 = node.childForFieldName("arguments");
+    if (args2) {
+      for (const child of args2.children) {
+        if (child.type === "struct_expression") {
+          const name2 = child.children.find((c3) => c3.type === "identifier" || c3.type === "scoped_identifier");
+          if (name2) return name2.text.split("::").pop() ?? null;
+        }
+        if (child.type === "identifier") return child.text;
+      }
+    }
+    return null;
   }
   isExternalCall(node) {
     if (node.type !== "call_expression") return false;
@@ -39356,19 +39605,6 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     }
     return result;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    if (node.type === "call_expression" && node.text.includes("Dispatcher")) {
-      return { qualifiedName: target, targetKind: "cross_module" };
-    }
-    return null;
-  }
   isBuiltinContextValue(node) {
     if (node.type !== "call_expression") return null;
     const text = node.text;
@@ -39386,28 +39622,24 @@ var CairoAdapter = class _CairoAdapter extends BaseAdapter {
     }
     return null;
   }
-  resolveScope(containerName, _sourceFiles) {
-    return this.symbolsByContainer.has(containerName) ? [containerName] : [];
-  }
   resolveCall(callText, callType, caller) {
     if (callType === "scoped") {
       const parts2 = callText.split("::");
       const funcName = parts2[parts2.length - 1];
       const containerName = parts2.slice(0, -1).join("::");
-      const containerFuncs = this.symbolsByContainer.get(containerName);
-      const match = containerFuncs?.find((n3) => n3.label === funcName);
+      const match = this.findInContainer(containerName, funcName);
       if (match) return match;
-      return this.symbolsByLabel.get(funcName)?.[0];
+      return this._graph.findByName(funcName).find((n3) => n3.status === "concrete");
     }
-    if (caller.contract) {
-      const containerFuncs = this.symbolsByContainer.get(caller.contract);
-      const match = containerFuncs?.find((n3) => n3.label === callText);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, callText);
       if (match) return match;
     }
-    const freeFuncs = this.symbolsByLabel.get(callText);
-    const free = freeFuncs?.find((n3) => !n3.contract);
+    const candidates = this._graph.findByName(callText);
+    const free = candidates.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (free) return free;
-    return this.symbolsByLabel.get(callText)?.[0];
+    return candidates.find((n3) => n3.status === "concrete");
   }
   static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
     "starknet",
@@ -39535,8 +39767,8 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
       if (!tree) continue;
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
-        const entry = this.createFunctionNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        const node = this.createFunctionNode(capture.node, file.path);
+        this.addNode(node);
       }
     }
   }
@@ -39544,7 +39776,7 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
     const nameNode = node.childForFieldName("name") || node.children.find((c3) => c3.type === "function_name" || c3.type === "identifier");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(node);
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -39604,16 +39836,6 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
     if (node.type !== "assignment" && node.type !== "assignment_expression") return null;
     return node.children[0]?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   async identifyCalls(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("compact" /* Compact */);
@@ -39627,28 +39849,29 @@ var CompactAdapter = class _CompactAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const funcNode = capture.node;
-        const symbol = this.findSymbolAtNode(funcNode, file.path);
-        if (!symbol) continue;
+        const callerNode = this.findNodeAtPosition(funcNode, file.path);
+        if (!callerNode) continue;
         const callCaptures = callQuery.captures(funcNode);
         for (const callCapture of callCaptures) {
           const callNode = callCapture.node;
           const calleeName = this.extractCalleeName(callNode);
           if (!calleeName) continue;
-          let callee = this.symbolsByLabel.get(calleeName)?.[0];
+          const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+          let callee = this._graph.findByName(calleeName).find((n3) => n3.status === "concrete");
           if (!callee && prefixMap.size > 0) {
             for (const [prefix, modulePath] of prefixMap) {
               if (calleeName.startsWith(prefix)) {
                 const funcName = calleeName.slice(prefix.length);
-                const candidates = this.symbolsByLabel.get(funcName) ?? [];
-                callee = candidates.find((s5) => path5.resolve(s5.file) === modulePath);
+                const candidates = this._graph.findByName(funcName);
+                callee = candidates.find((s5) => s5.locator?.file === modulePath);
                 if (callee) break;
               }
             }
           }
-          if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+            this.addCallEdge(callerNode.id, callee.qualifiedName, "internal", callSite);
           } else if (!callee) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
+            this.addCallEdge(callerNode.id, calleeName, "external_unknown", callSite);
           }
         }
       }
@@ -39786,12 +40009,19 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
       for (const capture of moduleCaptures) {
         const moduleNode = capture.node;
         const moduleName = this.extractModuleName(moduleNode);
+        this.addContainerNode({
+          name: moduleName,
+          containerKind: "module",
+          visibility: "public",
+          node: moduleNode,
+          file: file.path
+        });
         for (const child of moduleNode.children) {
           if (child.type !== "declaration") continue;
           const funcDecl = child.children.find((c3) => c3.type === "function_decl");
           if (!funcDecl) continue;
           const visibility = this.extractVisibilityFromDecl(child);
-          this.indexSymbol(this.createFunctionNode(funcDecl, file.path, moduleName, visibility));
+          this.addNode(this.createFunctionNode(funcDecl, file.path, moduleName, visibility), moduleName);
         }
       }
       const allFuncCaptures = functionQuery.captures(tree.rootNode);
@@ -39802,7 +40032,7 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
         );
         if (!isInModule) {
           const visibility = this.extractVisibilityFromDecl(funcNode.parent ?? null);
-          this.indexSymbol(this.createFunctionNode(funcNode, file.path, void 0, visibility));
+          this.addNode(this.createFunctionNode(funcNode, file.path, void 0, visibility));
         }
       }
     }
@@ -39843,13 +40073,12 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
     const nameNode = node.children.find((c3) => c3.type === "identifier");
     const fnName = nameNode?.text ?? "unknown";
     const qualifiedName = module2 ? `${module2}::${fnName}` : fnName;
-    return this.createEntry({
+    return this.createNode({
       qualifiedName,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: module2
+      visibility
     });
   }
   async identifyCalls(files) {
@@ -39864,17 +40093,19 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
         const callCaptures = callQuery.captures(functionNode);
         for (const callCapture of callCaptures) {
-          const callee = this.resolveCallNode(callCapture.node, symbol);
-          if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          const callNode = callCapture.node;
+          const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+          const callee = this.resolveCallNode(callNode, callerNode);
+          if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+            this.addCallEdge(callerNode.id, callee.qualifiedName, "internal", callSite);
           } else if (!callee) {
-            const callName = this.extractCallName(callCapture.node);
+            const callName = this.extractCallName(callNode);
             if (!callName) continue;
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callName, "external_unknown"));
+            this.addCallEdge(callerNode.id, callName, "external_unknown", callSite);
           }
         }
       }
@@ -39902,6 +40133,25 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
     const nameChain = node.children.find((c3) => c3.type === "name_access_chain");
     if (!nameChain) return false;
     return nameChain.text.includes("emit");
+  }
+  getEventName(node) {
+    if (!this.isEmitStatement(node)) return null;
+    const text = node.text;
+    const genericMatch = text.match(/emit<(\w+)>/);
+    if (genericMatch) return genericMatch[1];
+    const args2 = node.children.find((c3) => c3.type === "arg_list");
+    if (args2) {
+      for (const child of args2.children) {
+        if (child.type === "pack_expr") {
+          const nameChain = child.children.find((c3) => c3.type === "name_access_chain");
+          if (nameChain) {
+            const ids = nameChain.children.filter((c3) => c3.type === "identifier");
+            return ids.length > 0 ? ids[ids.length - 1].text : null;
+          }
+        }
+      }
+    }
+    return null;
   }
   isExternalCall(node) {
     if (node.type !== "call_expr") return false;
@@ -39939,22 +40189,6 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
     if (node.type !== "assignment") return null;
     return node.childForFieldName("left")?.text ?? node.children[0]?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    if (this.isExternalCall(node)) {
-      return { qualifiedName: target, targetKind: "cross_module" };
-    }
-    return null;
-  }
-  resolveScope(containerName, _sourceFiles) {
-    return this.symbolsByContainer.has(containerName) ? [containerName] : [];
-  }
   // Extract module::function name from a call_expr node (no arguments).
   extractCallName(callNode) {
     const nameChain = callNode.children.find((c3) => c3.type === "name_access_chain");
@@ -39971,18 +40205,18 @@ var MoveAdapter = class _MoveAdapter extends BaseAdapter {
     const funcName = identifiers[identifiers.length - 1];
     const moduleName = identifiers.length >= 2 ? identifiers[identifiers.length - 2] : null;
     if (moduleName) {
-      const moduleFuncs = this.symbolsByContainer.get(moduleName);
-      const match = moduleFuncs?.find((n3) => n3.label === funcName);
+      const match = this.findInContainer(moduleName, funcName);
       if (match) return match;
     }
-    if (caller.contract) {
-      const moduleFuncs = this.symbolsByContainer.get(caller.contract);
-      const match = moduleFuncs?.find((n3) => n3.label === funcName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, funcName);
       if (match) return match;
     }
-    const free = this.symbolsByLabel.get(funcName)?.find((n3) => !n3.contract);
+    const candidates = this._graph.findByName(funcName);
+    const free = candidates.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (free) return free;
-    return this.symbolsByLabel.get(funcName)?.[0];
+    return candidates.find((n3) => n3.status === "concrete");
   }
   static STDLIB_PREFIXES = /* @__PURE__ */ new Set([
     // Aptos stdlib / framework modules
@@ -40145,8 +40379,8 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         if (this.isNestedFunction(capture.node)) continue;
-        const entry = this.createFunctionNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        const node = this.createFunctionNode(capture.node, file.path);
+        this.addNode(node);
       }
     }
   }
@@ -40162,7 +40396,7 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
     const nameNode = node.childForFieldName("name");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(node);
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -40223,16 +40457,6 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
     if (node.type !== "assignment_expression") return null;
     return node.childForFieldName("left")?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   async identifyCalls(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("noir" /* Noir */);
@@ -40251,30 +40475,34 @@ var NoirAdapter = class _NoirAdapter extends BaseAdapter {
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
         if (this.isNestedFunction(functionNode)) continue;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
         const simpleCaptures = simpleCallQuery.captures(functionNode);
         for (const callCapture of simpleCaptures) {
           if (callCapture.name !== "FUNC") continue;
-          const callName = callCapture.node.text;
-          const callee = this.symbolsByLabel.get(callName)?.[0];
-          if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          const callNode = callCapture.node;
+          const callName = callNode.text;
+          const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+          const callee = this._graph.findByName(callName).find((n3) => n3.status === "concrete");
+          if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+            this.addCallEdge(callerNode.id, callee.qualifiedName, "internal", callSite);
           } else if (!callee) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callName, "external_unknown"));
+            this.addCallEdge(callerNode.id, callName, "external_unknown", callSite);
           }
         }
         if (scopedCallQuery) {
           const scopedCaptures = scopedCallQuery.captures(functionNode);
           for (const callCapture of scopedCaptures) {
             if (callCapture.name !== "FUNC") continue;
-            const callText = callCapture.node.text;
+            const callNode = callCapture.node;
+            const callText = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
             const funcName = callText.includes("::") ? callText.split("::").pop() : callText;
-            const callee = this.symbolsByLabel.get(funcName)?.[0];
-            if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-              this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+            const callee = this._graph.findByName(funcName).find((n3) => n3.status === "concrete");
+            if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+              this.addCallEdge(callerNode.id, callee.qualifiedName, "internal", callSite);
             } else if (!callee) {
-              this.addCallee(symbol.qualifiedName, this.makeCallee(callText, "external_unknown"));
+              this.addCallEdge(callerNode.id, callText, "external_unknown", callSite);
             }
           }
         }
@@ -40382,8 +40610,8 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
       const captures = functionQuery.captures(tree.rootNode);
       for (const capture of captures) {
         const funcNode = capture.node;
-        const entry = this.createFunctionNode(funcNode, file.path);
-        this.indexSymbol(entry);
+        const node = this.createFunctionNode(funcNode, file.path);
+        this.addNode(node);
       }
     }
   }
@@ -40391,7 +40619,7 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
     const nameNode = node.children.find((c3) => c3.type === "identifier");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = "public";
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -40439,16 +40667,6 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
     if (node.type !== "assignment_expression") return null;
     return node.children[0]?.text ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   async identifyCalls(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("tolk" /* Tolk */);
@@ -40461,17 +40679,19 @@ var TolkAdapter = class _TolkAdapter extends BaseAdapter {
       const captures = functionQuery.captures(tree.rootNode);
       for (const capture of captures) {
         const funcNode = capture.node;
-        const symbol = this.findSymbolAtNode(funcNode, file.path);
-        if (!symbol) continue;
+        const callerNode = this.findNodeAtPosition(funcNode, file.path);
+        if (!callerNode) continue;
         const callCaptures = callQuery.captures(funcNode);
         for (const callCapture of callCaptures) {
           if (callCapture.name !== "FUNC") continue;
-          const calleeName = callCapture.node.text;
-          const callee = this.symbolsByLabel.get(calleeName)?.[0];
-          if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+          const callNode = callCapture.node;
+          const calleeName = callNode.text;
+          const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+          const callee = this._graph.findByName(calleeName).find((n3) => n3.status === "concrete");
+          if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+            this.addCallEdge(callerNode.id, callee.qualifiedName, "internal", callSite);
           } else if (!callee) {
-            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
+            this.addCallEdge(callerNode.id, calleeName, "external_unknown", callSite);
           }
         }
       }
@@ -40650,6 +40870,13 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
       for (const capture of classCaptures) {
         const classNode = capture.node;
         const className = classNode.childForFieldName("name")?.text ?? classNode.children.find((c3) => c3.type === "identifier")?.text ?? "unknown";
+        this.addContainerNode({
+          name: className,
+          containerKind: "class",
+          visibility: "public",
+          node: classNode,
+          file: file.path
+        });
         const bodyNode = classNode.childForFieldName("body");
         if (!bodyNode) continue;
         for (const child of bodyNode.children) {
@@ -40659,14 +40886,13 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
           const methodName = nameNode.text;
           const visibility = this.extractMethodVisibility(child);
           const id = `${className}.${methodName}`;
-          this.indexSymbol(this.createEntry({
+          this.addNode(this.createNode({
             qualifiedName: id,
             label: methodName,
             file: file.path,
             node: child,
-            visibility,
-            contract: className
-          }));
+            visibility
+          }), className);
         }
       }
       const funcCaptures = functionQuery.captures(tree.rootNode);
@@ -40677,7 +40903,7 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
         if (!nameNode) continue;
         const fnName = nameNode.text;
         const visibility = funcNode.parent?.type === "export_statement" ? "public" : "private";
-        this.indexSymbol(this.createEntry({
+        this.addNode(this.createNode({
           qualifiedName: fnName,
           label: fnName,
           file: file.path,
@@ -40697,7 +40923,7 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
           if (valueNode.type !== "arrow_function" && valueNode.type !== "function_expression") continue;
           const fnName = nameNode.text;
           const visibility = isExport ? "public" : "private";
-          this.indexSymbol(this.createEntry({
+          this.addNode(this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file: file.path,
@@ -40748,18 +40974,18 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
         if (!bodyNode) continue;
         for (const child of bodyNode.children) {
           if (child.type !== "method_definition") continue;
-          const symbol = this.findSymbolAtNode(child, file.path);
-          if (!symbol) continue;
-          this.processCallsInNode(child, symbol, simpleCallQuery, memberCallQuery);
+          const callerNode = this.findNodeAtPosition(child, file.path);
+          if (!callerNode) continue;
+          this.processCallsInNode(child, callerNode, simpleCallQuery, memberCallQuery);
         }
       }
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const funcNode = capture.node;
         if (this.isInsideAnyClass(funcNode, classCaptures)) continue;
-        const symbol = this.findSymbolAtNode(funcNode, file.path);
-        if (!symbol) continue;
-        this.processCallsInNode(funcNode, symbol, simpleCallQuery, memberCallQuery);
+        const callerNode = this.findNodeAtPosition(funcNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInNode(funcNode, callerNode, simpleCallQuery, memberCallQuery);
       }
       for (const child of tree.rootNode.children) {
         const isExport = child.type === "export_statement";
@@ -40770,9 +40996,9 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
           const valueNode = declarator.childForFieldName("value");
           if (!valueNode) continue;
           if (valueNode.type !== "arrow_function" && valueNode.type !== "function_expression") continue;
-          const symbol = this.findSymbolAtNode(valueNode, file.path);
-          if (!symbol) continue;
-          this.processCallsInNode(valueNode, symbol, simpleCallQuery, memberCallQuery);
+          const callerNode = this.findNodeAtPosition(valueNode, file.path);
+          if (!callerNode) continue;
+          this.processCallsInNode(valueNode, callerNode, simpleCallQuery, memberCallQuery);
         }
       }
     }
@@ -40781,25 +41007,29 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
     const simpleCaptures = simpleCallQuery.captures(node);
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
-      const callName = capture.node.text;
+      const callNode = capture.node;
+      const callName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveSimpleCall(callName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
+        this.addCallEdge(caller.id, callName, "external_unknown", callSite);
       }
     }
     const memberCaptures = memberCallQuery.captures(node);
     for (const capture of memberCaptures) {
       if (capture.name !== "FUNC") continue;
-      const methodName = capture.node.text;
+      const callNode = capture.node;
+      const methodName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
       const callee = this.resolveMemberCall(methodName, caller);
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        const obj = capture.node.parent?.childForFieldName("object")?.text;
+        const obj = callNode.parent?.childForFieldName("object")?.text;
         const fullName = obj && obj !== "this" && obj !== "self" ? `${obj}.${methodName}` : methodName;
-        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
+        this.addCallEdge(caller.id, fullName, "external_unknown", callSite);
       }
     }
   }
@@ -40837,13 +41067,7 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
     return text.startsWith("fetch(") || text.includes("XMLHttpRequest") || text.includes("child_process") || text.includes("exec(") || text.includes("spawn(") || text.includes("http.");
   }
   isStateWrite(node) {
-    if (node.type === "assignment_expression") {
-      const lhs = node.childForFieldName("left");
-      if (lhs?.type === "member_expression") return true;
-      return true;
-    }
-    if (node.type === "augmented_assignment_expression") return true;
-    return false;
+    return node.type === "assignment_expression" || node.type === "augmented_assignment_expression";
   }
   isStateRead(node) {
     if (node.type === "member_expression") {
@@ -40884,35 +41108,24 @@ var JSFamilyAdapter = class _JSFamilyAdapter extends BaseAdapter {
     }
     return result;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
   resolveSimpleCall(callName, caller) {
-    if (caller.contract) {
-      const classEntries = this.symbolsByContainer.get(caller.contract);
-      const match = classEntries?.find((n3) => n3.label === callName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, callName);
       if (match) return match;
     }
-    const candidates = this.symbolsByLabel.get(callName);
-    const freeFunc = candidates?.find((n3) => !n3.contract);
+    const candidates = this._graph.findByName(callName);
+    const freeFunc = candidates.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (freeFunc) return freeFunc;
-    return candidates?.[0];
+    return candidates.find((n3) => n3.status === "concrete");
   }
   resolveMemberCall(methodName, caller) {
-    if (caller.contract) {
-      const classEntries = this.symbolsByContainer.get(caller.contract);
-      const match = classEntries?.find((n3) => n3.label === methodName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const match = this.findInContainer(callerContainer, methodName);
       if (match) return match;
     }
-    const candidates = this.symbolsByLabel.get(methodName);
-    return candidates?.find((n3) => !!n3.contract);
+    return this._graph.findByName(methodName).find((n3) => !!this.getContainerName(n3.id) && n3.status === "concrete");
   }
   static STDLIB_RECEIVERS = /* @__PURE__ */ new Set([
     // Global objects
@@ -41177,6 +41390,10 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
       }
     });
   }
+  resetState() {
+    super.resetState();
+    this._filesByBasename.clear();
+  }
   async buildSymbolTable(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("masm" /* Masm */);
@@ -41192,13 +41409,13 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
       if (!tree) continue;
       const procCaptures = procQuery.captures(tree.rootNode);
       for (const capture of procCaptures) {
-        const entry = this.createProcedureNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        const node = this.createProcedureNode(capture.node, file.path);
+        this.addNode(node);
       }
       const entryCaptures = entryQuery.captures(tree.rootNode);
       for (const capture of entryCaptures) {
-        const entry = this.createEntrypointNode(capture.node, file.path);
-        this.indexSymbol(entry);
+        const node = this.createEntrypointNode(capture.node, file.path);
+        this.addNode(node);
       }
     }
   }
@@ -41207,7 +41424,7 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     const fnName = nameNode?.text ?? "unknown";
     const isExported = node.text.trimStart().startsWith("export");
     const visibility = isExported ? "public" : "private";
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -41216,7 +41433,7 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     });
   }
   createEntrypointNode(node, file) {
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: "begin",
       label: "begin",
       file,
@@ -41257,19 +41474,6 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
     if (node.type !== "invoke") return null;
     return this.extractCalleeName(node) ?? null;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    if (this.isExternalCall(node)) {
-      return { qualifiedName: target, targetKind: "external_unknown" };
-    }
-    return null;
-  }
   async identifyCalls(files) {
     const service = TreeSitterService.getInstance();
     const lang = await service.getLanguage("masm" /* Masm */);
@@ -41284,16 +41488,16 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
       const procCaptures = procQuery.captures(tree.rootNode);
       for (const capture of procCaptures) {
         const procNode = capture.node;
-        const symbol = this.findSymbolAtNode(procNode, file.path);
-        if (!symbol) continue;
-        this.processCallsInNode(procNode, symbol, callQuery, moduleAliases);
+        const callerNode = this.findNodeAtPosition(procNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInNode(procNode, callerNode, callQuery, moduleAliases);
       }
       const entryCaptures = entryQuery.captures(tree.rootNode);
       for (const capture of entryCaptures) {
         const entryNode = capture.node;
-        const symbol = this.findSymbolAtNode(entryNode, file.path);
-        if (!symbol) continue;
-        this.processCallsInNode(entryNode, symbol, callQuery, moduleAliases);
+        const callerNode = this.findNodeAtPosition(entryNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInNode(entryNode, callerNode, callQuery, moduleAliases);
       }
     }
   }
@@ -41319,21 +41523,22 @@ var MasmAdapter = class _MasmAdapter extends BaseAdapter {
       const callNode = capture.node;
       const calleeName = this.extractCalleeName(callNode);
       if (!calleeName) continue;
-      let callee = this.symbolsByLabel.get(calleeName)?.[0];
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      let callee = this._graph.findByName(calleeName).find((n3) => n3.status === "concrete");
       if (!callee && calleeName.includes("::")) {
         const sep = calleeName.indexOf("::");
         const alias = calleeName.slice(0, sep);
         const funcName = calleeName.slice(sep + 2);
         const modulePath = moduleAliases.get(alias);
         if (modulePath) {
-          const candidates = this.symbolsByLabel.get(funcName) ?? [];
-          callee = candidates.find((s5) => s5.file === modulePath);
+          const candidates = this._graph.findByName(funcName);
+          callee = candidates.find((s5) => s5.locator?.file === modulePath);
         }
       }
       if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+        this.addCallEdge(caller.id, callee.qualifiedName, "internal", callSite);
       } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, "external_unknown"));
+        this.addCallEdge(caller.id, calleeName, "external_unknown", callSite);
       }
     }
   }
@@ -41630,26 +41835,34 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
       for (const capture of classCaptures) {
         const classNode = capture.node;
         const className = classNode.childForFieldName("name")?.text ?? "unknown";
+        this.addContainerNode({
+          name: className,
+          containerKind: "class",
+          visibility: "public",
+          node: classNode,
+          file: file.path
+        });
         const parentCaptures = inheritanceQuery.captures(classNode);
         const parents = parentCaptures.filter((c3) => c3.name === "parent").map((c3) => c3.node.text);
         if (parents.length > 0) {
           this.inheritanceGraph.set(className, parents);
+          for (const parent of parents) {
+            this.addInheritsEdge(className, parent);
+          }
         }
         const bodyNode = classNode.childForFieldName("body");
         if (!bodyNode) continue;
         const methodCaptures = functionQuery.captures(bodyNode);
         for (const methodCapture of methodCaptures) {
           if (this.isNestedFunction(methodCapture.node, bodyNode)) continue;
-          const entry = this.createMethodEntry(methodCapture.node, file.path, className);
-          this.indexSymbol(entry);
+          this.addNode(this.createMethodEntry(methodCapture.node, file.path, className), className);
         }
       }
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         if (this.isInsideClass(capture.node, classCaptures)) continue;
         if (this.isNestedInFunction(capture.node, tree.rootNode)) continue;
-        const entry = this.createFunctionEntry(capture.node, file.path);
-        this.indexSymbol(entry);
+        this.addNode(this.createFunctionEntry(capture.node, file.path));
       }
     }
   }
@@ -41689,7 +41902,7 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     const nameNode = node.childForFieldName("name");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(fnName);
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: fnName,
       label: fnName,
       file,
@@ -41701,13 +41914,12 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     const nameNode = node.childForFieldName("name");
     const fnName = nameNode?.text ?? "unknown";
     const visibility = this.extractVisibility(fnName);
-    return this.createEntry({
+    return this.createNode({
       qualifiedName: `${className}.${fnName}`,
       label: fnName,
       file,
       node,
-      visibility,
-      contract: className
+      visibility
     });
   }
   extractVisibility(name2) {
@@ -41716,17 +41928,13 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     if (name2.startsWith("_")) return "private";
     return "public";
   }
-  findInClass(className, methodName) {
-    const methods = this.symbolsByContainer.get(className);
-    return methods?.find((n3) => n3.label === methodName);
-  }
   resolveInheritedCall(name2, className, visited = /* @__PURE__ */ new Set()) {
     if (visited.has(className)) return void 0;
     visited.add(className);
     const parents = this.inheritanceGraph.get(className);
     if (!parents) return void 0;
     for (const parent of parents) {
-      const func2 = this.findInClass(parent, name2);
+      const func2 = this.findInContainer(parent, name2);
       if (func2) return func2;
       const inherited = this.resolveInheritedCall(name2, parent, visited);
       if (inherited) return inherited;
@@ -41747,9 +41955,9 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
       const funcCaptures = functionQuery.captures(tree.rootNode);
       for (const capture of funcCaptures) {
         const functionNode = capture.node;
-        const symbol = this.findSymbolAtNode(functionNode, file.path);
-        if (!symbol) continue;
-        this.processCallsInFunction(functionNode, symbol, simpleCallQuery, attributeCallQuery, superCallQuery);
+        const callerNode = this.findNodeAtPosition(functionNode, file.path);
+        if (!callerNode) continue;
+        this.processCallsInFunction(functionNode, callerNode, simpleCallQuery, attributeCallQuery, superCallQuery);
       }
     }
   }
@@ -41758,53 +41966,61 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     const superMethodNames = /* @__PURE__ */ new Set();
     for (const capture of superCaptures) {
       if (capture.name !== "FUNC") continue;
-      const methodName = capture.node.text;
+      const callNode = capture.node;
+      const methodName = callNode.text;
       superMethodNames.add(methodName);
-      const callee = this.resolveSuperCall(methodName, caller);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveSuperCall(methodName, caller);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
       }
     }
     const simpleCaptures = simpleCallQuery.captures(functionNode);
     for (const capture of simpleCaptures) {
       if (capture.name !== "FUNC") continue;
-      const callName = capture.node.text;
-      const callee = this.resolveSimpleCall(callName, caller);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-      } else if (!callee) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callName, "external_unknown"));
+      const callNode = capture.node;
+      const callName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveSimpleCall(callName, caller);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
+      } else if (!resolved) {
+        this.addCallEdge(caller.id, callName, "external_unknown", callSite);
       }
     }
     const attrCaptures = attributeCallQuery.captures(functionNode);
     for (const capture of attrCaptures) {
       if (capture.name !== "FUNC") continue;
-      const methodName = capture.node.text;
-      const callee = this.resolveAttributeCall(methodName, caller);
-      if (callee && callee.qualifiedName !== caller.qualifiedName) {
-        this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-      } else if (!callee && !superMethodNames.has(methodName)) {
-        const receiver = capture.node.parent?.childForFieldName("object")?.text;
+      const callNode = capture.node;
+      const methodName = callNode.text;
+      const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+      const resolved = this.resolveAttributeCall(methodName, caller);
+      if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+        this.addCallEdge(caller.id, resolved.qualifiedName, "internal", callSite);
+      } else if (!resolved && !superMethodNames.has(methodName)) {
+        const receiver = callNode.parent?.childForFieldName("object")?.text;
         const fullName = receiver && receiver !== "self" && receiver !== "cls" ? `${receiver}.${methodName}` : methodName;
-        this.addCallee(caller.qualifiedName, this.makeCallee(fullName, "external_unknown"));
+        this.addCallEdge(caller.id, fullName, "external_unknown", callSite);
       }
     }
   }
   resolveSuperCall(name2, caller) {
-    if (!caller.contract) return void 0;
-    return this.resolveInheritedCall(name2, caller.contract);
+    const callerContainer = this.getContainerName(caller.id);
+    if (!callerContainer) return void 0;
+    return this.resolveInheritedCall(name2, callerContainer);
   }
   resolveSimpleCall(callName, caller) {
-    if (caller.contract) {
-      const local = this.findInClass(caller.contract, callName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const local = this.findInContainer(callerContainer, callName);
       if (local) return local;
-      const inherited = this.resolveInheritedCall(callName, caller.contract);
+      const inherited = this.resolveInheritedCall(callName, callerContainer);
       if (inherited) return inherited;
     }
-    const candidates = this.symbolsByLabel.get(callName);
-    const freeFunc = candidates?.find((n3) => !n3.contract);
+    const allByName = this._graph.findByName(callName);
+    const freeFunc = allByName.find((n3) => !this.getContainerName(n3.id) && n3.status === "concrete");
     if (freeFunc) return freeFunc;
-    return candidates?.[0];
+    return allByName.find((n3) => n3.status === "concrete");
   }
   // ==========================================
   // Trait method implementations
@@ -41829,13 +42045,7 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     return text.includes("subprocess") || text.includes("os.system") || text.includes("os.popen") || text.includes("socket.") || text.includes("urllib") || text.includes("requests.");
   }
   isStateWrite(node) {
-    if (node.type === "assignment") {
-      const lhs = node.childForFieldName("left") ?? node.children[0];
-      if (lhs?.type === "attribute" && lhs.text.startsWith("self.")) return true;
-      return true;
-    }
-    if (node.type === "augmented_assignment") return true;
-    return false;
+    return node.type === "assignment" || node.type === "augmented_assignment";
   }
   isStateRead(node) {
     if (node.type === "attribute") {
@@ -41878,28 +42088,15 @@ var PythonAdapter = class _PythonAdapter extends BaseAdapter {
     }
     return result;
   }
-  resolveCallee(node, symbolMap, _sourceFiles) {
-    const target = this.getCallTarget(node);
-    if (!target) return null;
-    for (const [qn2, entry] of symbolMap) {
-      if (entry.label === target) {
-        return { qualifiedName: qn2, targetKind: "internal" };
-      }
-    }
-    return null;
-  }
-  resolveScope(containerName, _sourceFiles) {
-    return this.inheritanceGraph.get(containerName) ?? [];
-  }
   resolveAttributeCall(methodName, caller) {
-    if (caller.contract) {
-      const local = this.findInClass(caller.contract, methodName);
+    const callerContainer = this.getContainerName(caller.id);
+    if (callerContainer) {
+      const local = this.findInContainer(callerContainer, methodName);
       if (local) return local;
-      const inherited = this.resolveInheritedCall(methodName, caller.contract);
+      const inherited = this.resolveInheritedCall(methodName, callerContainer);
       if (inherited) return inherited;
     }
-    const candidates = this.symbolsByLabel.get(methodName);
-    return candidates?.find((n3) => !!n3.contract);
+    return this._graph.findByName(methodName).find((n3) => !!this.getContainerName(n3.id) && n3.status === "concrete");
   }
   isKnownStdlib(name2) {
     if (_PythonAdapter.BUILTINS.has(name2)) return true;
@@ -42363,49 +42560,26 @@ init_esm_shims();
 // src/static/hotspots.ts
 init_esm_shims();
 var DEFAULT_TOP_N = 5;
-function buildCallerIndex(symbolMap) {
-  const index = /* @__PURE__ */ new Map();
-  for (const [callerId, entry] of symbolMap) {
-    for (const callee of entry.callees) {
-      let callers = index.get(callee.qualifiedName);
-      if (!callers) {
-        callers = /* @__PURE__ */ new Set();
-        index.set(callee.qualifiedName, callers);
-      }
-      callers.add(callerId);
-    }
-  }
-  return index;
-}
-function computeHotspots(symbolMap, topN = DEFAULT_TOP_N) {
-  const callerCounts = /* @__PURE__ */ new Map();
-  for (const [callerId, entry] of symbolMap) {
-    for (const callee of entry.callees) {
-      if (!callerCounts.has(callee.qualifiedName)) {
-        callerCounts.set(callee.qualifiedName, /* @__PURE__ */ new Set());
-      }
-      callerCounts.get(callee.qualifiedName).add(callerId);
-    }
-  }
+function computeHotspots(graph, topN = DEFAULT_TOP_N, calleesByCallerId) {
+  if (!calleesByCallerId) calleesByCallerId = buildCalleeIndex(graph);
   const allCalleeIds = /* @__PURE__ */ new Set();
-  for (const entry of symbolMap.values()) {
-    for (const callee of entry.callees) {
-      allCalleeIds.add(callee.qualifiedName);
-    }
+  for (const list of calleesByCallerId.values()) {
+    for (const qn2 of list) allCalleeIds.add(qn2);
   }
-  const rootIds = /* @__PURE__ */ new Set();
-  for (const id of symbolMap.keys()) {
-    if (!allCalleeIds.has(id)) {
-      rootIds.add(id);
+  const rootQns = /* @__PURE__ */ new Set();
+  for (const node of graph.nodes()) {
+    if (node.status !== "concrete") continue;
+    if (!allCalleeIds.has(node.qualifiedName)) {
+      rootQns.add(node.qualifiedName);
     }
   }
   const chainCounts = /* @__PURE__ */ new Map();
-  for (const rootId of rootIds) {
-    const chains = resolvePaths(rootId, symbolMap, 0, /* @__PURE__ */ new Set(), 10);
+  for (const rootQn of rootQns) {
+    const chains = resolvePaths(rootQn, calleesByCallerId, 0, /* @__PURE__ */ new Set(), 10);
     const seen = /* @__PURE__ */ new Set();
     for (const chain of chains) {
       for (const step of chain) {
-        if (!seen.has(step) && !rootIds.has(step)) {
+        if (!seen.has(step) && !rootQns.has(step)) {
           seen.add(step);
           chainCounts.set(step, (chainCounts.get(step) ?? 0) + 1);
         }
@@ -42414,25 +42588,41 @@ function computeHotspots(symbolMap, topN = DEFAULT_TOP_N) {
   }
   return [...chainCounts.entries()].sort((a7, b3) => b3[1] - a7[1]).slice(0, topN).map(([id, count]) => `${id}: ${count} chain${count === 1 ? "" : "s"}`);
 }
-function resolvePaths(currentId, symbolMap, depth, stack, maxDepth, labels = false) {
-  if (stack.has(currentId)) return [[labels ? `${currentId} (Recursive)` : currentId]];
-  if (depth >= maxDepth) return [[labels ? `${currentId} (Max Depth)` : currentId]];
-  const entry = symbolMap.get(currentId);
-  const callees = entry?.callees ?? [];
-  if (callees.length === 0) return [[currentId]];
+function resolvePaths(currentQn, calleesByCallerId, depth, stack, maxDepth, labels = false) {
+  if (stack.has(currentQn)) return [[labels ? `${currentQn} (Recursive)` : currentQn]];
+  if (depth >= maxDepth) return [[labels ? `${currentQn} (Max Depth)` : currentQn]];
+  const callees = calleesByCallerId.get(currentQn) ?? [];
+  if (callees.length === 0) return [[currentQn]];
   const currentStack = new Set(stack);
-  currentStack.add(currentId);
+  currentStack.add(currentQn);
   const paths = [];
-  const sortedCallees = [...callees].sort(
-    (a7, b3) => a7.qualifiedName.localeCompare(b3.qualifiedName)
-  );
-  for (const callee of sortedCallees) {
-    const tailPaths = resolvePaths(callee.qualifiedName, symbolMap, depth + 1, currentStack, maxDepth, labels);
+  const sortedCallees = [...callees].sort((a7, b3) => a7.localeCompare(b3));
+  for (const calleeQn of sortedCallees) {
+    const tailPaths = resolvePaths(calleeQn, calleesByCallerId, depth + 1, currentStack, maxDepth, labels);
     for (const tail of tailPaths) {
-      paths.push([currentId, ...tail]);
+      paths.push([currentQn, ...tail]);
     }
   }
   return paths;
+}
+function buildCalleeIndex(graph) {
+  const calleesByCallerId = /* @__PURE__ */ new Map();
+  for (const node of graph.nodes()) {
+    if (node.status !== "concrete") continue;
+    const callEdges = graph.getOutEdgesOfKind(node.id, "calls");
+    if (callEdges.length === 0) continue;
+    const callees = [];
+    for (const edge of callEdges) {
+      const calleeNode = graph.getNode(edge.to);
+      if (calleeNode?.status === "concrete") {
+        callees.push(calleeNode.qualifiedName);
+      }
+    }
+    if (callees.length > 0) {
+      calleesByCallerId.set(node.qualifiedName, callees);
+    }
+  }
+  return calleesByCallerId;
 }
 
 // src/mcp/tools/callChains.ts
@@ -42447,22 +42637,27 @@ var callChainsSchema = {
 function createCallChainsHandler(engine2) {
   return async ({ paths }) => {
     try {
-      const symbolMap = await engine2.processSymbolMap(paths);
-      const allCalleeIds = /* @__PURE__ */ new Set();
-      for (const entry of symbolMap.values()) {
-        for (const callee of entry.callees) {
-          allCalleeIds.add(callee.qualifiedName);
+      const graph = await engine2.processGraph(paths);
+      const calleesByCallerId = buildCalleeIndex(graph);
+      const allCalleeQns = /* @__PURE__ */ new Set();
+      for (const qns of calleesByCallerId.values()) {
+        for (const qn2 of qns) allCalleeQns.add(qn2);
+      }
+      const roots = [...calleesByCallerId.keys()].filter((qn2) => !allCalleeQns.has(qn2));
+      for (const node of graph.nodes()) {
+        if (node.status !== "concrete" || node.kind !== "function") continue;
+        if (!calleesByCallerId.has(node.qualifiedName) && !allCalleeQns.has(node.qualifiedName)) {
+          roots.push(node.qualifiedName);
         }
       }
-      const roots = [...symbolMap.keys()].filter((id) => !allCalleeIds.has(id));
       const chainsByRoot = {};
       for (const rootId of roots) {
-        const rawPaths = resolvePaths(rootId, symbolMap, 0, /* @__PURE__ */ new Set(), MAX_DEPTH, true);
+        const rawPaths = resolvePaths(rootId, calleesByCallerId, 0, /* @__PURE__ */ new Set(), MAX_DEPTH, true);
         const chains = rawPaths.map((p5) => p5.join(" -> "));
         chains.sort((a7, b3) => b3.split(" -> ").length - a7.split(" -> ").length);
         chainsByRoot[rootId] = chains.slice(0, MAX_PATHS_PER_ENTRYPOINT);
       }
-      const hotspots = computeHotspots(symbolMap);
+      const hotspots = computeHotspots(graph, void 0, calleesByCallerId);
       return {
         content: [{
           type: "text",
@@ -42585,45 +42780,49 @@ init_esm_shims();
 
 // src/static/engine.ts
 init_esm_shims();
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 
 // src/static/symbol-table.ts
 init_esm_shims();
-import crypto from "crypto";
+import crypto2 from "crypto";
 function gapId(qualifiedName, file, line, col) {
   const raw = `${qualifiedName}:${file}:${line}:${col}`;
-  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 12);
+  return crypto2.createHash("sha256").update(raw).digest("hex").slice(0, 12);
 }
-function gapTypeFromTargetKind(targetKind, existsInMap) {
+function gapTypeFromEdge(edge) {
+  const attrs = edge.attrs;
+  const targetKind = attrs?.targetKind;
   if (targetKind === "external_unknown") return "unresolved_callee";
   if (targetKind === "interface_dispatch") return "interface_impl";
-  if (!existsInMap) return "external_library";
-  return "unresolved_callee";
+  return "external_library";
 }
-function detectGaps(symbolMap, hotspots = [], sourceFiles) {
+function detectGaps(graph, hotspots = [], sourceFiles) {
   const gaps = [];
   const hotspotSet = new Set(hotspots.map((h4) => h4.split(":")[0]));
-  for (const [callerId, caller] of symbolMap) {
-    for (const callee of caller.callees) {
-      const existsInMap = symbolMap.has(callee.qualifiedName);
-      const isGap = callee.targetKind === "external_unknown" || callee.targetKind === "interface_dispatch" || !existsInMap;
-      if (!isGap) continue;
+  for (const callerNode of graph.nodes()) {
+    if (callerNode.status !== "concrete") continue;
+    for (const edge of graph.getOutEdgesOfKind(callerNode.id, "calls")) {
+      const calleeNode = graph.getNode(edge.to);
+      const isGap = !calleeNode || calleeNode.status === "gap" || calleeNode.status === "external";
+      const attrs = edge.attrs;
+      const isUnresolvedKind = attrs?.targetKind === "external_unknown" || attrs?.targetKind === "interface_dispatch";
+      if (!isGap && !isUnresolvedKind) continue;
       const relevantFiles = /* @__PURE__ */ new Set();
-      relevantFiles.add(caller.file);
-      const target = symbolMap.get(callee.qualifiedName);
-      if (target) relevantFiles.add(target.file);
-      const priority = classifyGapPriority(caller, hotspotSet, callerId);
-      const type = gapTypeFromTargetKind(callee.targetKind, existsInMap);
-      const snippet = extractSnippet(caller, sourceFiles);
+      if (callerNode.locator) relevantFiles.add(callerNode.locator.file);
+      if (calleeNode?.locator) relevantFiles.add(calleeNode.locator.file);
+      const priority = classifyGapPriority(callerNode, hotspotSet);
+      const type = gapTypeFromEdge(edge);
+      const calleeName = calleeNode?.qualifiedName ?? "unknown";
+      const file = callerNode.locator?.file ?? "";
+      const edgeCallSite = attrs?.callSite;
+      const line = edgeCallSite?.line ?? callerNode.locator?.line ?? 0;
+      const col = callerNode.locator?.column ?? 0;
+      const snippet = extractSnippet(callerNode, sourceFiles);
       gaps.push({
-        id: gapId(callee.qualifiedName, caller.file, caller.line, caller.range?.start.column ?? 0),
+        id: gapId(calleeName, file, line, col),
         type,
-        qualifiedName: callee.qualifiedName,
-        callSite: {
-          file: caller.file,
-          line: caller.line,
-          col: caller.range?.start.column ?? 0
-        },
+        qualifiedName: calleeName,
+        callSite: { file, line, col },
         codeSnippet: snippet,
         relevantFiles: [...relevantFiles],
         priority
@@ -42632,18 +42831,19 @@ function detectGaps(symbolMap, hotspots = [], sourceFiles) {
   }
   return gaps;
 }
-function classifyGapPriority(caller, hotspotSet, callerId) {
-  if (hotspotSet.has(callerId)) return "high";
-  if (caller.isPublic) return "medium";
+function classifyGapPriority(caller, hotspotSet) {
+  if (hotspotSet.has(caller.qualifiedName)) return "high";
+  if (caller.visibility === "public" || caller.visibility === "external") return "medium";
   return "low";
 }
 function extractSnippet(caller, sourceFiles) {
-  if (!sourceFiles) return "";
-  const source = sourceFiles.get(caller.file);
+  if (!sourceFiles || !caller.locator) return "";
+  const source = sourceFiles.get(caller.locator.file);
   if (!source) return "";
   const lines = source.split("\n");
-  const start2 = Math.max(0, caller.line - 3);
-  const end = Math.min(lines.length, caller.line + 2);
+  const line = caller.locator.line;
+  const start2 = Math.max(0, line - 3);
+  const end = Math.min(lines.length, line + 2);
   return lines.slice(start2, end).join("\n");
 }
 
@@ -42652,17 +42852,6 @@ init_esm_shims();
 import fs5 from "fs/promises";
 import path7 from "path";
 import os from "os";
-function buildLocatorIndex(symbolMap) {
-  const index = {};
-  for (const [qn2, entry] of symbolMap) {
-    if (entry.range) {
-      index[`${entry.file}:${entry.range.start.line}`] = qn2;
-    } else if (entry.line) {
-      index[`${entry.file}:${entry.line}`] = qn2;
-    }
-  }
-  return index;
-}
 function getScanPath(id) {
   return path7.join(os.tmpdir(), `saist-${id}.json`);
 }
@@ -42680,20 +42869,6 @@ async function readScanState(id) {
     return null;
   }
 }
-function symbolMapToRecord(symbolMap) {
-  const record2 = {};
-  for (const [key, value] of symbolMap) {
-    record2[key] = value;
-  }
-  return record2;
-}
-function recordToSymbolMap(record2) {
-  const map = /* @__PURE__ */ new Map();
-  for (const [key, value] of Object.entries(record2)) {
-    map.set(key, value);
-  }
-  return map;
-}
 
 // src/static/engine.ts
 function resolveEffective(languages, context) {
@@ -42710,15 +42885,13 @@ function resolveEffective(languages, context) {
   return result;
 }
 async function runScan(filesByLanguage, context, sourceFiles) {
-  const combined = /* @__PURE__ */ new Map();
+  const combined = new SymbolGraph();
   const allFiles = [];
   const languages = [];
   for (const [lang, { adapter, files }] of filesByLanguage) {
     languages.push(lang);
-    const symbolMap = await adapter.generateSymbolMap(files);
-    for (const [id, entry] of symbolMap) {
-      combined.set(id, entry);
-    }
+    const graph = await adapter.generateGraph(files);
+    combined.merge(graph);
     for (const f6 of files) {
       allFiles.push(f6.path);
     }
@@ -42727,7 +42900,7 @@ async function runScan(filesByLanguage, context, sourceFiles) {
   const hotspots = computeHotspots(combined);
   const gaps = detectGaps(combined, hotspots, sourceFiles);
   const status = gaps.length === 0 ? "ready" : "needs_resolution";
-  const scanId = crypto2.randomUUID().slice(0, 8);
+  const scanId = crypto3.randomUUID().slice(0, 8);
   const serializedSources = {};
   if (sourceFiles) {
     for (const [p5, c3] of sourceFiles) {
@@ -42740,19 +42913,18 @@ async function runScan(filesByLanguage, context, sourceFiles) {
     languages,
     context: context ?? {},
     effective,
-    symbolMap: symbolMapToRecord(combined),
+    graph: combined.toJSON(),
     gaps,
     status,
     findings: [],
     sourceFiles: serializedSources,
-    locatorIndex: buildLocatorIndex(combined),
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const persistedPath = await writeScanState(state);
   return {
     scanId,
-    symbolMap: combined,
+    graph: combined,
     gaps,
     hotspots,
     status,
@@ -42770,10 +42942,7 @@ var sastInitScanSchema = {
     context: external_exports.object({
       domainOverrides: external_exports.record(external_exports.string(), external_exports.enum(["on-chain", "off-chain"])).optional().describe("Override default domain for specific languages"),
       framework: external_exports.string().optional().describe("Framework hint (e.g. 'anchor', 'starknet', 'cosmwasm')")
-    }).optional().describe("Scan context with domain overrides and framework hints"),
-    options: external_exports.object({
-      maxDepth: external_exports.number().optional().describe("Path walk depth limit (default 6)")
-    }).optional().describe("Scan options")
+    }).optional().describe("Scan context with domain overrides and framework hints")
   }
 };
 function createSastInitScanHandler(engine2) {
@@ -42800,8 +42969,12 @@ function createSastInitScanHandler(engine2) {
         framework: input.context.framework
       } : void 0;
       const result = await runScan(filesByLanguage, context, sourceFiles);
-      const totalSymbols = result.symbolMap.size;
-      const resolvedSymbols = totalSymbols - result.gaps.length;
+      let concreteCount = 0;
+      let gapCount = 0;
+      for (const node of result.graph.nodes()) {
+        if (node.status === "concrete") concreteCount++;
+        else if (node.status === "gap") gapCount++;
+      }
       return {
         content: [{
           type: "text",
@@ -42809,9 +42982,9 @@ function createSastInitScanHandler(engine2) {
             scanId: result.scanId,
             status: result.status,
             symbolMapStats: {
-              total: totalSymbols,
-              resolved: resolvedSymbols,
-              gaps: result.gaps.length
+              total: concreteCount + gapCount,
+              concrete: concreteCount,
+              gaps: gapCount
             },
             gaps: result.gaps,
             hotspots: result.hotspots
@@ -42833,12 +43006,12 @@ function createSastInitScanHandler(engine2) {
 init_esm_shims();
 import fs6 from "fs/promises";
 var sastResolveGapsSchema = {
-  description: "Resolve gaps in a SAiST scan by providing facts the static pass could not determine. Merges resolutions into the persisted symbol map. Supply resolvedTo: { file, line } to redirect the walker to the concrete implementation.",
+  description: "Resolve gaps in a SAiST scan by providing facts the static pass could not determine. Merges resolutions into the persisted symbol graph. Supply resolvedTo: { file, line } to redirect the walker to the concrete implementation.",
   inputSchema: {
     scanId: external_exports.string().describe("Scan ID from sast_init_scan"),
     resolutions: external_exports.array(external_exports.object({
       gapId: external_exports.string().describe("Gap ID to resolve"),
-      facts: external_exports.record(external_exports.unknown()).describe("Partial SymbolEntry facts to merge. Include resolvedTo: { file, line } to redirect the walker to the concrete symbol."),
+      facts: external_exports.record(external_exports.unknown()).describe("Partial GraphNode facts to merge. Include resolvedTo: { file, line } to redirect the walker to the concrete symbol."),
       resolvedBy: external_exports.enum(["agent", "manual"]).describe("Who resolved this gap"),
       confidence: external_exports.enum(["high", "medium", "low"]).describe("Confidence in the resolution")
     })).describe("Array of gap resolutions")
@@ -42853,7 +43026,7 @@ function createSastResolveGapsHandler(engine2) {
           content: [{ type: "text", text: `Error: Scan ${input.scanId} not found` }]
         };
       }
-      const symbolMap = recordToSymbolMap(state.symbolMap);
+      const graph = SymbolGraph.fromJSON(state.graph);
       const missingFiles = /* @__PURE__ */ new Map();
       for (const resolution of input.resolutions) {
         const resolvedTo = resolution.facts.resolvedTo;
@@ -42878,64 +43051,49 @@ function createSastResolveGapsHandler(engine2) {
         for (const [lang, files] of byLanguage) {
           const adapter = engine2.getAdapter(lang);
           try {
-            const newSymbols = await adapter.generateSymbolMap(files);
-            for (const [qn2, entry] of newSymbols) {
-              symbolMap.set(qn2, entry);
-            }
+            const newGraph = await adapter.generateGraph(files);
+            graph.merge(newGraph);
           } catch {
           }
         }
         for (const [filePath, content] of missingFiles) {
           state.sourceFiles[filePath] = content;
         }
-        state.locatorIndex = buildLocatorIndex(symbolMap);
       }
       let applied = 0;
+      const appliedGapIds = /* @__PURE__ */ new Set();
       for (const resolution of input.resolutions) {
         const gap = state.gaps.find((g2) => g2.id === resolution.gapId);
         if (!gap) continue;
         const resolvedTo = resolution.facts.resolvedTo;
-        const redirectTo = resolvedTo ? state.locatorIndex[`${resolvedTo.file}:${resolvedTo.line}`] : void 0;
-        const { resolvedTo: _stripped, ...entryFacts } = resolution.facts;
-        const existing = symbolMap.get(gap.qualifiedName);
-        if (existing) {
-          symbolMap.set(gap.qualifiedName, {
-            ...existing,
-            ...entryFacts,
-            resolvedBy: resolution.resolvedBy,
-            confidence: resolution.confidence,
-            ...redirectTo ? { redirectTo } : {}
-          });
-        } else {
-          symbolMap.set(gap.qualifiedName, {
-            qualifiedName: gap.qualifiedName,
-            kind: "function",
-            file: gap.callSite.file,
-            line: gap.callSite.line,
-            language: "solidity",
-            label: gap.qualifiedName.split(".").pop() ?? gap.qualifiedName,
-            writesState: [],
-            readsState: [],
-            callsExternal: false,
-            callees: [],
-            isPublic: false,
-            hasAccessControl: false,
-            modifiers: [],
-            resolvedBy: resolution.resolvedBy,
-            confidence: resolution.confidence,
-            visibility: "internal",
-            ...entryFacts,
-            ...redirectTo ? { redirectTo } : {}
-          });
+        const gapNodes = graph.findByName(gap.qualifiedName);
+        const gapNode = gapNodes.find((n3) => n3.status === "gap") ?? gapNodes[0];
+        if (gapNode) {
+          if (resolvedTo) {
+            const concreteNode = graph.findByLine(resolvedTo.file, resolvedTo.line);
+            if (concreteNode) {
+              graph.updateNode(gapNode.id, {
+                status: "concrete",
+                resolvedBy: resolution.resolvedBy,
+                confidence: resolution.confidence,
+                locator: concreteNode.locator
+              });
+            }
+          } else {
+            const { resolvedTo: _stripped, ...nodeFacts } = resolution.facts;
+            graph.updateNode(gapNode.id, {
+              ...nodeFacts,
+              resolvedBy: resolution.resolvedBy,
+              confidence: resolution.confidence
+            });
+          }
         }
+        appliedGapIds.add(resolution.gapId);
         applied++;
       }
-      const resolvedGapIds = new Set(
-        input.resolutions.filter((_4, i7) => i7 < applied).map((r3) => r3.gapId)
-      );
-      const remaining = state.gaps.filter((g2) => !resolvedGapIds.has(g2.id));
+      const remaining = state.gaps.filter((g2) => !appliedGapIds.has(g2.id));
       const status = remaining.length === 0 ? "ready" : "needs_resolution";
-      state.symbolMap = symbolMapToRecord(symbolMap);
+      state.graph = graph.toJSON();
       state.gaps = remaining;
       state.status = status;
       state.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -43022,82 +43180,86 @@ function walkShallow(root, rule, ctx) {
   }
   rule.exit?.(root, ctx);
 }
-async function walkDeep(node, rule, ctx, visited, depth, maxDepth) {
+async function walkDeep(currentNodeId, astNode, rule, ctx, visited, depth, maxDepth) {
   if (depth > maxDepth) return;
-  rule.enter?.(node, ctx);
-  const callee = ctx.trait.resolveCallee(node, ctx.symbolMap, ctx.sourceFiles);
-  if (callee && !visited.has(callee.qualifiedName)) {
-    const gapEntry = ctx.symbolMap.get(callee.qualifiedName);
-    const targetQN = gapEntry?.redirectTo ?? callee.qualifiedName;
-    const calleeNode = await lookupFunctionNode(targetQN, ctx.symbolMap, ctx);
-    if (calleeNode) {
-      visited.add(callee.qualifiedName);
-      visited.add(targetQN);
-      const entry = ctx.symbolMap.get(targetQN);
-      const prevFile = ctx.currentFile;
-      ctx.currentFile = entry.file;
-      await walkDeep(calleeNode, rule, ctx, visited, depth + 1, maxDepth);
-      ctx.currentFile = prevFile;
-    }
-  }
-  if (ctx.trait.isFunctionDef(node)) {
-    const qn2 = lookupQualifiedName(node, ctx);
-    if (qn2) {
-      const entry = ctx.symbolMap.get(qn2);
-      if (entry) {
-        for (const mod of entry.modifiers) {
-          if ((mod.pattern === "explicit" || mod.pattern === "wrapper") && !visited.has(mod.name)) {
-            const modNode = await lookupModifierNode(mod, ctx);
-            if (modNode) {
-              visited.add(mod.name);
-              await walkDeep(modNode, rule, ctx, visited, depth + 1, maxDepth);
-            }
-          }
-        }
+  rule.enter?.(astNode, ctx);
+  if (ctx.trait.isFunctionDef(astNode)) {
+    for (const modEdge of ctx.graph.getOutEdgesOfKind(currentNodeId, "has_modifier")) {
+      const modGraphNode = ctx.graph.getNode(modEdge.to);
+      if (!modGraphNode) continue;
+      const pattern = modGraphNode.pattern ?? "explicit";
+      if (pattern !== "explicit" && pattern !== "wrapper") continue;
+      const modVisitKey = currentNodeId + ":mod:" + modGraphNode.label;
+      if (visited.has(modVisitKey)) continue;
+      const modNode = await lookupModifierNode({ name: modGraphNode.label, pattern }, ctx);
+      if (modNode) {
+        visited.add(modVisitKey);
+        await walkDeep(currentNodeId, modNode, rule, ctx, visited, depth + 1, maxDepth);
       }
     }
   }
-  for (const child of node.children) {
-    await walkDeep(child, rule, ctx, visited, depth, maxDepth);
-  }
-  rule.exit?.(node, ctx);
-}
-function lookupQualifiedName(funcNode, ctx) {
-  const name2 = ctx.trait.getFunctionName(funcNode);
-  if (!name2) return null;
-  for (const [qn2, entry] of ctx.symbolMap) {
-    if (entry.label === name2 && entry.file === ctx.currentFile) {
-      if (entry.range && entry.range.start.line - 1 === funcNode.startPosition.row) {
-        return qn2;
+  const callTarget = ctx.trait.getCallTarget(astNode);
+  if (callTarget) {
+    for (const edge of ctx.graph.getOutEdgesOfKind(currentNodeId, "calls")) {
+      const calleeNode = ctx.graph.getNode(edge.to);
+      if (!calleeNode || calleeNode.status !== "concrete") continue;
+      if (visited.has(edge.to)) continue;
+      const calleeAstNode = await lookupFunctionNode(calleeNode, ctx);
+      if (calleeAstNode) {
+        visited.add(edge.to);
+        const prevFile = ctx.currentFile;
+        ctx.currentFile = calleeNode.locator?.file ?? prevFile;
+        await walkDeep(edge.to, calleeAstNode, rule, ctx, visited, depth + 1, maxDepth);
+        ctx.currentFile = prevFile;
       }
     }
   }
-  return null;
+  for (const child of astNode.children) {
+    await walkDeep(currentNodeId, child, rule, ctx, visited, depth, maxDepth);
+  }
+  rule.exit?.(astNode, ctx);
 }
-async function lookupFunctionNode(qualifiedName, symbolMap, ctx) {
-  const entry = symbolMap.get(qualifiedName);
-  if (!entry) return null;
-  if (!entry.range) return null;
+async function lookupFunctionNode(graphNode, ctx) {
+  if (!graphNode.locator) return null;
   let tree;
   try {
-    tree = await ctx.getTree(entry.file);
+    tree = await ctx.getTree(graphNode.locator.file);
   } catch {
     return null;
   }
-  const targetLine = entry.range.start.line - 1;
-  const targetCol = entry.range.start.column;
-  return findNodeAt2(tree.rootNode, targetLine, targetCol);
+  return tree.rootNode.descendantForIndex(
+    graphNode.locator.startIndex,
+    graphNode.locator.endIndex
+  ) ?? null;
 }
 async function lookupModifierNode(mod, ctx) {
   if (mod.pattern === "wrapper") {
-    for (const [qn2, entry] of ctx.symbolMap) {
-      if (entry.label === mod.name) {
-        return lookupFunctionNode(qn2, ctx.symbolMap, ctx);
+    const candidates = ctx.graph.findByName(mod.name);
+    for (const node of candidates) {
+      if (node.status === "concrete") {
+        return lookupFunctionNode(node, ctx);
       }
     }
     return null;
   }
   if (mod.pattern === "explicit") {
+    const modCandidates = ctx.graph.findByName(mod.name);
+    const modNode = modCandidates.find((n3) => n3.kind === "modifier" && n3.status === "concrete");
+    if (!modNode) {
+      for (const candidate of modCandidates) {
+        if (candidate.kind === "modifier" && candidate.status === "concrete" && candidate.locator) {
+          const tree = await ctx.getTree(candidate.locator.file);
+          return tree.rootNode.descendantForIndex(candidate.locator.startIndex, candidate.locator.endIndex) ?? null;
+        }
+      }
+    }
+    if (modNode?.locator) {
+      try {
+        const tree = await ctx.getTree(modNode.locator.file);
+        return tree.rootNode.descendantForIndex(modNode.locator.startIndex, modNode.locator.endIndex) ?? null;
+      } catch {
+      }
+    }
     for (const file of ctx.sourceFiles.keys()) {
       let tree;
       try {
@@ -43119,18 +43281,6 @@ function findModifierDefByName(root, name2) {
   }
   for (const child of root.children) {
     const found = findModifierDefByName(child, name2);
-    if (found) return found;
-  }
-  return null;
-}
-function findNodeAt2(root, row, col) {
-  if (root.startPosition.row === row && root.startPosition.column === col) {
-    return root;
-  }
-  for (const child of root.children) {
-    if (child.startPosition.row > row) break;
-    if (child.endPosition.row < row) continue;
-    const found = findNodeAt2(child, row, col);
     if (found) return found;
   }
   return null;
@@ -43166,7 +43316,7 @@ function isSuffix(shorter, longer) {
 
 // src/mcp/tools/sastRunRules.ts
 var sastRunRulesSchema = {
-  description: "Run SAiST rules against an enriched symbol map. Supports shipped and custom rules with severity filtering.",
+  description: "Run SAiST rules against an enriched symbol graph. Supports shipped and custom rules with severity filtering.",
   inputSchema: {
     scanId: external_exports.string().describe("Scan ID from sast_init_scan"),
     ruleIds: external_exports.array(external_exports.string()).optional().describe("Specific rule IDs to run; omit for all applicable"),
@@ -43175,12 +43325,6 @@ var sastRunRulesSchema = {
     includeKind: external_exports.array(external_exports.enum(["issue", "smell", "pointer"])).optional().describe("Finding kind filter; omit to run all")
   }
 };
-function isRule2(rule) {
-  return "finalize" in rule && typeof rule.finalize === "function";
-}
-function isMapRule2(rule) {
-  return "check" in rule && typeof rule.check === "function" && !("finalize" in rule);
-}
 function createSastRunRulesHandler(shippedRules2, engine2) {
   return async (input) => {
     try {
@@ -43190,7 +43334,7 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
           content: [{ type: "text", text: `Error: Scan ${input.scanId} not found` }]
         };
       }
-      const symbolMap = recordToSymbolMap(state.symbolMap);
+      const graph = SymbolGraph.fromJSON(state.graph);
       const effective = state.effective;
       const shippedLoaded = shippedRules2.map((r3) => ({ rule: r3, source: "shipped" }));
       const customLoaded = input.customRulePaths?.length ? (await loadCustomRules(input.customRulePaths)).rules : [];
@@ -43211,12 +43355,19 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
       const treeCache = /* @__PURE__ */ new Map();
       const service = TreeSitterService.getInstance();
       const findingsByRule = /* @__PURE__ */ new Map();
-      let rulesRun = 0;
+      const ranRuleIds = /* @__PURE__ */ new Set();
+      const ranMapRuleIds = /* @__PURE__ */ new Set();
       for (const lang of state.languages) {
         const meta = effective[lang];
         if (!meta) continue;
         const adapter = engine2.getAdapter(lang);
         if (!adapter) continue;
+        const langFiles = /* @__PURE__ */ new Set();
+        for (const node of graph.nodes()) {
+          if (node.language === lang && node.locator) {
+            langFiles.add(node.locator.file);
+          }
+        }
         let parser = null;
         const getTree = async (file) => {
           if (treeCache.has(file)) return treeCache.get(file);
@@ -43229,7 +43380,7 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
           return tree;
         };
         const ctx = {
-          symbolMap,
+          graph,
           trait: adapter,
           effective: meta,
           sourceFiles,
@@ -43239,31 +43390,33 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
         };
         for (const { rule, source } of applicableRules) {
           if (!ruleApplies(rule.appliesTo, meta, lang)) continue;
-          if (isRule2(rule)) {
-            rulesRun++;
+          if (isRule(rule)) {
+            ranRuleIds.add(rule.id);
             const instances = [];
             if (rule.deep) {
-              for (const [_qn, entry] of symbolMap) {
-                if (entry.language !== lang) continue;
-                if (!entry.range) continue;
+              for (const node of graph.nodes()) {
+                if (node.kind !== "function") continue;
+                if (node.status !== "concrete") continue;
+                if (node.language !== lang) continue;
+                if (!node.locator) continue;
                 try {
-                  const tree = await getTree(entry.file);
-                  const funcNode = findNodeAt3(tree.rootNode, entry.range.start.line - 1, entry.range.start.column);
+                  const tree = await getTree(node.locator.file);
+                  const funcNode = tree.rootNode.descendantForIndex(
+                    node.locator.startIndex,
+                    node.locator.endIndex
+                  );
                   if (!funcNode) continue;
-                  ctx.currentFile = entry.file;
+                  ctx.currentFile = node.locator.file;
                   rule.reset();
                   const visited = /* @__PURE__ */ new Set();
-                  visited.add(entry.qualifiedName);
-                  await walkDeep(funcNode, rule, ctx, visited, 0, rule.deep.maxDepth);
+                  visited.add(node.id);
+                  await walkDeep(node.id, funcNode, rule, ctx, visited, 0, rule.deep.maxDepth);
                   instances.push(...rule.finalize(ctx));
                 } catch {
                 }
               }
             } else {
-              const langFiles = [...sourceFiles.entries()].filter(
-                ([p5]) => [...symbolMap.values()].some((e5) => e5.file === p5 && e5.language === lang)
-              );
-              for (const [file] of langFiles) {
+              for (const file of langFiles) {
                 try {
                   const tree = await getTree(file);
                   ctx.currentFile = file;
@@ -43279,9 +43432,10 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
               if (existing) existing.instances.push(...instances);
               else findingsByRule.set(rule.id, { rule, source, instances });
             }
-          } else if (isMapRule2(rule)) {
-            rulesRun++;
-            const instances = rule.check(symbolMap, ctx);
+          } else if (isMapRule(rule)) {
+            if (ranMapRuleIds.has(rule.id)) continue;
+            ranMapRuleIds.add(rule.id);
+            const instances = rule.check(graph, ctx);
             if (instances.length > 0) {
               const existing = findingsByRule.get(rule.id);
               if (existing) existing.instances.push(...instances);
@@ -43310,6 +43464,7 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
       state.status = "complete";
       state.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
       await writeScanState(state);
+      const rulesRun = ranRuleIds.size + ranMapRuleIds.size;
       const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
       const byKind = { issue: 0, smell: 0, pointer: 0 };
       for (const f6 of findings) {
@@ -43342,16 +43497,6 @@ function createSastRunRulesHandler(shippedRules2, engine2) {
       };
     }
   };
-}
-function findNodeAt3(root, row, col) {
-  if (root.startPosition.row === row && root.startPosition.column === col) return root;
-  for (const child of root.children) {
-    if (child.startPosition.row > row) break;
-    if (child.endPosition.row < row) continue;
-    const found = findNodeAt3(child, row, col);
-    if (found) return found;
-  }
-  return null;
 }
 
 // src/mcp/tools/rulesInfo.ts
@@ -43615,45 +43760,45 @@ function createRule3() {
         "cpp" /* Cpp */
       ]
     },
-    check(symbolMap, _ctx) {
+    check(graph, _ctx) {
       const findings = [];
-      const callerIndex = buildCallerIndex(symbolMap);
-      for (const [qn2, entry] of symbolMap) {
-        if (entry.kind !== "function") continue;
-        if (entry.modifiers.some(
-          (m8) => m8.name === "virtual" || m8.name === "override"
-        )) continue;
-        if (["constructor", "fallback", "receive"].includes(entry.label)) continue;
-        const callers = callerIndex.get(qn2);
-        if (entry.visibility === "public") {
-          const hasCrossModuleCaller = callers && [...callers].some((callerId) => {
-            const caller = symbolMap.get(callerId);
-            return caller && caller.contract !== entry.contract;
+      const nodeContainer = graph.getContainerOf.bind(graph);
+      for (const node of graph.nodes()) {
+        if (node.kind !== "function") continue;
+        if (node.status !== "concrete") continue;
+        const hasModifierEdges = graph.getOutEdgesOfKind(node.id, "has_modifier");
+        const hasVirtualOrOverride = hasModifierEdges.some((e5) => {
+          const modNode = graph.getNode(e5.to);
+          return modNode && (modNode.label === "virtual" || modNode.label === "override");
+        });
+        if (hasVirtualOrOverride) continue;
+        if (["constructor", "fallback", "receive"].includes(node.label)) continue;
+        const callEdges = graph.getInEdgesOfKind(node.id, "calls");
+        const file = node.locator?.file ?? "";
+        const line = node.locator?.line ?? 0;
+        const col = node.locator?.column ?? 0;
+        const nodeContainerNode = nodeContainer(node.id);
+        if (node.visibility === "public") {
+          const hasCrossModuleCaller = callEdges.some((e5) => {
+            const callerContainerNode = nodeContainer(e5.from);
+            return callerContainerNode?.id !== nodeContainerNode?.id;
           });
           if (!hasCrossModuleCaller) {
             findings.push({
-              location: {
-                file: entry.file,
-                line: entry.line,
-                col: entry.range?.start.column ?? 0
-              },
-              snippet: `${qn2}: public with no cross-module callers \u2014 could be external or tighter`
+              location: { file, line, col },
+              snippet: `${node.qualifiedName}: public with no cross-module callers \u2014 could be external or tighter`
             });
           }
-        } else if (entry.visibility === "internal") {
-          if (!callers || callers.size === 0) continue;
-          const allSameContract = [...callers].every((callerId) => {
-            const caller = symbolMap.get(callerId);
-            return caller && caller.contract === entry.contract;
+        } else if (node.visibility === "internal") {
+          if (callEdges.length === 0) continue;
+          const allSameContainer = nodeContainerNode && callEdges.every((e5) => {
+            const callerContainerNode = nodeContainer(e5.from);
+            return callerContainerNode?.id === nodeContainerNode.id;
           });
-          if (allSameContract && entry.contract) {
+          if (allSameContainer) {
             findings.push({
-              location: {
-                file: entry.file,
-                line: entry.line,
-                col: entry.range?.start.column ?? 0
-              },
-              snippet: `${qn2}: internal but only called within ${entry.contract} \u2014 could be private`
+              location: { file, line, col },
+              snippet: `${node.qualifiedName}: internal but only called within ${nodeContainerNode.label} \u2014 could be private`
             });
           }
         }
@@ -43693,22 +43838,22 @@ function createRule4() {
         "masm" /* Masm */
       ]
     },
-    check(symbolMap, _ctx) {
+    check(graph, _ctx) {
       const findings = [];
-      const callerIndex = buildCallerIndex(symbolMap);
-      for (const [qn2, entry] of symbolMap) {
-        if (entry.kind !== "function") continue;
-        if (entry.visibility !== "internal" && entry.visibility !== "private") continue;
-        if (["constructor", "fallback", "receive"].includes(entry.label)) continue;
-        const callers = callerIndex.get(qn2);
-        if (!callers || callers.size === 0) {
+      for (const node of graph.nodes()) {
+        if (node.kind !== "function") continue;
+        if (node.status !== "concrete") continue;
+        if (node.visibility !== "internal" && node.visibility !== "private") continue;
+        if (["constructor", "fallback", "receive"].includes(node.label)) continue;
+        const callers = graph.getInEdgesOfKind(node.id, "calls");
+        if (callers.length === 0) {
           findings.push({
             location: {
-              file: entry.file,
-              line: entry.line,
-              col: entry.range?.start.column ?? 0
+              file: node.locator?.file ?? "",
+              line: node.locator?.line ?? 0,
+              col: node.locator?.column ?? 0
             },
-            snippet: `${qn2}: internal/private with no callers`
+            snippet: `${node.qualifiedName}: internal/private with no callers`
           });
         }
       }
@@ -44307,23 +44452,28 @@ function createRule15() {
       languages: ["solidity" /* Solidity */],
       domains: ["on-chain"]
     },
-    check(symbolMap, _ctx) {
+    check(graph, _ctx) {
       const findings = [];
-      const stateVars = [...symbolMap.values()].filter((e5) => e5.kind === "state_variable");
-      const functions = [...symbolMap.values()].filter((e5) => e5.kind === "function");
+      const stateVars = [...graph.nodes()].filter((n3) => n3.kind === "state_variable" && n3.status === "concrete");
       for (const sv of stateVars) {
-        if (sv.modifiers.some((m8) => m8.name === "constant" || m8.name === "immutable")) continue;
-        if (!sv.modifiers.some((m8) => m8.name === "has_initializer")) continue;
-        const varName = sv.label;
-        const isWritten = functions.some(
-          (fn2) => fn2.contract === sv.contract && fn2.writesState.some((w4) => w4 === varName || w4.startsWith(varName + "[") || w4.startsWith(varName + "."))
-        );
-        if (!isWritten) {
+        const modEdges = graph.getOutEdgesOfKind(sv.id, "has_modifier");
+        const hasConstOrImmutable = modEdges.some((e5) => {
+          const mod = graph.getNode(e5.to);
+          return mod?.label === "constant" || mod?.label === "immutable";
+        });
+        if (hasConstOrImmutable) continue;
+        const hasInitializer = modEdges.some((e5) => {
+          const mod = graph.getNode(e5.to);
+          return mod?.label === "has_initializer";
+        });
+        if (!hasInitializer) continue;
+        const writers = graph.getWriters(sv.id);
+        if (writers.length === 0) {
           findings.push({
             location: {
-              file: sv.file,
-              line: sv.line,
-              col: sv.range?.start.column ?? 0
+              file: sv.locator?.file ?? "",
+              line: sv.locator?.line ?? 0,
+              col: sv.locator?.column ?? 0
             },
             snippet: `${sv.qualifiedName}: never written \u2014 could be constant`
           });
@@ -44348,24 +44498,25 @@ function createRule16() {
       languages: ["solidity" /* Solidity */],
       domains: ["on-chain"]
     },
-    check(symbolMap, _ctx) {
+    check(graph, _ctx) {
       const findings = [];
-      const stateVars = [...symbolMap.values()].filter((e5) => e5.kind === "state_variable");
-      const functions = [...symbolMap.values()].filter((e5) => e5.kind === "function");
+      const stateVars = [...graph.nodes()].filter((n3) => n3.kind === "state_variable" && n3.status === "concrete");
       for (const sv of stateVars) {
-        if (sv.modifiers.some((m8) => m8.name === "constant" || m8.name === "immutable")) continue;
-        const varName = sv.label;
-        const writers = functions.filter(
-          (fn2) => fn2.contract === sv.contract && fn2.writesState.some((w4) => w4 === varName || w4.startsWith(varName + "[") || w4.startsWith(varName + "."))
-        );
+        const modEdges = graph.getOutEdgesOfKind(sv.id, "has_modifier");
+        const hasConstOrImmutable = modEdges.some((e5) => {
+          const mod = graph.getNode(e5.to);
+          return mod?.label === "constant" || mod?.label === "immutable";
+        });
+        if (hasConstOrImmutable) continue;
+        const writers = graph.getWriters(sv.id);
         if (writers.length === 0) continue;
         const allConstructors = writers.every((fn2) => fn2.label === "constructor");
         if (allConstructors) {
           findings.push({
             location: {
-              file: sv.file,
-              line: sv.line,
-              col: sv.range?.start.column ?? 0
+              file: sv.locator?.file ?? "",
+              line: sv.locator?.line ?? 0,
+              col: sv.locator?.column ?? 0
             },
             snippet: `${sv.qualifiedName}: only written in constructor \u2014 could be immutable`
           });

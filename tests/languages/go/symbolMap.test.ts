@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { GoAdapter } from '../../../src/languages/goAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('GoAdapter Call Graph', () => {
     const adapter = new GoAdapter();
@@ -15,11 +21,11 @@ describe('GoAdapter Call Graph', () => {
             func b() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         const entryA = functions.find(e => e.label === 'a');
@@ -27,7 +33,7 @@ describe('GoAdapter Call Graph', () => {
         expect(entryA).toBeDefined();
         expect(entryB).toBeDefined();
 
-        const callee = entryA!.callees[0];
+        const callee = getCallees(graph, entryA!)[0];
         expect(callee.qualifiedName).toBe(entryB?.qualifiedName);
     });
 
@@ -44,8 +50,8 @@ describe('GoAdapter Call Graph', () => {
             func (s *Server) initialize() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -55,11 +61,11 @@ describe('GoAdapter Call Graph', () => {
         expect(start).toBeDefined();
         expect(initialize).toBeDefined();
 
-        expect(start?.contract).toBe('Server');
-        expect(initialize?.contract).toBe('Server');
+        expect(start?.qualifiedName).toContain('Server.');
+        expect(initialize?.qualifiedName).toContain('Server.');
 
         // Start calls initialize
-        const callee = start!.callees.find(c => c.qualifiedName === initialize?.qualifiedName);
+        const callee = getCallees(graph, start!).find(c => c.qualifiedName === initialize?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -83,8 +89,8 @@ describe('GoAdapter Call Graph', () => {
             func (c *Counter) notify() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -97,7 +103,7 @@ describe('GoAdapter Call Graph', () => {
         expect(notify).toBeDefined();
 
         // Increment calls notify
-        const callee = increment!.callees.find(c => c.qualifiedName === notify?.qualifiedName);
+        const callee = getCallees(graph, increment!).find(c => c.qualifiedName === notify?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -114,8 +120,8 @@ describe('GoAdapter Call Graph', () => {
             func (h *Handler) helper() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -145,8 +151,8 @@ describe('GoAdapter Call Graph', () => {
             func (c *Client) send() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const request = functions.find(e => e.label === 'Request');
         const prepare = functions.find(e => e.label === 'prepare');
@@ -157,9 +163,10 @@ describe('GoAdapter Call Graph', () => {
         expect(send).toBeDefined();
 
         // Request calls prepare and send
-        expect(request!.callees).toHaveLength(2);
-        expect(request!.callees.map(c => c.qualifiedName)).toContain(prepare?.qualifiedName);
-        expect(request!.callees.map(c => c.qualifiedName)).toContain(send?.qualifiedName);
+        const callees = getCallees(graph, request!);
+        expect(callees).toHaveLength(2);
+        expect(callees.map(c => c.qualifiedName)).toContain(prepare?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(send?.qualifiedName);
     });
 
     it('should handle package-level function calls from methods', async () => {
@@ -175,8 +182,8 @@ describe('GoAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const helper = functions.find(e => e.label === 'helper');
         const run = functions.find(e => e.label === 'Run');
@@ -185,7 +192,7 @@ describe('GoAdapter Call Graph', () => {
         expect(run).toBeDefined();
 
         // Run calls helper
-        const callee = run!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee = getCallees(graph, run!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -205,8 +212,8 @@ describe('GoAdapter Call Graph', () => {
             func run() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const initFunc = functions.find(e => e.label === 'init');
         const mainFunc = functions.find(e => e.label === 'main');
@@ -219,11 +226,11 @@ describe('GoAdapter Call Graph', () => {
         expect(run).toBeDefined();
 
         // init calls setup
-        const callee1 = initFunc!.callees.find(c => c.qualifiedName === setup?.qualifiedName);
+        const callee1 = getCallees(graph, initFunc!).find(c => c.qualifiedName === setup?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // main calls run
-        const callee2 = mainFunc!.callees.find(c => c.qualifiedName === run?.qualifiedName);
+        const callee2 = getCallees(graph, mainFunc!).find(c => c.qualifiedName === run?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -242,8 +249,8 @@ describe('GoAdapter Call Graph', () => {
             func realFunction() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const process = functions.find(e => e.label === 'process');
         const realFunction = functions.find(e => e.label === 'realFunction');
@@ -252,8 +259,9 @@ describe('GoAdapter Call Graph', () => {
         expect(realFunction).toBeDefined();
 
         // Should have edge to realFunction but not to builtins
-        expect(process!.callees).toHaveLength(1);
-        expect(process!.callees[0].qualifiedName).toBe(realFunction?.qualifiedName);
+        const callees = getCallees(graph, process!);
+        expect(callees).toHaveLength(1);
+        expect(callees[0].qualifiedName).toBe(realFunction?.qualifiedName);
     });
 
     it('should handle defer and go statements', async () => {
@@ -271,8 +279,8 @@ describe('GoAdapter Call Graph', () => {
             func process() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const main = functions.find(e => e.label === 'main');
         const cleanup = functions.find(e => e.label === 'cleanup');
@@ -285,7 +293,7 @@ describe('GoAdapter Call Graph', () => {
         expect(process).toBeDefined();
 
         // main calls cleanup, worker, and process
-        expect(main!.callees).toHaveLength(3);
+        expect(getCallees(graph, main!)).toHaveLength(3);
     });
 
     it('should handle anonymous function calls', async () => {
@@ -302,8 +310,8 @@ describe('GoAdapter Call Graph', () => {
             func helper() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const process = functions.find(e => e.label === 'process');
         const helper = functions.find(e => e.label === 'helper');
@@ -312,7 +320,7 @@ describe('GoAdapter Call Graph', () => {
         expect(helper).toBeDefined();
 
         // the call to helper inside the anonymous function is attributed to process
-        const callee = process!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee = getCallees(graph, process!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -327,8 +335,8 @@ describe('GoAdapter Call Graph', () => {
             func Handle[T any](item T) {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const process = functions.find(e => e.label === 'Process');
         const handle = functions.find(e => e.label === 'Handle');
@@ -336,7 +344,7 @@ describe('GoAdapter Call Graph', () => {
         expect(process).toBeDefined();
         expect(handle).toBeDefined();
 
-        const callee = process!.callees.find(c => c.qualifiedName === handle?.qualifiedName);
+        const callee = getCallees(graph, process!).find(c => c.qualifiedName === handle?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -360,8 +368,8 @@ describe('GoAdapter Call Graph', () => {
             func (w *Writer) encode() {}
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -370,17 +378,17 @@ describe('GoAdapter Call Graph', () => {
         const write = functions.find(e => e.label === 'Write');
         const encode = functions.find(e => e.label === 'encode');
 
-        expect(read?.contract).toBe('Reader');
-        expect(parse?.contract).toBe('Reader');
-        expect(write?.contract).toBe('Writer');
-        expect(encode?.contract).toBe('Writer');
+        expect(read?.qualifiedName).toContain('Reader.');
+        expect(parse?.qualifiedName).toContain('Reader.');
+        expect(write?.qualifiedName).toContain('Writer.');
+        expect(encode?.qualifiedName).toContain('Writer.');
 
         // Read calls parse
-        const callee1 = read!.callees.find(c => c.qualifiedName === parse?.qualifiedName);
+        const callee1 = getCallees(graph, read!).find(c => c.qualifiedName === parse?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // Write calls encode
-        const callee2 = write!.callees.find(c => c.qualifiedName === encode?.qualifiedName);
+        const callee2 = getCallees(graph, write!).find(c => c.qualifiedName === encode?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -407,8 +415,8 @@ describe('GoAdapter Call Graph', () => {
                 func internal() {}
             `
         };
-        const symbolMap = await adapter.generateSymbolMap([file1, file2]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph([file1, file2]);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -420,15 +428,15 @@ describe('GoAdapter Call Graph', () => {
         expect(helper).toBeDefined();
         expect(internal).toBeDefined();
 
-        expect(main?.file).toBe('/main.go');
-        expect(helper?.file).toBe('/utils.go');
+        expect(main?.locator?.file).toBe('/main.go');
+        expect(helper?.locator?.file).toBe('/utils.go');
 
         // main calls helper
-        const callee1 = main!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee1 = getCallees(graph, main!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // helper calls internal
-        const callee2 = helper!.callees.find(c => c.qualifiedName === internal?.qualifiedName);
+        const callee2 = getCallees(graph, helper!).find(c => c.qualifiedName === internal?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -453,8 +461,8 @@ describe('GoAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.go', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const main = functions.find(e => e.label === 'main');
         const newBuilder = functions.find(e => e.label === 'NewBuilder');
@@ -467,6 +475,6 @@ describe('GoAdapter Call Graph', () => {
         expect(build).toBeDefined();
 
         // main should have edges to at least NewBuilder
-        expect(main!.callees.length).toBeGreaterThanOrEqual(1);
+        expect(getCallees(graph, main!).length).toBeGreaterThanOrEqual(1);
     });
 });

@@ -1,15 +1,45 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createSastResolveGapsHandler } from '../../../src/mcp/tools/sastResolveGaps.js';
 import { writeScanState, deleteScanState, ScanState } from '../../../src/static/persistence.js';
-import { SupportedLanguage } from '../../../src/engine/types.js';
+import { SymbolGraph, SupportedLanguage } from '../../../src/engine/types.js';
+import { Engine } from '../../../src/engine/index.js';
 
 describe('sast_resolve_gaps MCP tool', () => {
-    const handler = createSastResolveGapsHandler();
+    const handler = createSastResolveGapsHandler(new Engine());
     const scanIds: string[] = [];
 
     function makeScanState(overrides?: Partial<ScanState>): ScanState {
         const id = 'test-' + Math.random().toString(36).slice(2, 8);
         scanIds.push(id);
+
+        const graph = new SymbolGraph();
+        const callerNode = {
+            id: 'caller-1',
+            kind: 'function' as const,
+            qualifiedName: 'Test.foo',
+            status: 'concrete' as const,
+            language: SupportedLanguage.Solidity,
+            label: 'foo',
+            locator: { file: '/a.sol', startIndex: 0, endIndex: 10, line: 5, column: 0 },
+            visibility: 'public' as const,
+            resolvedBy: 'static' as const,
+            confidence: 'high' as const,
+        };
+        const gapNode = {
+            id: 'gap-node-1',
+            kind: 'function' as const,
+            qualifiedName: 'ext.bar',
+            status: 'gap' as const,
+            language: SupportedLanguage.Solidity,
+            label: 'bar',
+            visibility: 'external' as const,
+            resolvedBy: 'static' as const,
+            confidence: 'low' as const,
+        };
+        graph.addNode(callerNode);
+        graph.addNode(gapNode);
+        graph.addEdge({ from: 'caller-1', to: 'gap-node-1', kind: 'calls', attrs: { targetKind: 'external_unknown' } });
+
         return {
             scanId: id,
             files: ['/a.sol'],
@@ -18,25 +48,7 @@ describe('sast_resolve_gaps MCP tool', () => {
             effective: {
                 solidity: { domain: 'on-chain', inheritanceModel: 'classical' },
             },
-            symbolMap: {
-                'Test.foo': {
-                    qualifiedName: 'Test.foo',
-                    label: 'foo',
-                    file: '/a.sol',
-                    line: 5,
-                    language: SupportedLanguage.Solidity,
-                    writesState: [],
-                    readsState: [],
-                    callsExternal: true,
-                    callees: [{ qualifiedName: 'ext.bar', targetKind: 'external_unknown' }],
-                    isPublic: true,
-                    hasAccessControl: false,
-                    modifiers: [],
-                    resolvedBy: 'static',
-                    confidence: 'high',
-                    visibility: 'public',
-                },
-            },
+            graph: graph.toJSON(),
             gaps: [{
                 id: 'gap-abc',
                 type: 'unresolved_callee',
@@ -70,7 +82,7 @@ describe('sast_resolve_gaps MCP tool', () => {
             scanId: state.scanId,
             resolutions: [{
                 gapId: 'gap-abc',
-                facts: { callsExternal: false },
+                facts: {},
                 resolvedBy: 'agent',
                 confidence: 'high',
             }],

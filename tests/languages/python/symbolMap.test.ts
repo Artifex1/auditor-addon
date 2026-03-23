@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { PythonAdapter } from '../../../src/languages/pythonAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('PythonAdapter Call Graph', () => {
     const adapter = new PythonAdapter();
@@ -14,11 +20,11 @@ describe('PythonAdapter Call Graph', () => {
                 pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         const entryA = functions.find(e => e.label === 'a');
@@ -26,7 +32,7 @@ describe('PythonAdapter Call Graph', () => {
         expect(entryA).toBeDefined();
         expect(entryB).toBeDefined();
 
-        const callee = entryA!.callees[0];
+        const callee = getCallees(graph, entryA!)[0];
         expect(callee.qualifiedName).toBe(entryB?.qualifiedName);
     });
 
@@ -40,8 +46,8 @@ describe('PythonAdapter Call Graph', () => {
                     pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -51,11 +57,11 @@ describe('PythonAdapter Call Graph', () => {
         expect(start).toBeDefined();
         expect(initialize).toBeDefined();
 
-        expect(start?.contract).toBe('Server');
-        expect(initialize?.contract).toBe('Server');
+        expect(start?.qualifiedName).toContain('Server.');
+        expect(initialize?.qualifiedName).toContain('Server.');
 
         // start calls initialize
-        const callee = start!.callees.find(c => c.qualifiedName === initialize?.qualifiedName);
+        const callee = getCallees(graph, start!).find(c => c.qualifiedName === initialize?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -81,8 +87,8 @@ describe('PythonAdapter Call Graph', () => {
                     pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(6);
 
@@ -112,8 +118,8 @@ describe('PythonAdapter Call Graph', () => {
                     helper()
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const helperEntry = functions.find(e => e.label === 'helper');
         const run = functions.find(e => e.label === 'run');
@@ -122,7 +128,7 @@ describe('PythonAdapter Call Graph', () => {
         expect(run).toBeDefined();
 
         // run calls helper
-        const callee = run!.callees.find(c => c.qualifiedName === helperEntry?.qualifiedName);
+        const callee = getCallees(graph, run!).find(c => c.qualifiedName === helperEntry?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -140,8 +146,8 @@ describe('PythonAdapter Call Graph', () => {
                     pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const request = functions.find(e => e.label === 'request');
         const prepare = functions.find(e => e.label === 'prepare');
@@ -152,9 +158,10 @@ describe('PythonAdapter Call Graph', () => {
         expect(send).toBeDefined();
 
         // request calls prepare and send
-        expect(request!.callees).toHaveLength(2);
-        expect(request!.callees.map(c => c.qualifiedName)).toContain(prepare?.qualifiedName);
-        expect(request!.callees.map(c => c.qualifiedName)).toContain(send?.qualifiedName);
+        const callees = getCallees(graph, request!);
+        expect(callees).toHaveLength(2);
+        expect(callees.map(c => c.qualifiedName)).toContain(prepare?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(send?.qualifiedName);
     });
 
     it('should skip builtin function calls', async () => {
@@ -169,8 +176,8 @@ describe('PythonAdapter Call Graph', () => {
                 pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const process = functions.find(e => e.label === 'process');
         const realFunction = functions.find(e => e.label === 'real_function');
@@ -179,8 +186,9 @@ describe('PythonAdapter Call Graph', () => {
         expect(realFunction).toBeDefined();
 
         // Should have edge to real_function but not to builtins
-        expect(process!.callees).toHaveLength(1);
-        expect(process!.callees[0].qualifiedName).toBe(realFunction?.qualifiedName);
+        const callees = getCallees(graph, process!);
+        expect(callees).toHaveLength(1);
+        expect(callees[0].qualifiedName).toBe(realFunction?.qualifiedName);
     });
 
     it('should handle inheritance and super() calls', async () => {
@@ -194,8 +202,8 @@ describe('PythonAdapter Call Graph', () => {
                     super().process()
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const baseProcess = functions.find(e => e.qualifiedName === 'Base.process');
         const childHandle = functions.find(e => e.qualifiedName === 'Child.handle');
@@ -204,7 +212,7 @@ describe('PythonAdapter Call Graph', () => {
         expect(childHandle).toBeDefined();
 
         // handle calls Base.process via super()
-        const callee = childHandle!.callees.find(c => c.qualifiedName === baseProcess?.qualifiedName);
+        const callee = getCallees(graph, childHandle!).find(c => c.qualifiedName === baseProcess?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -219,8 +227,8 @@ describe('PythonAdapter Call Graph', () => {
                     self.validate()
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const baseValidate = functions.find(e => e.qualifiedName === 'Base.validate');
         const childProcess = functions.find(e => e.qualifiedName === 'Child.process');
@@ -229,7 +237,7 @@ describe('PythonAdapter Call Graph', () => {
         expect(childProcess).toBeDefined();
 
         // process calls Base.validate via self (inherited)
-        const callee = childProcess!.callees.find(c => c.qualifiedName === baseValidate?.qualifiedName);
+        const callee = getCallees(graph, childProcess!).find(c => c.qualifiedName === baseValidate?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -249,8 +257,8 @@ describe('PythonAdapter Call Graph', () => {
                     self.log()
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const mixinLog = functions.find(e => e.qualifiedName === 'Mixin.log');
         const baseProcess = functions.find(e => e.qualifiedName === 'Base.process');
@@ -261,9 +269,10 @@ describe('PythonAdapter Call Graph', () => {
         expect(childHandle).toBeDefined();
 
         // handle calls process (inherited from Base) and log (inherited from Mixin)
-        expect(childHandle!.callees).toHaveLength(2);
-        expect(childHandle!.callees.map(c => c.qualifiedName)).toContain(baseProcess?.qualifiedName);
-        expect(childHandle!.callees.map(c => c.qualifiedName)).toContain(mixinLog?.qualifiedName);
+        const callees = getCallees(graph, childHandle!);
+        expect(callees).toHaveLength(2);
+        expect(callees.map(c => c.qualifiedName)).toContain(baseProcess?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(mixinLog?.qualifiedName);
     });
 
     it('should handle multiple classes with methods in same file', async () => {
@@ -283,8 +292,8 @@ describe('PythonAdapter Call Graph', () => {
                     pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -293,17 +302,17 @@ describe('PythonAdapter Call Graph', () => {
         const write = functions.find(e => e.label === 'write');
         const encode = functions.find(e => e.label === 'encode');
 
-        expect(read?.contract).toBe('Reader');
-        expect(parse?.contract).toBe('Reader');
-        expect(write?.contract).toBe('Writer');
-        expect(encode?.contract).toBe('Writer');
+        expect(read?.qualifiedName).toContain('Reader.');
+        expect(parse?.qualifiedName).toContain('Reader.');
+        expect(write?.qualifiedName).toContain('Writer.');
+        expect(encode?.qualifiedName).toContain('Writer.');
 
         // read calls parse
-        const callee1 = read!.callees.find(c => c.qualifiedName === parse?.qualifiedName);
+        const callee1 = getCallees(graph, read!).find(c => c.qualifiedName === parse?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // write calls encode
-        const callee2 = write!.callees.find(c => c.qualifiedName === encode?.qualifiedName);
+        const callee2 = getCallees(graph, write!).find(c => c.qualifiedName === encode?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -325,8 +334,8 @@ describe('PythonAdapter Call Graph', () => {
                     pass
             `
         };
-        const symbolMap = await adapter.generateSymbolMap([file1, file2]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph([file1, file2]);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -338,15 +347,15 @@ describe('PythonAdapter Call Graph', () => {
         expect(helper).toBeDefined();
         expect(internal).toBeDefined();
 
-        expect(main?.file).toBe('/main.py');
-        expect(helper?.file).toBe('/utils.py');
+        expect(main?.locator?.file).toBe('/main.py');
+        expect(helper?.locator?.file).toBe('/utils.py');
 
         // main calls helper
-        const callee1 = main!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee1 = getCallees(graph, main!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // helper calls internal
-        const callee2 = helper!.callees.find(c => c.qualifiedName === internal?.qualifiedName);
+        const callee2 = getCallees(graph, helper!).find(c => c.qualifiedName === internal?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -361,10 +370,11 @@ describe('PythonAdapter Call Graph', () => {
                 pass
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        // Only count concrete (source-defined) function nodes — gap nodes are created for unresolved callees
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function' && e.status === 'concrete');
 
-        // inner is not a node — nested functions are not indexed as separate symbols
+        // inner is not a concrete node — nested functions are not indexed as separate symbols
         expect(functions).toHaveLength(2);
         expect(functions.find(e => e.label === 'outer')).toBeDefined();
         expect(functions.find(e => e.label === 'target')).toBeDefined();
@@ -373,7 +383,7 @@ describe('PythonAdapter Call Graph', () => {
         // the call to target() inside inner is attributed to outer
         const outer = functions.find(e => e.label === 'outer');
         const target = functions.find(e => e.label === 'target');
-        const callee = outer!.callees.find(c => c.qualifiedName === target?.qualifiedName);
+        const callee = getCallees(graph, outer!).find(c => c.qualifiedName === target?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -393,8 +403,8 @@ describe('PythonAdapter Call Graph', () => {
                     self.common()
         `;
         const files: FileContent[] = [{ path: '/test.py', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const common = functions.find(e => e.qualifiedName === 'GrandParent.common');
         const middle = functions.find(e => e.qualifiedName === 'Parent.middle');
@@ -404,10 +414,11 @@ describe('PythonAdapter Call Graph', () => {
         expect(middle).toBeDefined();
         expect(handle).toBeDefined();
 
-        expect(handle!.callees).toHaveLength(2);
+        const callees = getCallees(graph, handle!);
+        expect(callees).toHaveLength(2);
         // super().middle() resolves to Parent.middle
-        expect(handle!.callees.map(c => c.qualifiedName)).toContain(middle?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(middle?.qualifiedName);
         // self.common() resolves to GrandParent.common (inherited through Parent -> GrandParent)
-        expect(handle!.callees.map(c => c.qualifiedName)).toContain(common?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(common?.qualifiedName);
     });
 });

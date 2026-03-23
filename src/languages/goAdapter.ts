@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -84,25 +84,33 @@ export class GoAdapter extends BaseAdapter {
             // 1. Find all package-level functions
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
-                const entry = this.createFunctionNode(capture.node, file.path);
-                this.indexSymbol(entry);
+                this.addNode(this.createFunctionNode(capture.node, file.path));
             }
 
             // 2. Find all methods
             const methodCaptures = methodQuery.captures(tree.rootNode);
             for (const capture of methodCaptures) {
-                const entry = this.createMethodNode(capture.node, file.path);
-                this.indexSymbol(entry);
+                const receiverType = this.extractReceiverType(capture.node);
+                if (receiverType && !this._containerNodesByName.has(receiverType)) {
+                    this.addContainerNode({
+                        name: receiverType,
+                        containerKind: 'struct',
+                        visibility: 'public',
+                        node: capture.node,
+                        file: file.path,
+                    });
+                }
+                this.addNode(this.createMethodNode(capture.node, file.path), receiverType);
             }
         }
     }
 
-    private createFunctionNode(node: Node, file: string): SymbolEntry {
+    private createFunctionNode(node: Node, file: string): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const visibility = this.extractVisibility(fnName);
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -111,20 +119,19 @@ export class GoAdapter extends BaseAdapter {
         });
     }
 
-    private createMethodNode(node: Node, file: string): SymbolEntry {
+    private createMethodNode(node: Node, file: string): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const receiverType = this.extractReceiverType(node);
         const visibility = this.extractVisibility(fnName);
         const qualifiedName = receiverType ? `${receiverType}.${fnName}` : fnName;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName,
             label: fnName,
             file,
             node,
             visibility,
-            contract: receiverType,
         });
     }
 
@@ -168,27 +175,27 @@ export class GoAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 const functionNode = capture.node;
-                const symbol = this.findSymbolAtNode(functionNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(functionNode, file.path);
+                if (!callerNode) continue;
 
-                await this.processCallsInFunction(functionNode, symbol, simpleCallQuery, selectorCallQuery);
+                this.processCallsInFunction(functionNode, callerNode, simpleCallQuery, selectorCallQuery);
             }
 
             // Process method declarations
             const methodCaptures = methodQuery.captures(tree.rootNode);
             for (const capture of methodCaptures) {
                 const methodNode = capture.node;
-                const symbol = this.findSymbolAtNode(methodNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(methodNode, file.path);
+                if (!callerNode) continue;
 
-                await this.processCallsInFunction(methodNode, symbol, simpleCallQuery, selectorCallQuery);
+                this.processCallsInFunction(methodNode, callerNode, simpleCallQuery, selectorCallQuery);
             }
         }
     }
 
-    private async processCallsInFunction(
+    private processCallsInFunction(
         functionNode: Node,
-        caller: SymbolEntry,
+        caller: GraphNode,
         simpleCallQuery: Query,
         selectorCallQuery: Query
     ) {
@@ -197,12 +204,14 @@ export class GoAdapter extends BaseAdapter {
         for (const capture of simpleCaptures) {
             if (capture.name !== 'FUNC') continue;
 
-            const callName = capture.node.text;
-            const callee = this.resolveSimpleCall(callName);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callName, 'external_unknown'));
+            const callNode = capture.node;
+            const callName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveSimpleCall(callName);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
+            } else if (!resolved) {
+                this.addCallEdge(caller.id, callName, 'external_unknown', callSite);
             }
         }
 
@@ -211,14 +220,16 @@ export class GoAdapter extends BaseAdapter {
         for (const capture of selectorCaptures) {
             if (capture.name !== 'FUNC') continue;
 
-            const methodName = capture.node.text;
-            const receiver = capture.node.parent?.childForFieldName('operand')?.text;
+            const callNode = capture.node;
+            const methodName = callNode.text;
+            const receiver = callNode.parent?.childForFieldName('operand')?.text;
             const fullName = receiver ? `${receiver}.${methodName}` : methodName;
-            const callee = this.resolveSelectorCall(methodName, caller);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveSelectorCall(methodName, caller);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
+            } else if (!resolved) {
+                this.addCallEdge(caller.id, fullName, 'external_unknown', callSite);
             }
         }
     }
@@ -304,40 +315,14 @@ export class GoAdapter extends BaseAdapter {
             ?? node.children[0]?.text ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
-    override resolveExtensionMethod(
-        receiverType: string,
-        methodName: string,
-        _sourceFiles: Map<string, string>
-    ): string | null {
-        // Go methods: defined on receiver types
-        const methods = this.symbolsByContainer.get(receiverType);
-        const match = methods?.find(m => m.label === methodName);
-        return match?.qualifiedName ?? null;
-    }
-
-    private resolveSimpleCall(callName: string): SymbolEntry | undefined {
+    private resolveSimpleCall(callName: string): GraphNode | undefined {
         // 1. Try same package (all functions without receiver)
-        const packageFuncs = this.symbolsByLabel.get(callName);
-        const packageFunc = packageFuncs?.find(n => !n.contract);
+        const allByName = this._graph.findByName(callName);
+        const packageFunc = allByName.find(n => !this.getContainerName(n.id) && n.status === 'concrete');
         if (packageFunc) return packageFunc;
 
         // 2. Any match
-        return packageFuncs?.[0];
+        return allByName.find(n => n.status === 'concrete');
     }
 
     private static readonly STDLIB_PREFIXES = new Set([
@@ -366,18 +351,17 @@ export class GoAdapter extends BaseAdapter {
         return GoAdapter.BUILTIN_FUNCTIONS.has(name);
     }
 
-    private resolveSelectorCall(methodName: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveSelectorCall(methodName: string, caller: GraphNode): GraphNode | undefined {
         // For selector calls like s.Method() or obj.Method()
         // Try to resolve within caller's receiver type first
-        if (caller.contract) {
-            const receiverMethods = this.symbolsByContainer.get(caller.contract);
-            const match = receiverMethods?.find(n => n.label === methodName);
+        const callerContainer = this.getContainerName(caller.id);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, methodName);
             if (match) return match;
         }
 
         // Fallback: any method with that name
-        const methods = this.symbolsByLabel.get(methodName);
-        return methods?.[0];
+        return this._graph.findByName(methodName).find(n => n.status === 'concrete');
     }
 
 }

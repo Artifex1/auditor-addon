@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { MoveAdapter } from '../../../src/languages/moveAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('MoveAdapter Call Graph', () => {
     const adapter = new MoveAdapter();
@@ -16,8 +22,8 @@ describe('MoveAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.move', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -41,8 +47,8 @@ describe('MoveAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.move', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const transfer = functions.find(e => e.label === 'transfer_coins');
         expect(transfer?.visibility).toBe('external');
@@ -60,8 +66,8 @@ describe('MoveAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.move', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const add = functions.find(e => e.label === 'add');
         const check = functions.find(e => e.label === 'check_overflow');
@@ -69,7 +75,8 @@ describe('MoveAdapter Call Graph', () => {
         expect(add).toBeDefined();
         expect(check).toBeDefined();
 
-        const callee = add!.callees.find(c => c.qualifiedName === check?.qualifiedName);
+        const callees = getCallees(graph, add!);
+        const callee = callees.find(c => c.qualifiedName === check?.qualifiedName);
         expect(callee).toBeDefined();
     });
 });

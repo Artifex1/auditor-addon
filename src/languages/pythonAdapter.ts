@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -129,6 +129,14 @@ export class PythonAdapter extends BaseAdapter {
                 const classNode = capture.node;
                 const className = classNode.childForFieldName('name')?.text ?? 'unknown';
 
+                this.addContainerNode({
+                    name: className,
+                    containerKind: 'class',
+                    visibility: 'public',
+                    node: classNode,
+                    file: file.path,
+                });
+
                 // Extract parent classes
                 const parentCaptures = inheritanceQuery.captures(classNode);
                 const parents = parentCaptures
@@ -136,6 +144,9 @@ export class PythonAdapter extends BaseAdapter {
                     .map(c => c.node.text);
                 if (parents.length > 0) {
                     this.inheritanceGraph.set(className, parents);
+                    for (const parent of parents) {
+                        this.addInheritsEdge(className, parent);
+                    }
                 }
 
                 // Find methods inside this class
@@ -147,8 +158,7 @@ export class PythonAdapter extends BaseAdapter {
                     // Skip nested functions (functions defined inside other functions within the class)
                     if (this.isNestedFunction(methodCapture.node, bodyNode)) continue;
 
-                    const entry = this.createMethodEntry(methodCapture.node, file.path, className);
-                    this.indexSymbol(entry);
+                    this.addNode(this.createMethodEntry(methodCapture.node, file.path, className), className);
                 }
             }
 
@@ -158,8 +168,7 @@ export class PythonAdapter extends BaseAdapter {
                 if (this.isInsideClass(capture.node, classCaptures)) continue;
                 if (this.isNestedInFunction(capture.node, tree.rootNode)) continue;
 
-                const entry = this.createFunctionEntry(capture.node, file.path);
-                this.indexSymbol(entry);
+                this.addNode(this.createFunctionEntry(capture.node, file.path));
             }
         }
     }
@@ -201,12 +210,12 @@ export class PythonAdapter extends BaseAdapter {
         return false;
     }
 
-    private createFunctionEntry(node: Node, file: string): SymbolEntry {
+    private createFunctionEntry(node: Node, file: string): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const visibility = this.extractVisibility(fnName);
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -215,18 +224,17 @@ export class PythonAdapter extends BaseAdapter {
         });
     }
 
-    private createMethodEntry(node: Node, file: string, className: string): SymbolEntry {
+    private createMethodEntry(node: Node, file: string, className: string): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const visibility = this.extractVisibility(fnName);
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: `${className}.${fnName}`,
             label: fnName,
             file,
             node,
             visibility,
-            contract: className,
         });
     }
 
@@ -239,12 +247,7 @@ export class PythonAdapter extends BaseAdapter {
         return 'public';
     }
 
-    private findInClass(className: string, methodName: string): SymbolEntry | undefined {
-        const methods = this.symbolsByContainer.get(className);
-        return methods?.find(n => n.label === methodName);
-    }
-
-    private resolveInheritedCall(name: string, className: string, visited: Set<string> = new Set()): SymbolEntry | undefined {
+    private resolveInheritedCall(name: string, className: string, visited: Set<string> = new Set()): GraphNode | undefined {
         if (visited.has(className)) return undefined;
         visited.add(className);
 
@@ -252,7 +255,7 @@ export class PythonAdapter extends BaseAdapter {
         if (!parents) return undefined;
 
         for (const parent of parents) {
-            const func = this.findInClass(parent, name);
+            const func = this.findInContainer(parent, name);
             if (func) return func;
 
             const inherited = this.resolveInheritedCall(name, parent, visited);
@@ -279,17 +282,17 @@ export class PythonAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 const functionNode = capture.node;
-                const symbol = this.findSymbolAtNode(functionNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(functionNode, file.path);
+                if (!callerNode) continue;
 
-                this.processCallsInFunction(functionNode, symbol, simpleCallQuery, attributeCallQuery, superCallQuery);
+                this.processCallsInFunction(functionNode, callerNode, simpleCallQuery, attributeCallQuery, superCallQuery);
             }
         }
     }
 
     private processCallsInFunction(
         functionNode: Node,
-        caller: SymbolEntry,
+        caller: GraphNode,
         simpleCallQuery: Query,
         attributeCallQuery: Query,
         superCallQuery: Query
@@ -300,11 +303,13 @@ export class PythonAdapter extends BaseAdapter {
         for (const capture of superCaptures) {
             if (capture.name !== 'FUNC') continue;
 
-            const methodName = capture.node.text;
+            const callNode = capture.node;
+            const methodName = callNode.text;
             superMethodNames.add(methodName);
-            const callee = this.resolveSuperCall(methodName, caller);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveSuperCall(methodName, caller);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
             }
         }
 
@@ -313,12 +318,14 @@ export class PythonAdapter extends BaseAdapter {
         for (const capture of simpleCaptures) {
             if (capture.name !== 'FUNC') continue;
 
-            const callName = capture.node.text;
-            const callee = this.resolveSimpleCall(callName, caller);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callName, 'external_unknown'));
+            const callNode = capture.node;
+            const callName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveSimpleCall(callName, caller);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
+            } else if (!resolved) {
+                this.addCallEdge(caller.id, callName, 'external_unknown', callSite);
             }
         }
 
@@ -328,43 +335,47 @@ export class PythonAdapter extends BaseAdapter {
         for (const capture of attrCaptures) {
             if (capture.name !== 'FUNC') continue;
 
-            const methodName = capture.node.text;
-            const callee = this.resolveAttributeCall(methodName, caller);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee && !superMethodNames.has(methodName)) {
-                const receiver = capture.node.parent?.childForFieldName('object')?.text;
+            const callNode = capture.node;
+            const methodName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+            const resolved = this.resolveAttributeCall(methodName, caller);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
+            } else if (!resolved && !superMethodNames.has(methodName)) {
+                const receiver = callNode.parent?.childForFieldName('object')?.text;
                 const fullName = receiver && receiver !== 'self' && receiver !== 'cls'
                     ? `${receiver}.${methodName}`
                     : methodName;
-                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
+                this.addCallEdge(caller.id, fullName, 'external_unknown', callSite);
             }
         }
     }
 
-    private resolveSuperCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
-        if (!caller.contract) return undefined;
-        return this.resolveInheritedCall(name, caller.contract);
+    private resolveSuperCall(name: string, caller: GraphNode): GraphNode | undefined {
+        const callerContainer = this.getContainerName(caller.id);
+        if (!callerContainer) return undefined;
+        return this.resolveInheritedCall(name, callerContainer);
     }
 
-    private resolveSimpleCall(callName: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveSimpleCall(callName: string, caller: GraphNode): GraphNode | undefined {
+        const callerContainer = this.getContainerName(caller.id);
         // 1. Try same class methods first
-        if (caller.contract) {
-            const local = this.findInClass(caller.contract, callName);
+        if (callerContainer) {
+            const local = this.findInContainer(callerContainer, callName);
             if (local) return local;
 
             // 2. Try inherited methods
-            const inherited = this.resolveInheritedCall(callName, caller.contract);
+            const inherited = this.resolveInheritedCall(callName, callerContainer);
             if (inherited) return inherited;
         }
 
         // 3. Try free functions (no container)
-        const candidates = this.symbolsByLabel.get(callName);
-        const freeFunc = candidates?.find(n => !n.contract);
+        const allByName = this._graph.findByName(callName);
+        const freeFunc = allByName.find(n => !this.getContainerName(n.id) && n.status === 'concrete');
         if (freeFunc) return freeFunc;
 
         // 4. Any match
-        return candidates?.[0];
+        return allByName.find(n => n.status === 'concrete');
     }
 
     // ==========================================
@@ -398,14 +409,8 @@ export class PythonAdapter extends BaseAdapter {
     }
 
     override isStateWrite(node: Node): boolean {
-        // self.x = ... (instance attribute write)
-        if (node.type === 'assignment') {
-            const lhs = node.childForFieldName('left') ?? node.children[0];
-            if (lhs?.type === 'attribute' && lhs.text.startsWith('self.')) return true;
-            return true; // general assignment
-        }
-        if (node.type === 'augmented_assignment') return true;
-        return false;
+        return node.type === 'assignment'
+            || node.type === 'augmented_assignment';
     }
 
     override isStateRead(node: Node): boolean {
@@ -457,42 +462,20 @@ export class PythonAdapter extends BaseAdapter {
         return result;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
-    override resolveScope(
-        containerName: string,
-        _sourceFiles: Map<string, string>
-    ): string[] {
-        return this.inheritanceGraph.get(containerName) ?? [];
-    }
-
-    private resolveAttributeCall(methodName: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveAttributeCall(methodName: string, caller: GraphNode): GraphNode | undefined {
+        const callerContainer = this.getContainerName(caller.id);
         // 1. Try caller's own class first (self.method())
-        if (caller.contract) {
-            const local = this.findInClass(caller.contract, methodName);
+        if (callerContainer) {
+            const local = this.findInContainer(callerContainer, methodName);
             if (local) return local;
 
             // 2. Try inherited methods (self.inherited_method())
-            const inherited = this.resolveInheritedCall(methodName, caller.contract);
+            const inherited = this.resolveInheritedCall(methodName, callerContainer);
             if (inherited) return inherited;
         }
 
         // 3. Fallback: any class with that method name
-        const candidates = this.symbolsByLabel.get(methodName);
-        return candidates?.find(n => !!n.contract);
+        return this._graph.findByName(methodName).find(n => !!this.getContainerName(n.id) && n.status === 'concrete');
     }
 
     protected override isKnownStdlib(name: string): boolean {

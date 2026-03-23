@@ -91,9 +91,7 @@ describe('SolidityAdapter Traits', () => {
     });
 
     describe('isStateWrite', () => {
-        it('detects state writes through generateSymbolMap', async () => {
-            // isStateWrite checks assignment_expression with an LHS child
-            // Best tested through generateSymbolMap which populates writesState
+        it('detects state writes through generateGraph', async () => {
             const code = `
                 contract T {
                     uint x;
@@ -101,12 +99,10 @@ describe('SolidityAdapter Traits', () => {
                 }
             `;
             const files: FileContent[] = [{ path: '/test.sol', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
-            // If writesState is populated, isStateWrite works
-            const fEntry = Array.from(symbolMap.values()).find(e => e.label === 'f');
+            const graph = await adapter.generateGraph(files);
+            // If writes edges are populated, isStateWrite works
+            const fEntry = Array.from(graph.nodes()).find(e => e.label === 'f');
             expect(fEntry).toBeDefined();
-            // writesState may or may not be populated depending on buildSymbolTable wiring
-            // The trait method itself is tested by querying the correct node type
         });
     });
 
@@ -130,13 +126,15 @@ describe('SolidityAdapter Traits', () => {
                 }
             `;
             const files: FileContent[] = [{ path: '/test.sol', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const fooEntry = Array.from(symbolMap.values()).find(e => e.label === 'foo');
+            const fooEntry = Array.from(graph.nodes()).find(e => e.label === 'foo');
             expect(fooEntry).toBeDefined();
-            expect(fooEntry!.modifiers.length).toBeGreaterThan(0);
-            expect(fooEntry!.modifiers[0].pattern).toBe('explicit');
-            expect(fooEntry!.modifiers[0].name).toBe('onlyOwner');
+            const modEdges = graph.getOutEdgesOfKind(fooEntry!.id, 'has_modifier');
+            expect(modEdges.length).toBeGreaterThan(0);
+            const modNode = graph.getNode(modEdges[0].to);
+            expect(modNode?.pattern).toBe('explicit');
+            expect(modNode?.label).toBe('onlyOwner');
         });
     });
 
@@ -175,12 +173,13 @@ describe('SolidityAdapter Traits', () => {
                 }
             `;
             const files: FileContent[] = [{ path: '/test.sol', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const fooEntry = Array.from(symbolMap.values()).find(e => e.label === 'foo');
+            const fooEntry = Array.from(graph.nodes()).find(e => e.label === 'foo');
             expect(fooEntry).toBeDefined();
-            expect(fooEntry!.callees.length).toBeGreaterThan(0);
-            expect(fooEntry!.callees[0].targetKind).toBe('internal');
+            const callees = graph.getOutEdges(fooEntry!.id).filter(e => e.kind === 'calls');
+            expect(callees.length).toBeGreaterThan(0);
+            expect((callees[0].attrs as any)?.targetKind).toBe('internal');
         });
 
         it('marks cross-contract calls as cross_module', async () => {
@@ -196,14 +195,18 @@ describe('SolidityAdapter Traits', () => {
                 }
             `;
             const files: FileContent[] = [{ path: '/test.sol', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const fooEntry = Array.from(symbolMap.values()).find(e => e.label === 'foo');
+            const fooEntry = Array.from(graph.nodes()).find(e => e.label === 'foo');
             expect(fooEntry).toBeDefined();
-            if (fooEntry!.callees.length > 0) {
-                const doStuffCallee = fooEntry!.callees.find(c => c.qualifiedName.includes('doStuff'));
-                if (doStuffCallee) {
-                    expect(['cross_module', 'internal', 'external_unknown']).toContain(doStuffCallee.targetKind);
+            const callEdges = graph.getOutEdges(fooEntry!.id).filter(e => e.kind === 'calls');
+            if (callEdges.length > 0) {
+                const doStuffEdge = callEdges.find(e => {
+                    const target = graph.getNode(e.to);
+                    return target?.qualifiedName.includes('doStuff');
+                });
+                if (doStuffEdge) {
+                    expect(['cross_module', 'internal', 'external_unknown']).toContain((doStuffEdge.attrs as any)?.targetKind);
                 }
             }
         });

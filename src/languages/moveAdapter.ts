@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo, BuiltinContextValue
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -67,13 +67,21 @@ export class MoveAdapter extends BaseAdapter {
                 const moduleNode = capture.node;
                 const moduleName = this.extractModuleName(moduleNode);
 
+                this.addContainerNode({
+                    name: moduleName,
+                    containerKind: 'module',
+                    visibility: 'public',
+                    node: moduleNode,
+                    file: file.path,
+                });
+
                 // Functions are wrapped in (declaration) children of the module
                 for (const child of moduleNode.children) {
                     if (child.type !== 'declaration') continue;
                     const funcDecl = child.children.find(c => c.type === 'function_decl');
                     if (!funcDecl) continue;
                     const visibility = this.extractVisibilityFromDecl(child);
-                    this.indexSymbol(this.createFunctionNode(funcDecl, file.path, moduleName, visibility));
+                    this.addNode(this.createFunctionNode(funcDecl, file.path, moduleName, visibility), moduleName);
                 }
             }
 
@@ -87,7 +95,7 @@ export class MoveAdapter extends BaseAdapter {
                 );
                 if (!isInModule) {
                     const visibility = this.extractVisibilityFromDecl(funcNode.parent ?? null);
-                    this.indexSymbol(this.createFunctionNode(funcNode, file.path, undefined, visibility));
+                    this.addNode(this.createFunctionNode(funcNode, file.path, undefined, visibility));
                 }
             }
         }
@@ -133,19 +141,18 @@ export class MoveAdapter extends BaseAdapter {
         file: string,
         module?: string,
         visibility: Visibility = 'private'
-    ): SymbolEntry {
+    ): GraphNode {
         // function_decl → first (identifier) child = function name
         const nameNode = node.children.find(c => c.type === 'identifier');
         const fnName = nameNode?.text ?? 'unknown';
         const qualifiedName = module ? `${module}::${fnName}` : fnName;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName,
             label: fnName,
             file,
             node,
             visibility,
-            contract: module,
         });
     }
 
@@ -164,19 +171,21 @@ export class MoveAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 const functionNode = capture.node;
-                const symbol = this.findSymbolAtNode(functionNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(functionNode, file.path);
+                if (!callerNode) continue;
 
                 const callCaptures = callQuery.captures(functionNode);
                 for (const callCapture of callCaptures) {
-                    const callee = this.resolveCallNode(callCapture.node, symbol);
-                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    const callNode = callCapture.node;
+                    const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+                    const callee = this.resolveCallNode(callNode, callerNode);
+                    if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+                        this.addCallEdge(callerNode.id, callee.qualifiedName, 'internal', callSite);
                     } else if (!callee) {
                         // Use extracted name (module::func), not the full call text
-                        const callName = this.extractCallName(callCapture.node);
+                        const callName = this.extractCallName(callNode);
                         if (!callName) continue;
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(callName, 'external_unknown'));
+                        this.addCallEdge(callerNode.id, callName, 'external_unknown', callSite);
                     }
                 }
             }
@@ -210,6 +219,30 @@ export class MoveAdapter extends BaseAdapter {
         const nameChain = node.children.find(c => c.type === 'name_access_chain');
         if (!nameChain) return false;
         return nameChain.text.includes('emit');
+    }
+
+    override getEventName(node: Node): string | null {
+        // event::emit(Type { ... }) → extract Type
+        if (!this.isEmitStatement(node)) return null;
+        // The type argument is typically the first generic type parameter or first struct expression arg
+        const text = node.text;
+        // Match pattern: emit<EventType>(...) or emit(EventType { ... })
+        const genericMatch = text.match(/emit<(\w+)>/);
+        if (genericMatch) return genericMatch[1];
+        // Fallback: look for struct expression in arguments
+        const args = node.children.find(c => c.type === 'arg_list');
+        if (args) {
+            for (const child of args.children) {
+                if (child.type === 'pack_expr') {
+                    const nameChain = child.children.find(c => c.type === 'name_access_chain');
+                    if (nameChain) {
+                        const ids = nameChain.children.filter(c => c.type === 'identifier');
+                        return ids.length > 0 ? ids[ids.length - 1].text : null;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     override isExternalCall(node: Node): boolean {
@@ -260,32 +293,6 @@ export class MoveAdapter extends BaseAdapter {
             ?? node.children[0]?.text ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        // Qualified cross-module calls
-        if (this.isExternalCall(node)) {
-            return { qualifiedName: target, targetKind: 'cross_module' };
-        }
-        return null;
-    }
-
-    override resolveScope(
-        containerName: string,
-        _sourceFiles: Map<string, string>
-    ): string[] {
-        return this.symbolsByContainer.has(containerName) ? [containerName] : [];
-    }
-
     // Extract module::function name from a call_expr node (no arguments).
     private extractCallName(callNode: Node): string | null {
         const nameChain = callNode.children.find(c => c.type === 'name_access_chain');
@@ -296,7 +303,7 @@ export class MoveAdapter extends BaseAdapter {
         return ids.length >= 2 ? ids.slice(-2).join('::') : ids[ids.length - 1];
     }
 
-    private resolveCallNode(callNode: Node, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveCallNode(callNode: Node, caller: GraphNode): GraphNode | undefined {
         // call_expr → name_access_chain → (identifier (:: identifier)*)
         const nameChain = callNode.children.find(c => c.type === 'name_access_chain');
         if (!nameChain) return undefined;
@@ -312,22 +319,22 @@ export class MoveAdapter extends BaseAdapter {
         const moduleName = identifiers.length >= 2 ? identifiers[identifiers.length - 2] : null;
 
         if (moduleName) {
-            const moduleFuncs = this.symbolsByContainer.get(moduleName);
-            const match = moduleFuncs?.find(n => n.label === funcName);
+            const match = this.findInContainer(moduleName, funcName);
             if (match) return match;
         }
 
         // Same-module lookup
-        if (caller.contract) {
-            const moduleFuncs = this.symbolsByContainer.get(caller.contract);
-            const match = moduleFuncs?.find(n => n.label === funcName);
+        const callerContainer = this.getContainerName(caller.id);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, funcName);
             if (match) return match;
         }
 
-        const free = this.symbolsByLabel.get(funcName)?.find(n => !n.contract);
+        const candidates = this._graph.findByName(funcName);
+        const free = candidates.find(n => !this.getContainerName(n.id) && n.status === 'concrete');
         if (free) return free;
 
-        return this.symbolsByLabel.get(funcName)?.[0];
+        return candidates.find(n => n.status === 'concrete');
     }
 
     private static readonly STDLIB_PREFIXES = new Set([

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { MasmAdapter } from '../../../src/languages/masmAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('MasmAdapter Call Graph', () => {
     const adapter = new MasmAdapter();
@@ -12,8 +18,8 @@ end
 proc.bar
 end`;
         const files: FileContent[] = [{ path: '/test.masm', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -22,9 +28,9 @@ end`;
         expect(foo).toBeDefined();
         expect(bar).toBeDefined();
 
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
-        expect(foo!.callees[0].qualifiedName).toBe(bar?.qualifiedName);
+        expect(getCallees(graph, foo!)[0].qualifiedName).toBe(bar?.qualifiedName);
     });
 
     it('should treat entrypoint as external visibility', async () => {
@@ -34,8 +40,8 @@ begin
     exec.foo
 end`;
         const files: FileContent[] = [{ path: '/test.masm', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const entry = functions.find(e => e.label === 'begin');
         expect(entry?.visibility).toBe('external');
@@ -48,13 +54,14 @@ begin
     exec.foo
 end`;
         const files: FileContent[] = [{ path: '/test.masm', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const entry = functions.find(e => e.label === 'begin');
         const foo = functions.find(e => e.label === 'foo');
 
-        const callee = entry!.callees.find(c => c.qualifiedName === foo?.qualifiedName);
+        const callees = getCallees(graph, entry!);
+        const callee = callees.find(c => c.qualifiedName === foo?.qualifiedName);
         expect(callee).toBeDefined();
     });
 });

@@ -69,7 +69,7 @@ describe('runScan', () => {
         scanIds.push(result.scanId);
 
         expect(result.scanId).toBeTruthy();
-        expect(result.symbolMap.size).toBeGreaterThan(0);
+        expect(result.graph.size).toBeGreaterThan(0);
         expect(result.effective[SupportedLanguage.Solidity]).toBeDefined();
         expect(['ready', 'needs_resolution']).toContain(result.status);
     });
@@ -98,7 +98,7 @@ describe('runScan', () => {
 
         // The external call edge may produce a gap
         // (depends on whether doStuff resolves to the interface symbol)
-        expect(result.symbolMap.size).toBeGreaterThan(0);
+        expect(result.graph.size).toBeGreaterThan(0);
     });
 
     it('persists scan state to disk', async () => {

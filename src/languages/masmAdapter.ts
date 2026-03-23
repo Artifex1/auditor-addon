@@ -1,7 +1,6 @@
 import path from "path";
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind
+    FileContent, SupportedLanguage, GraphNode, Visibility
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -52,6 +51,11 @@ export class MasmAdapter extends BaseAdapter {
         });
     }
 
+    protected override resetState(): void {
+        super.resetState();
+        this._filesByBasename.clear();
+    }
+
     protected override async buildSymbolTable(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Masm);
@@ -73,20 +77,20 @@ export class MasmAdapter extends BaseAdapter {
             // Index procedures
             const procCaptures = procQuery.captures(tree.rootNode);
             for (const capture of procCaptures) {
-                const entry = this.createProcedureNode(capture.node, file.path);
-                this.indexSymbol(entry);
+                const node = this.createProcedureNode(capture.node, file.path);
+                this.addNode(node);
             }
 
             // Index entrypoints
             const entryCaptures = entryQuery.captures(tree.rootNode);
             for (const capture of entryCaptures) {
-                const entry = this.createEntrypointNode(capture.node, file.path);
-                this.indexSymbol(entry);
+                const node = this.createEntrypointNode(capture.node, file.path);
+                this.addNode(node);
             }
         }
     }
 
-    private createProcedureNode(node: Node, file: string): SymbolEntry {
+    private createProcedureNode(node: Node, file: string): GraphNode {
         const nameNode = node.childForFieldName('name') ||
             node.children.find(c => c.type === 'identifier' || c.type === 'proc_name');
         const fnName = nameNode?.text ?? 'unknown';
@@ -95,7 +99,7 @@ export class MasmAdapter extends BaseAdapter {
         const isExported = node.text.trimStart().startsWith('export');
         const visibility: Visibility = isExported ? 'public' : 'private';
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -104,8 +108,8 @@ export class MasmAdapter extends BaseAdapter {
         });
     }
 
-    private createEntrypointNode(node: Node, file: string): SymbolEntry {
-        return this.createEntry({
+    private createEntrypointNode(node: Node, file: string): GraphNode {
+        return this.createNode({
             qualifiedName: 'begin',
             label: 'begin',
             file,
@@ -156,24 +160,6 @@ export class MasmAdapter extends BaseAdapter {
         return this.extractCalleeName(node) ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        if (this.isExternalCall(node)) {
-            return { qualifiedName: target, targetKind: 'external_unknown' };
-        }
-        return null;
-    }
-
     protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Masm);
@@ -194,20 +180,20 @@ export class MasmAdapter extends BaseAdapter {
             const procCaptures = procQuery.captures(tree.rootNode);
             for (const capture of procCaptures) {
                 const procNode = capture.node;
-                const symbol = this.findSymbolAtNode(procNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(procNode, file.path);
+                if (!callerNode) continue;
 
-                this.processCallsInNode(procNode, symbol, callQuery, moduleAliases);
+                this.processCallsInNode(procNode, callerNode, callQuery, moduleAliases);
             }
 
             // Process entrypoints
             const entryCaptures = entryQuery.captures(tree.rootNode);
             for (const capture of entryCaptures) {
                 const entryNode = capture.node;
-                const symbol = this.findSymbolAtNode(entryNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(entryNode, file.path);
+                if (!callerNode) continue;
 
-                this.processCallsInNode(entryNode, symbol, callQuery, moduleAliases);
+                this.processCallsInNode(entryNode, callerNode, callQuery, moduleAliases);
             }
         }
     }
@@ -232,7 +218,7 @@ export class MasmAdapter extends BaseAdapter {
 
     private processCallsInNode(
         node: Node,
-        caller: SymbolEntry,
+        caller: GraphNode,
         callQuery: Query,
         moduleAliases: Map<string, string>
     ) {
@@ -242,8 +228,10 @@ export class MasmAdapter extends BaseAdapter {
             const calleeName = this.extractCalleeName(callNode);
             if (!calleeName) continue;
 
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+
             // Direct label match (same-module call)
-            let callee = this.symbolsByLabel.get(calleeName)?.[0];
+            let callee = this._graph.findByName(calleeName).find(n => n.status === 'concrete');
 
             // Cross-module: alias::func → strip alias, look up func in that module's symbols
             if (!callee && calleeName.includes('::')) {
@@ -252,15 +240,15 @@ export class MasmAdapter extends BaseAdapter {
                 const funcName = calleeName.slice(sep + 2);
                 const modulePath = moduleAliases.get(alias);
                 if (modulePath) {
-                    const candidates = this.symbolsByLabel.get(funcName) ?? [];
-                    callee = candidates.find(s => s.file === modulePath);
+                    const candidates = this._graph.findByName(funcName);
+                    callee = candidates.find(s => s.locator?.file === modulePath);
                 }
             }
 
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+                this.addCallEdge(caller.id, callee.qualifiedName, 'internal', callSite);
             } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
+                this.addCallEdge(caller.id, calleeName, 'external_unknown', callSite);
             }
         }
     }

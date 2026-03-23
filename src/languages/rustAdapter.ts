@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo, BuiltinContextValue
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -84,18 +84,26 @@ export class RustAdapter extends BaseAdapter {
                 const implNode = capture.node;
                 const containerName = this.extractImplTypeName(implNode);
 
+                this.addContainerNode({
+                    name: containerName,
+                    containerKind: 'impl',
+                    visibility: 'public',
+                    node: implNode,
+                    file: file.path,
+                });
+
                 // Find functions inside impl block
                 const bodyNode = implNode.childForFieldName('body');
                 if (bodyNode) {
                     const funcCaptures = functionQuery.captures(bodyNode);
                     for (const funcCapture of funcCaptures) {
                         if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                        const entry = this.createFunctionNode(
+                        const node = this.createFunctionNode(
                             funcCapture.node,
                             file.path,
                             containerName
                         );
-                        this.indexSymbol(entry);
+                        this.addNode(node, containerName);
                     }
                 }
             }
@@ -112,33 +120,39 @@ export class RustAdapter extends BaseAdapter {
                     });
 
                     if (!isInImpl) {
-                        const entry = this.createFunctionNode(child, file.path);
-                        this.indexSymbol(entry);
+                        this.addNode(this.createFunctionNode(child, file.path));
                     }
                 }
 
                 // 3. Find functions inside mod blocks
                 if (child.type === 'mod_item') {
-                    await this.processModItem(child, file.path, functionQuery);
+                    this.processModItem(child, file.path, functionQuery);
                 }
             }
         }
     }
 
-    private async processModItem(modNode: Node, filePath: string, functionQuery: Query) {
+    private processModItem(modNode: Node, filePath: string, functionQuery: Query) {
         const modName = modNode.childForFieldName('name')?.text;
         const bodyNode = modNode.childForFieldName('body');
 
         if (bodyNode && modName) {
+            this.addContainerNode({
+                name: modName,
+                containerKind: 'module',
+                visibility: 'public',
+                node: modNode,
+                file: filePath,
+            });
             const funcCaptures = functionQuery.captures(bodyNode);
             for (const funcCapture of funcCaptures) {
                 if (this.isNestedFunction(funcCapture.node, bodyNode)) continue;
-                const entry = this.createFunctionNode(
+                const node = this.createFunctionNode(
                     funcCapture.node,
                     filePath,
                     modName
                 );
-                this.indexSymbol(entry);
+                this.addNode(node, modName);
             }
         }
     }
@@ -171,20 +185,19 @@ export class RustAdapter extends BaseAdapter {
         node: Node,
         file: string,
         container?: string
-    ): SymbolEntry {
+    ): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
 
         const visibility = this.extractVisibility(node);
         const qualifiedName = container ? `${container}::${fnName}` : fnName;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName,
             label: fnName,
             file,
             node,
             visibility,
-            contract: container,
         });
     }
 
@@ -222,23 +235,23 @@ export class RustAdapter extends BaseAdapter {
 
             for (const capture of funcCaptures) {
                 const functionNode = capture.node;
-                const symbol = this.findSymbolAtNode(functionNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(functionNode, file.path);
+                if (!callerNode) continue;
 
                 // Process different call types
-                await this.processCallQuery(simpleCallQuery, functionNode, symbol, 'simple');
-                await this.processCallQuery(methodCallQuery, functionNode, symbol, 'method');
-                await this.processCallQuery(scopedCallQuery, functionNode, symbol, 'scoped');
-                await this.processCallQuery(genericCallQuery, functionNode, symbol, 'simple');
-                await this.processCallQuery(genericScopedCallQuery, functionNode, symbol, 'scoped');
+                this.processCallQuery(simpleCallQuery, functionNode, callerNode, 'simple');
+                this.processCallQuery(methodCallQuery, functionNode, callerNode, 'method');
+                this.processCallQuery(scopedCallQuery, functionNode, callerNode, 'scoped');
+                this.processCallQuery(genericCallQuery, functionNode, callerNode, 'simple');
+                this.processCallQuery(genericScopedCallQuery, functionNode, callerNode, 'scoped');
             }
         }
     }
 
-    private async processCallQuery(
+    private processCallQuery(
         query: Query,
         functionNode: Node,
-        caller: SymbolEntry,
+        caller: GraphNode,
         callType: 'simple' | 'method' | 'scoped'
     ) {
         const captures = query.captures(functionNode);
@@ -246,16 +259,18 @@ export class RustAdapter extends BaseAdapter {
         for (const capture of captures) {
             if (capture.name !== 'FUNC') continue;
 
-            const callText = capture.node.text;
+            const callNode = capture.node;
+            const callText = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
 
             // Skip macro invocations (they end with !)
-            if (this.isMacroCall(capture.node)) continue;
+            if (this.isMacroCall(callNode)) continue;
 
-            const callee = this.resolveCall(callText, callType, caller);
-            if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
-            } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callText, 'external_unknown'));
+            const resolved = this.resolveCall(callText, callType, caller);
+            if (resolved && resolved.qualifiedName !== caller.qualifiedName) {
+                this.addCallEdge(caller.id, resolved.qualifiedName, 'internal', callSite);
+            } else if (!resolved) {
+                this.addCallEdge(caller.id, callText, 'external_unknown', callSite);
             }
         }
     }
@@ -363,64 +378,11 @@ export class RustAdapter extends BaseAdapter {
         return result;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        if (node.type !== 'call_expression') return null;
-        const funcExpr = node.childForFieldName('function');
-        if (!funcExpr) return null;
-
-        let callText: string;
-        let callType: 'simple' | 'method' | 'scoped';
-
-        if (funcExpr.type === 'identifier') {
-            callText = funcExpr.text;
-            callType = 'simple';
-        } else if (funcExpr.type === 'field_expression') {
-            callText = funcExpr.childForFieldName('field')?.text ?? funcExpr.text;
-            callType = 'method';
-        } else if (funcExpr.type === 'scoped_identifier') {
-            callText = funcExpr.text;
-            callType = 'scoped';
-        } else {
-            return null;
-        }
-
-        // Try to find in symbolMap
-        if (callType === 'scoped') {
-            const parts = callText.split('::');
-            const funcName = parts[parts.length - 1];
-            for (const [qn, entry] of symbolMap) {
-                if (entry.label === funcName && qn.includes(parts[0])) {
-                    return { qualifiedName: qn, targetKind: 'internal' };
-                }
-            }
-        }
-
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === (callType === 'scoped' ? callText.split('::').pop()! : callText)) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-
-        return null;
-    }
-
-    override resolveScope(
-        containerName: string,
-        _sourceFiles: Map<string, string>
-    ): string[] {
-        // Rust doesn't have inheritance, but impl blocks for traits act similarly
-        return this.symbolsByContainer.has(containerName) ? [containerName] : [];
-    }
-
     private resolveCall(
         callText: string,
         callType: 'simple' | 'method' | 'scoped',
-        caller: SymbolEntry
-    ): SymbolEntry | undefined {
+        caller: GraphNode
+    ): GraphNode | undefined {
         if (callType === 'scoped') {
             // Handle qualified calls like Type::method or module::function
             const parts = callText.split('::');
@@ -428,42 +390,41 @@ export class RustAdapter extends BaseAdapter {
             const containerName = parts.slice(0, -1).join('::');
 
             // Try to find in the specified container
-            const containerFuncs = this.symbolsByContainer.get(containerName);
-            const match = containerFuncs?.find(n => n.label === funcName);
+            const match = this.findInContainer(containerName, funcName);
             if (match) return match;
 
             // Fallback to any function with that name
-            return this.symbolsByLabel.get(funcName)?.[0];
+            return this._graph.findByName(funcName).find(n => n.status === 'concrete');
         }
+
+        const callerContainer = this.getContainerName(caller.id);
 
         if (callType === 'method') {
             // Method calls: self.method() or obj.method()
             // Try to resolve within the same container first
-            if (caller.contract) {
-                const containerFuncs = this.symbolsByContainer.get(caller.contract);
-                const match = containerFuncs?.find(n => n.label === callText);
+            if (callerContainer) {
+                const match = this.findInContainer(callerContainer, callText);
                 if (match) return match;
             }
 
             // Fallback to any function with that label
-            return this.symbolsByLabel.get(callText)?.[0];
+            return this._graph.findByName(callText).find(n => n.status === 'concrete');
         }
 
         // Simple calls
         // 1. Try same container
-        if (caller.contract) {
-            const containerFuncs = this.symbolsByContainer.get(caller.contract);
-            const match = containerFuncs?.find(n => n.label === callText);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, callText);
             if (match) return match;
         }
 
         // 2. Try free functions
-        const freeFuncs = this.symbolsByLabel.get(callText);
-        const free = freeFuncs?.find(n => !n.contract);
+        const allByName = this._graph.findByName(callText);
+        const free = allByName.find(n => !this.getContainerName(n.id) && n.status === 'concrete');
         if (free) return free;
 
         // 3. Any match
-        return this.symbolsByLabel.get(callText)?.[0];
+        return allByName.find(n => n.status === 'concrete');
     }
 
     private static readonly STDLIB_PREFIXES = new Set([

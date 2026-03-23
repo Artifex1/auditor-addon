@@ -4,7 +4,7 @@ import rule from '../../../../src/static/rules/SOL-002-reentrancy.js';
 
 describe('SOL-002: Reentrancy', () => {
     it('detects state write after external call in same function', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Vault {
     mapping(address => uint) balances;
@@ -14,7 +14,7 @@ contract Vault {
     }
 }`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'withdraw', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'withdraw', rule);
         expect(findings).toHaveLength(1);
         expect(findings[0].snippet).toContain('state write');
         expect(findings[0].executionPath).toBeDefined();
@@ -22,7 +22,7 @@ contract Vault {
     });
 
     it('does not flag when state write is before external call', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Vault {
     mapping(address => uint) balances;
@@ -32,12 +32,12 @@ contract Vault {
     }
 }`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'withdraw', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'withdraw', rule);
         expect(findings).toHaveLength(0);
     });
 
     it('detects reentrancy across functions — external call in callee, write in caller', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Vault {
     mapping(address => uint) balances;
@@ -52,13 +52,13 @@ contract Vault {
     }
 }`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'withdraw', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'withdraw', rule);
         expect(findings).toHaveLength(1);
         expect(findings[0].executionPath!.length).toBe(2);
     });
 
     it('detects reentrancy across 3 functions — deep call chain', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Vault {
     mapping(address => uint) balances;
@@ -77,14 +77,22 @@ contract Vault {
     }
 }`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'withdraw', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'withdraw', rule);
         expect(findings).toHaveLength(1);
     });
 
-    it('detects reentrancy across two files', async () => {
-        const { ctx, symbolMap } = await buildContext({
+    it('detects reentrancy across two files via inheritance', async () => {
+        // Vault inherits _sendFunds from Sender (valid Solidity cross-file pattern).
+        // The adapter resolves _sendFunds through the inheritance graph.
+        const { ctx, graph } = await buildContext({
+            '/sender.sol': `
+contract Sender {
+    function _sendFunds(address to, uint amount) internal {
+        to.call{value: amount}("");
+    }
+}`,
             '/vault.sol': `
-contract Vault {
+contract Vault is Sender {
     mapping(address => uint) balances;
 
     function withdraw(uint amount) external {
@@ -92,19 +100,13 @@ contract Vault {
         balances[msg.sender] -= amount;
     }
 }`,
-            '/sender.sol': `
-contract Sender {
-    function _sendFunds(address to, uint amount) internal {
-        to.call{value: amount}("");
-    }
-}`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'withdraw', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'withdraw', rule);
         expect(findings).toHaveLength(1);
     });
 
     it('does not flag when no external call in the chain', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Vault {
     mapping(address => uint) balances;
@@ -120,7 +122,7 @@ contract Vault {
     }
 }`,
         });
-        const findings = await runDeepRuleOnFunction(ctx, symbolMap, 'update', rule);
+        const findings = await runDeepRuleOnFunction(ctx, graph, 'update', rule);
         expect(findings).toHaveLength(0);
     });
 });

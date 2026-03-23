@@ -1,4 +1,4 @@
-import { SupportedLanguage, FileContent, FileMetrics, DiffFileMetrics, LanguageAdapter, SymbolMap } from "./types.js";
+import { SupportedLanguage, FileContent, FileMetrics, DiffFileMetrics, LanguageAdapter, SymbolGraph } from "./types.js";
 import { resolveFiles, readFiles } from "./fileUtils.js";
 import { getGitDiff, getChangedLineNumbers, getFileStatus, getFileAtRef } from "./gitDiff.js";
 import { BaseAdapter } from "../languages/baseAdapter.js";
@@ -125,23 +125,21 @@ export class Engine {
         return allMetrics;
     }
 
-    async processSymbolMap(patterns: string[]): Promise<SymbolMap> {
+    async processGraph(patterns: string[]): Promise<SymbolGraph> {
         const filePaths = await resolveFiles(patterns);
         const files = await readFiles(filePaths);
         const filesByLanguage = this.groupFilesByLanguage(files);
 
-        const combined: SymbolMap = new Map();
+        const combined = new SymbolGraph();
 
         for (const [lang, langFiles] of filesByLanguage.entries()) {
             const adapter = this.getAdapter(lang);
             if (adapter) {
                 try {
-                    const symbolMap = await adapter.generateSymbolMap(langFiles);
-                    for (const [id, entry] of symbolMap) {
-                        combined.set(id, entry);
-                    }
+                    const graph = await adapter.generateGraph(langFiles);
+                    combined.merge(graph);
                 } catch (error) {
-                    console.error(`Failed to generate symbol map for ${lang}:`, error);
+                    console.error(`Failed to generate graph for ${lang}:`, error);
                 }
             }
         }
@@ -151,7 +149,7 @@ export class Engine {
     private groupFilesByLanguage(files: FileContent[]): Map<SupportedLanguage, FileContent[]> {
         const filesByLanguage = new Map<SupportedLanguage, FileContent[]>();
         for (const file of files) {
-            const lang = this.detectLanguage(file.path);
+            const lang = this.detectLanguage(file.path, file.content);
             if (lang) {
                 if (!filesByLanguage.has(lang)) {
                     filesByLanguage.set(lang, []);

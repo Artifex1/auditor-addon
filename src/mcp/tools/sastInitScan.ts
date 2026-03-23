@@ -17,9 +17,6 @@ export const sastInitScanSchema = {
             framework: z.string().optional()
                 .describe("Framework hint (e.g. 'anchor', 'starknet', 'cosmwasm')"),
         }).optional().describe("Scan context with domain overrides and framework hints"),
-        options: z.object({
-            maxDepth: z.number().optional().describe("Path walk depth limit (default 6)"),
-        }).optional().describe("Scan options"),
     },
 };
 
@@ -28,7 +25,6 @@ export function createSastInitScanHandler(engine: Engine) {
         files: string[];
         languages: string[];
         context?: { domainOverrides?: Record<string, string>; framework?: string };
-        options?: { maxDepth?: number };
     }): Promise<CallToolResult> => {
         try {
             const filePaths = await resolveFiles(input.files);
@@ -59,8 +55,12 @@ export function createSastInitScanHandler(engine: Engine) {
 
             const result = await runScan(filesByLanguage, context, sourceFiles);
 
-            const totalSymbols = result.symbolMap.size;
-            const resolvedSymbols = totalSymbols - result.gaps.length;
+            let concreteCount = 0;
+            let gapCount = 0;
+            for (const node of result.graph.nodes()) {
+                if (node.status === 'concrete') concreteCount++;
+                else if (node.status === 'gap') gapCount++;
+            }
 
             return {
                 content: [{
@@ -69,9 +69,9 @@ export function createSastInitScanHandler(engine: Engine) {
                         scanId: result.scanId,
                         status: result.status,
                         symbolMapStats: {
-                            total: totalSymbols,
-                            resolved: resolvedSymbols,
-                            gaps: result.gaps.length,
+                            total: concreteCount + gapCount,
+                            concrete: concreteCount,
+                            gaps: gapCount,
                         },
                         gaps: result.gaps,
                         hotspots: result.hotspots,

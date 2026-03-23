@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { NoirAdapter } from '../../../src/languages/noirAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('NoirAdapter Call Graph', () => {
     const adapter = new NoirAdapter();
@@ -13,11 +19,11 @@ describe('NoirAdapter Call Graph', () => {
             fn b() {}
         `;
         const files: FileContent[] = [{ path: '/test.nr', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         const entryA = functions.find(e => e.label === 'a');
@@ -25,7 +31,7 @@ describe('NoirAdapter Call Graph', () => {
         expect(entryA).toBeDefined();
         expect(entryB).toBeDefined();
 
-        expect(entryA!.callees[0].qualifiedName).toBe(entryB?.qualifiedName);
+        expect(getCallees(graph, entryA!)[0].qualifiedName).toBe(entryB?.qualifiedName);
     });
 
     it('should detect pub visibility', async () => {
@@ -34,8 +40,8 @@ describe('NoirAdapter Call Graph', () => {
             fn private_fn() {}
         `;
         const files: FileContent[] = [{ path: '/test.nr', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const publicFn = functions.find(e => e.label === 'public_fn');
         const privateFn = functions.find(e => e.label === 'private_fn');
@@ -62,18 +68,19 @@ describe('NoirAdapter Call Graph', () => {
                 fn internal() {}
             `
         };
-        const symbolMap = await adapter.generateSymbolMap([file1, file2]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph([file1, file2]);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
         const main = functions.find(e => e.label === 'main');
         const helper = functions.find(e => e.label === 'helper');
 
-        expect(main?.file).toBe('/main.nr');
-        expect(helper?.file).toBe('/utils.nr');
+        expect(main?.locator?.file).toBe('/main.nr');
+        expect(helper?.locator?.file).toBe('/utils.nr');
 
-        const callee = main!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callees = getCallees(graph, main!);
+        const callee = callees.find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee).toBeDefined();
     });
 });

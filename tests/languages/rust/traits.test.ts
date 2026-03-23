@@ -121,20 +121,22 @@ describe('RustAdapter Traits', () => {
         });
     });
 
-    describe('resolveCallee via generateSymbolMap', () => {
+    describe('resolveCallee via generateGraph', () => {
         it('resolves internal function calls', async () => {
             const code = `
                 fn caller() { callee(); }
                 fn callee() {}
             `;
             const files: FileContent[] = [{ path: '/test.rs', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const callerEntry = Array.from(symbolMap.values()).find(e => e.label === 'caller');
+            const callerEntry = Array.from(graph.nodes()).find(e => e.label === 'caller');
             expect(callerEntry).toBeDefined();
-            expect(callerEntry!.callees.length).toBeGreaterThan(0);
-            expect(callerEntry!.callees[0].qualifiedName).toContain('callee');
-            expect(callerEntry!.callees[0].targetKind).toBe('internal');
+            const callees = graph.getOutEdges(callerEntry!.id).filter(e => e.kind === 'calls');
+            expect(callees.length).toBeGreaterThan(0);
+            const firstCallee = graph.getNode(callees[0].to);
+            expect(firstCallee?.qualifiedName).toContain('callee');
+            expect((callees[0].attrs as any)?.targetKind).toBe('internal');
         });
     });
 });

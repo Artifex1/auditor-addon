@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { TypeScriptAdapter } from '../../../src/languages/javascriptAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('TypeScriptAdapter Call Graph', () => {
     const adapter = new TypeScriptAdapter();
@@ -13,11 +19,11 @@ describe('TypeScriptAdapter Call Graph', () => {
             function b() {}
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         const entryA = functions.find(e => e.label === 'a');
@@ -25,7 +31,7 @@ describe('TypeScriptAdapter Call Graph', () => {
         expect(entryA).toBeDefined();
         expect(entryB).toBeDefined();
 
-        const callee = entryA!.callees[0];
+        const callee = getCallees(graph, entryA!)[0];
         expect(callee.qualifiedName).toBe(entryB?.qualifiedName);
     });
 
@@ -40,8 +46,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -50,10 +56,10 @@ describe('TypeScriptAdapter Call Graph', () => {
 
         expect(start).toBeDefined();
         expect(initialize).toBeDefined();
-        expect(start?.contract).toBe('Server');
-        expect(initialize?.contract).toBe('Server');
+        expect(start?.qualifiedName).toContain('Server.');
+        expect(initialize?.qualifiedName).toContain('Server.');
 
-        const callee = start!.callees.find(c => c.qualifiedName === initialize?.qualifiedName);
+        const callee = getCallees(graph, start!).find(c => c.qualifiedName === initialize?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -67,8 +73,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -89,8 +95,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             function privateFn() {}
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -114,8 +120,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -124,15 +130,15 @@ describe('TypeScriptAdapter Call Graph', () => {
         const write = functions.find(e => e.label === 'write');
         const encode = functions.find(e => e.label === 'encode');
 
-        expect(read?.contract).toBe('Reader');
-        expect(write?.contract).toBe('Writer');
+        expect(read?.qualifiedName).toContain('Reader.');
+        expect(write?.qualifiedName).toContain('Writer.');
 
         // read calls parse (same class)
-        const callee1 = read!.callees.find(c => c.qualifiedName === parse?.qualifiedName);
+        const callee1 = getCallees(graph, read!).find(c => c.qualifiedName === parse?.qualifiedName);
         expect(callee1).toBeDefined();
 
         // write calls encode (same class)
-        const callee2 = write!.callees.find(c => c.qualifiedName === encode?.qualifiedName);
+        const callee2 = getCallees(graph, write!).find(c => c.qualifiedName === encode?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -147,8 +153,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const helperEntry = functions.find(e => e.label === 'helper');
         const run = functions.find(e => e.label === 'run');
@@ -156,7 +162,7 @@ describe('TypeScriptAdapter Call Graph', () => {
         expect(helperEntry).toBeDefined();
         expect(run).toBeDefined();
 
-        const callee = run!.callees.find(c => c.qualifiedName === helperEntry?.qualifiedName);
+        const callee = getCallees(graph, run!).find(c => c.qualifiedName === helperEntry?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -179,8 +185,8 @@ describe('TypeScriptAdapter Call Graph', () => {
                 function internal() {}
             `
         };
-        const symbolMap = await adapter.generateSymbolMap([file1, file2]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph([file1, file2]);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -188,14 +194,14 @@ describe('TypeScriptAdapter Call Graph', () => {
         const helper = functions.find(e => e.label === 'helper');
         const internal = functions.find(e => e.label === 'internal');
 
-        expect(main?.file).toBe('/main.ts');
-        expect(helper?.file).toBe('/utils.ts');
+        expect(main?.locator?.file).toBe('/main.ts');
+        expect(helper?.locator?.file).toBe('/utils.ts');
         expect(helper?.visibility).toBe('public');
 
-        const callee1 = main!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee1 = getCallees(graph, main!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee1).toBeDefined();
 
-        const callee2 = helper!.callees.find(c => c.qualifiedName === internal?.qualifiedName);
+        const callee2 = getCallees(graph, helper!).find(c => c.qualifiedName === internal?.qualifiedName);
         expect(callee2).toBeDefined();
     });
 
@@ -210,8 +216,8 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const fetchData = functions.find(e => e.label === 'fetchData');
         const processResponse = functions.find(e => e.label === 'processResponse');
@@ -219,7 +225,7 @@ describe('TypeScriptAdapter Call Graph', () => {
         expect(fetchData).toBeDefined();
         expect(processResponse).toBeDefined();
 
-        const callee = fetchData!.callees.find(c => c.qualifiedName === processResponse?.qualifiedName);
+        const callee = getCallees(graph, fetchData!).find(c => c.qualifiedName === processResponse?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -234,15 +240,15 @@ describe('TypeScriptAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.ts', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const create = functions.find(e => e.label === 'create');
         const validate = functions.find(e => e.label === 'validate');
 
         expect(create).toBeDefined();
         expect(validate).toBeDefined();
-        expect(create?.contract).toBe('Factory');
-        expect(validate?.contract).toBe('Factory');
+        expect(create?.qualifiedName).toContain('Factory.');
+        expect(validate?.qualifiedName).toContain('Factory.');
     });
 });

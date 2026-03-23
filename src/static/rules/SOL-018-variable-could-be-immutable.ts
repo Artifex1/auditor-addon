@@ -1,5 +1,5 @@
 import { SupportedLanguage } from "../../engine/types.js";
-import type { MapRule, FindingInstance, RuleContext, SymbolMap } from "../../engine/types.js";
+import type { MapRule, FindingInstance, RuleContext, SymbolGraph } from "../../engine/types.js";
 
 /**
  * SOL-018: Variable Could Be Immutable
@@ -24,23 +24,22 @@ function createRule(): MapRule {
             domains: ['on-chain'],
         },
 
-        check(symbolMap: SymbolMap, _ctx: RuleContext): FindingInstance[] {
+        check(graph: SymbolGraph, _ctx: RuleContext): FindingInstance[] {
             const findings: FindingInstance[] = [];
 
-            const stateVars = [...symbolMap.values()].filter(e => e.kind === 'state_variable');
-            const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+            const stateVars = [...graph.nodes()].filter(n => n.kind === 'state_variable' && n.status === 'concrete');
 
             for (const sv of stateVars) {
-                // Skip if already constant or immutable
-                if (sv.modifiers.some(m => m.name === 'constant' || m.name === 'immutable')) continue;
+                // Skip if already constant or immutable (check via has_modifier edges)
+                const modEdges = graph.getOutEdgesOfKind(sv.id, 'has_modifier');
+                const hasConstOrImmutable = modEdges.some(e => {
+                    const mod = graph.getNode(e.to);
+                    return mod?.label === 'constant' || mod?.label === 'immutable';
+                });
+                if (hasConstOrImmutable) continue;
 
-                const varName = sv.label;
-
-                // Find all functions in the same contract that write this variable
-                const writers = functions.filter(fn =>
-                    fn.contract === sv.contract &&
-                    fn.writesState.some(w => w === varName || w.startsWith(varName + '[') || w.startsWith(varName + '.'))
-                );
+                // Use graph edges: functions with writes edges to this state variable
+                const writers = graph.getWriters(sv.id);
 
                 // If never written and has initializer → SOL-017 territory, skip
                 if (writers.length === 0) continue;
@@ -50,9 +49,9 @@ function createRule(): MapRule {
                 if (allConstructors) {
                     findings.push({
                         location: {
-                            file: sv.file,
-                            line: sv.line,
-                            col: sv.range?.start.column ?? 0,
+                            file: sv.locator?.file ?? '',
+                            line: sv.locator?.line ?? 0,
+                            col: sv.locator?.column ?? 0,
                         },
                         snippet: `${sv.qualifiedName}: only written in constructor — could be immutable`,
                     });

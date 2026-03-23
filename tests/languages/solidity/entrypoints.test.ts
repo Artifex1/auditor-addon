@@ -16,10 +16,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         expect(entrypoints.length).toBeGreaterThan(0);
@@ -41,10 +41,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const deposit = entrypoints.find(e => e.qualifiedName === 'SimpleVault.deposit(uint256 amount)');
@@ -60,14 +60,14 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'SimpleVault.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         entrypoints.forEach(e => {
-            expect(e.contract).toBe('SimpleVault');
+            expect(graph.getContainerOf(e.id)?.label).toBe('SimpleVault');
         });
     });
 
@@ -76,10 +76,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
     function foo() public {}
 }`;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         expect(entrypoints.length).toBe(1);
@@ -92,19 +92,19 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             'utf-8'
         );
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'AbstractContract.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const pendingBalance = entrypoints.find(e => e.label === 'pendingBalance');
         expect(pendingBalance).toBeDefined();
-        expect(pendingBalance?.contract).toBe('BaseVault');
+        expect(graph.getContainerOf(pendingBalance!.id)?.label).toBe('BaseVault');
 
         const deposit = entrypoints.find(e => e.label === 'deposit');
         expect(deposit).toBeDefined();
-        expect(deposit?.contract).toBe('DerivedVault');
+        expect(graph.getContainerOf(deposit!.id)?.label).toBe('DerivedVault');
     });
 
     it('should extract fallback and receive functions as entrypoints', async () => {
@@ -115,10 +115,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const functionNames = entrypoints.map(e => e.label);
@@ -131,6 +131,7 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
         const receiveFunc = entrypoints.find(e => e.label === 'receive');
         expect(receiveFunc?.visibility).toBe('external');
     });
+
     it('should normalize function signatures with extra whitespace', async () => {
         const code = `contract Test {
             function foo(
@@ -139,10 +140,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             ) public {}
         }`;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         expect(entrypoints[0].qualifiedName).toBe('Test.foo(uint256 a, uint256 b)');
@@ -155,10 +156,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');
@@ -176,10 +177,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const complex = entrypoints.find(e => e.label === 'complex');
@@ -200,10 +201,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');
@@ -221,10 +222,10 @@ describe('SolidityAdapter - Entrypoint Extraction', () => {
             }
         `;
 
-        const symbolMap = await adapter.generateSymbolMap([
+        const graph = await adapter.generateGraph([
             { path: 'Test.sol', content: code }
         ]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
         const entrypoints = functions.filter(e => e.visibility === 'public' || e.visibility === 'external');
 
         const execute = entrypoints.find(e => e.label === 'execute');

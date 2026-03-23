@@ -1,6 +1,6 @@
 import type { Node as SyntaxNode } from "web-tree-sitter";
 import {
-    Rule, RuleContext, FindingInstance, SymbolMap
+    Rule, RuleContext, FindingInstance, GraphNode, NodeId
 } from "../engine/types.js";
 
 /**
@@ -22,63 +22,66 @@ export function walkShallow(
 /**
  * Walks an AST calling rule.enter()/exit(), following call edges for deep rules.
  * `depth` counts function boundaries crossed, not AST levels.
+ *
+ * @param currentNodeId - NodeId of the function currently being walked (for edge following)
+ * @param astNode - The current AST node being visited
  */
 export async function walkDeep(
-    node: SyntaxNode,
+    currentNodeId: NodeId,
+    astNode: SyntaxNode,
     rule: Rule,
     ctx: RuleContext,
-    visited: Set<string>,
+    visited: Set<NodeId>,
     depth: number,
     maxDepth: number,
 ): Promise<void> {
     if (depth > maxDepth) return;
 
-    rule.enter?.(node, ctx);
+    rule.enter?.(astNode, ctx);
 
-    // Follow call edges from this node
-    const callee = ctx.trait.resolveCallee(node, ctx.symbolMap, ctx.sourceFiles);
-    if (callee && !visited.has(callee.qualifiedName)) {
-        // If the agent resolved this gap to a concrete symbol, follow the redirect.
-        const gapEntry = ctx.symbolMap.get(callee.qualifiedName);
-        const targetQN = gapEntry?.redirectTo ?? callee.qualifiedName;
-
-        const calleeNode = await lookupFunctionNode(targetQN, ctx.symbolMap, ctx);
-        if (calleeNode) {
-            visited.add(callee.qualifiedName);
-            visited.add(targetQN);
-            const entry = ctx.symbolMap.get(targetQN)!;
-            const prevFile = ctx.currentFile;
-            ctx.currentFile = entry.file;
-            await walkDeep(calleeNode, rule, ctx, visited, depth + 1, maxDepth);
-            ctx.currentFile = prevFile;
+    // Follow modifier bodies via has_modifier edges
+    if (ctx.trait.isFunctionDef(astNode)) {
+        for (const modEdge of ctx.graph.getOutEdgesOfKind(currentNodeId, 'has_modifier')) {
+            const modGraphNode = ctx.graph.getNode(modEdge.to);
+            if (!modGraphNode) continue;
+            const pattern = modGraphNode.pattern ?? 'explicit';
+            if (pattern !== 'explicit' && pattern !== 'wrapper') continue;
+            const modVisitKey = currentNodeId + ':mod:' + modGraphNode.label;
+            if (visited.has(modVisitKey)) continue;
+            const modNode = await lookupModifierNode({ name: modGraphNode.label, pattern }, ctx);
+            if (modNode) {
+                visited.add(modVisitKey);
+                await walkDeep(currentNodeId, modNode, rule, ctx, visited, depth + 1, maxDepth);
+            }
         }
     }
 
-    // Follow modifier bodies at function boundaries
-    if (ctx.trait.isFunctionDef(node)) {
-        const qn = lookupQualifiedName(node, ctx);
-        if (qn) {
-            const entry = ctx.symbolMap.get(qn);
-            if (entry) {
-                for (const mod of entry.modifiers) {
-                    if ((mod.pattern === 'explicit' || mod.pattern === 'wrapper') && !visited.has(mod.name)) {
-                        const modNode = await lookupModifierNode(mod, ctx);
-                        if (modNode) {
-                            visited.add(mod.name);
-                            await walkDeep(modNode, rule, ctx, visited, depth + 1, maxDepth);
-                        }
-                    }
-                }
+    // For call nodes, follow edges outward
+    const callTarget = ctx.trait.getCallTarget(astNode);
+    if (callTarget) {
+        // Find the outbound call edges from the current function
+        for (const edge of ctx.graph.getOutEdgesOfKind(currentNodeId, 'calls')) {
+            const calleeNode = ctx.graph.getNode(edge.to);
+            if (!calleeNode || calleeNode.status !== 'concrete') continue;
+            if (visited.has(edge.to)) continue;
+
+            const calleeAstNode = await lookupFunctionNode(calleeNode, ctx);
+            if (calleeAstNode) {
+                visited.add(edge.to);
+                const prevFile = ctx.currentFile;
+                ctx.currentFile = calleeNode.locator?.file ?? prevFile;
+                await walkDeep(edge.to, calleeAstNode, rule, ctx, visited, depth + 1, maxDepth);
+                ctx.currentFile = prevFile;
             }
         }
     }
 
     // Recurse into children (same function — no depth increment)
-    for (const child of node.children) {
-        await walkDeep(child, rule, ctx, visited, depth, maxDepth);
+    for (const child of astNode.children) {
+        await walkDeep(currentNodeId, child, rule, ctx, visited, depth, maxDepth);
     }
 
-    rule.exit?.(node, ctx);
+    rule.exit?.(astNode, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -86,65 +89,71 @@ export async function walkDeep(
 // ---------------------------------------------------------------------------
 
 /**
- * Maps a function AST node back to its qualified name in the symbol map.
- */
-function lookupQualifiedName(funcNode: SyntaxNode, ctx: RuleContext): string | null {
-    const name = ctx.trait.getFunctionName(funcNode);
-    if (!name) return null;
-    for (const [qn, entry] of ctx.symbolMap) {
-        if (entry.label === name && entry.file === ctx.currentFile) {
-            if (entry.range && entry.range.start.line - 1 === funcNode.startPosition.row) {
-                return qn;
-            }
-        }
-    }
-    return null;
-}
-
-/**
- * Looks up the AST node for a function by its qualified name.
+ * Looks up the AST node for a function by its GraphNode.
  * Cross-file: uses ctx.getTree() to parse the target file.
  */
 async function lookupFunctionNode(
-    qualifiedName: string,
-    symbolMap: SymbolMap,
+    graphNode: GraphNode,
     ctx: RuleContext
 ): Promise<SyntaxNode | null> {
-    const entry = symbolMap.get(qualifiedName);
-    if (!entry) return null;
-    if (!entry.range) return null;
+    if (!graphNode.locator) return null;
 
     let tree;
     try {
-        tree = await ctx.getTree(entry.file);
+        tree = await ctx.getTree(graphNode.locator.file);
     } catch {
         return null;
     }
 
-    const targetLine = entry.range.start.line - 1;
-    const targetCol = entry.range.start.column;
-    return findNodeAt(tree.rootNode, targetLine, targetCol);
+    // Use byte-offset for O(log n) re-entry
+    return tree.rootNode.descendantForIndex(
+        graphNode.locator.startIndex,
+        graphNode.locator.endIndex
+    ) ?? null;
 }
 
 /**
  * Looks up a modifier node by pattern.
  * - 'explicit' (e.g., Solidity modifier): query tree for modifier_definition by name
- * - 'wrapper' (e.g., Python decorator): look up as function in symbolMap
+ * - 'wrapper' (e.g., Python decorator): look up as function in graph
  */
 async function lookupModifierNode(
     mod: { name: string; pattern: string },
     ctx: RuleContext
 ): Promise<SyntaxNode | null> {
     if (mod.pattern === 'wrapper') {
-        for (const [qn, entry] of ctx.symbolMap) {
-            if (entry.label === mod.name) {
-                return lookupFunctionNode(qn, ctx.symbolMap, ctx);
+        const candidates = ctx.graph.findByName(mod.name);
+        for (const node of candidates) {
+            if (node.status === 'concrete') {
+                return lookupFunctionNode(node, ctx);
             }
         }
         return null;
     }
 
     if (mod.pattern === 'explicit') {
+        // Try graph-based lookup first (O(1) vs brute-force file scan)
+        const modCandidates = ctx.graph.findByName(mod.name);
+        const modNode = modCandidates.find(n => n.kind === 'modifier' && n.status === 'concrete');
+        if (!modNode) {
+            // Try qualified name with common containers
+            for (const candidate of modCandidates) {
+                if (candidate.kind === 'modifier' && candidate.status === 'concrete' && candidate.locator) {
+                    const tree = await ctx.getTree(candidate.locator.file);
+                    return tree.rootNode.descendantForIndex(candidate.locator.startIndex, candidate.locator.endIndex) ?? null;
+                }
+            }
+        }
+        if (modNode?.locator) {
+            try {
+                const tree = await ctx.getTree(modNode.locator.file);
+                return tree.rootNode.descendantForIndex(modNode.locator.startIndex, modNode.locator.endIndex) ?? null;
+            } catch {
+                // fall through to brute-force
+            }
+        }
+
+        // Fallback: brute-force file scan
         for (const file of ctx.sourceFiles.keys()) {
             let tree;
             try {

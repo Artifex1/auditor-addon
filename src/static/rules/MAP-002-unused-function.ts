@@ -1,6 +1,5 @@
 import { SupportedLanguage } from "../../engine/types.js";
-import type { MapRule, FindingInstance, RuleContext, SymbolMap } from "../../engine/types.js";
-import { buildCallerIndex } from "../hotspots.js";
+import type { MapRule, FindingInstance, RuleContext, SymbolGraph } from "../../engine/types.js";
 
 /**
  * MAP-002: Unused Function
@@ -38,26 +37,27 @@ function createRule(): MapRule {
             ],
         },
 
-        check(symbolMap: SymbolMap, _ctx: RuleContext): FindingInstance[] {
+        check(graph: SymbolGraph, _ctx: RuleContext): FindingInstance[] {
             const findings: FindingInstance[] = [];
-            const callerIndex = buildCallerIndex(symbolMap);
 
-            for (const [qn, entry] of symbolMap) {
-                if (entry.kind !== 'function') continue;
-                if (entry.visibility !== 'internal' && entry.visibility !== 'private') continue;
+            for (const node of graph.nodes()) {
+                if (node.kind !== 'function') continue;
+                if (node.status !== 'concrete') continue;
+                if (node.visibility !== 'internal' && node.visibility !== 'private') continue;
 
                 // Exclude constructors, fallback, receive
-                if (['constructor', 'fallback', 'receive'].includes(entry.label)) continue;
+                if (['constructor', 'fallback', 'receive'].includes(node.label)) continue;
 
-                const callers = callerIndex.get(qn);
-                if (!callers || callers.size === 0) {
+                // Use graph edge query: any incoming calls edge means the function is used
+                const callers = graph.getInEdgesOfKind(node.id, 'calls');
+                if (callers.length === 0) {
                     findings.push({
                         location: {
-                            file: entry.file,
-                            line: entry.line,
-                            col: entry.range?.start.column ?? 0,
+                            file: node.locator?.file ?? '',
+                            line: node.locator?.line ?? 0,
+                            col: node.locator?.column ?? 0,
                         },
-                        snippet: `${qn}: internal/private with no callers`,
+                        snippet: `${node.qualifiedName}: internal/private with no callers`,
                     });
                 }
             }

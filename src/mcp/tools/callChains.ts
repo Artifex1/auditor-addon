@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { encode } from "@toon-format/toon";
 import { Engine } from "../../engine/index.js";
-import { computeHotspots, resolvePaths } from "../../static/hotspots.js";
+import { computeHotspots, resolvePaths, buildCalleeIndex } from "../../static/hotspots.js";
 
 // ==========================================
 // Configuration
@@ -25,22 +25,29 @@ export const callChainsSchema = {
 export function createCallChainsHandler(engine: Engine) {
     return async ({ paths }: { paths: string[] }) => {
         try {
-            const symbolMap = await engine.processSymbolMap(paths);
+            const graph = await engine.processGraph(paths);
+            const calleesByCallerId = buildCalleeIndex(graph);
 
             // Root nodes: functions that nothing else calls
-            const allCalleeIds = new Set<string>();
-            for (const entry of symbolMap.values()) {
-                for (const callee of entry.callees) {
-                    allCalleeIds.add(callee.qualifiedName);
+            const allCalleeQns = new Set<string>();
+            for (const qns of calleesByCallerId.values()) {
+                for (const qn of qns) allCalleeQns.add(qn);
+            }
+            const roots = [...calleesByCallerId.keys()].filter(qn => !allCalleeQns.has(qn));
+
+            // Also include concrete functions with no outgoing calls and no callers
+            for (const node of graph.nodes()) {
+                if (node.status !== 'concrete' || node.kind !== 'function') continue;
+                if (!calleesByCallerId.has(node.qualifiedName) && !allCalleeQns.has(node.qualifiedName)) {
+                    roots.push(node.qualifiedName);
                 }
             }
-            const roots = [...symbolMap.keys()].filter(id => !allCalleeIds.has(id));
 
             // Generate chains grouped by root
             const chainsByRoot: Record<string, string[]> = {};
 
             for (const rootId of roots) {
-                const rawPaths = resolvePaths(rootId, symbolMap, 0, new Set(), MAX_DEPTH, true);
+                const rawPaths = resolvePaths(rootId, calleesByCallerId, 0, new Set(), MAX_DEPTH, true);
                 const chains = rawPaths.map(p => p.join(' -> '));
 
                 // Longest chains first — they show the deepest logic
@@ -49,8 +56,8 @@ export function createCallChainsHandler(engine: Engine) {
                 chainsByRoot[rootId] = chains.slice(0, MAX_PATHS_PER_ENTRYPOINT);
             }
 
-            // Hotspots via shared utility
-            const hotspots = computeHotspots(symbolMap);
+            // Hotspots via shared utility — reuse already-built index
+            const hotspots = computeHotspots(graph, undefined, calleesByCallerId);
 
             return {
                 content: [{
@@ -68,4 +75,3 @@ export function createCallChainsHandler(engine: Engine) {
         }
     };
 }
-

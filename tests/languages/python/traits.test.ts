@@ -88,7 +88,7 @@ describe('PythonAdapter Traits', () => {
         });
     });
 
-    describe('resolveCallee via generateSymbolMap', () => {
+    describe('resolveCallee via generateGraph', () => {
         it('resolves calls between functions', async () => {
             const code = `
 def caller():
@@ -98,11 +98,12 @@ def callee():
     pass
 `;
             const files: FileContent[] = [{ path: '/test.py', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const callerEntry = Array.from(symbolMap.values()).find(e => e.label === 'caller');
+            const callerEntry = Array.from(graph.nodes()).find(e => e.label === 'caller');
             expect(callerEntry).toBeDefined();
-            expect(callerEntry!.callees.length).toBeGreaterThan(0);
+            const callees = graph.getOutEdges(callerEntry!.id).filter(e => e.kind === 'calls');
+            expect(callees.length).toBeGreaterThan(0);
         });
     });
 });

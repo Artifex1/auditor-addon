@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { SolidityAdapter } from '../../../src/languages/solidityAdapter';
-import { FileContent } from '../../../src/engine/types';
-import { detectGaps } from '../../../src/static/symbol-table';
+import { SolidityAdapter } from '../../../src/languages/solidityAdapter.js';
+import { FileContent } from '../../../src/engine/types.js';
+import { detectGaps } from '../../../src/static/symbol-table.js';
 
 describe('Solidity gap detection (integration)', () => {
     const adapter = new SolidityAdapter();
 
-    async function getGaps(code: string, path = '/test.sol') {
-        const files: FileContent[] = [{ path, content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        return { gaps: detectGaps(symbolMap), symbolMap };
+    async function getGaps(code: string, filePath = '/test.sol') {
+        const files: FileContent[] = [{ path: filePath, content: code }];
+        const graph = await adapter.generateGraph(files);
+        return { gaps: detectGaps(graph), graph };
     }
 
     it('produces no gaps when all calls resolve internally', async () => {
@@ -33,7 +33,7 @@ describe('Solidity gap detection (integration)', () => {
                 }
             }
         `;
-        const { gaps, symbolMap } = await getGaps(code);
+        const { gaps } = await getGaps(code);
         // _hashData is called but not defined anywhere in scope
         expect(gaps.length).toBeGreaterThanOrEqual(1);
         const gap = gaps.find(g => g.qualifiedName.includes('_hashData'));

@@ -1,16 +1,16 @@
 import crypto from "crypto";
 import {
-    SymbolMap, LanguageAdapter, FileContent, SupportedLanguage,
+    SymbolGraph, LanguageAdapter, FileContent, SupportedLanguage,
     ScanContext, EffectiveLanguageMeta, ScanStatus,
     LANGUAGE_META, RuleFinding
 } from "../engine/types.js";
 import { computeHotspots } from "./hotspots.js";
 import { detectGaps, SymbolGap } from "./symbol-table.js";
-import { writeScanState, ScanState, symbolMapToRecord, buildLocatorIndex } from "./persistence.js";
+import { writeScanState, ScanState } from "./persistence.js";
 
 export interface ScanResult {
     scanId: string;
-    symbolMap: SymbolMap;
+    graph: SymbolGraph;
     gaps: SymbolGap[];
     hotspots: string[];
     status: ScanStatus;
@@ -41,9 +41,9 @@ export function resolveEffective(
 
 /**
  * Orchestrates a static analysis scan:
- * 1. Calls adapter.generateSymbolMap() per language
+ * 1. Calls adapter.generateGraph() per language
  * 2. Computes effective language metadata from context
- * 3. Computes hotspots from the combined symbol map
+ * 3. Computes hotspots from the combined graph
  * 4. Detects gaps with hotspot-based priority
  * 5. Persists the full scan state to disk
  */
@@ -52,16 +52,14 @@ export async function runScan(
     context?: ScanContext,
     sourceFiles?: Map<string, string>
 ): Promise<ScanResult> {
-    const combined: SymbolMap = new Map();
+    const combined = new SymbolGraph();
     const allFiles: string[] = [];
     const languages: SupportedLanguage[] = [];
 
     for (const [lang, { adapter, files }] of filesByLanguage) {
         languages.push(lang);
-        const symbolMap = await adapter.generateSymbolMap(files);
-        for (const [id, entry] of symbolMap) {
-            combined.set(id, entry);
-        }
+        const graph = await adapter.generateGraph(files);
+        combined.merge(graph);
         for (const f of files) {
             allFiles.push(f.path);
         }
@@ -88,12 +86,11 @@ export async function runScan(
         languages,
         context: context ?? {},
         effective,
-        symbolMap: symbolMapToRecord(combined),
+        graph: combined.toJSON(),
         gaps,
         status,
         findings: [] as RuleFinding[],
         sourceFiles: serializedSources,
-        locatorIndex: buildLocatorIndex(combined),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     };
@@ -102,7 +99,7 @@ export async function runScan(
 
     return {
         scanId,
-        symbolMap: combined,
+        graph: combined,
         gaps,
         hotspots,
         status,

@@ -1,72 +1,46 @@
-import { SymbolMap } from "../engine/types.js";
+import { SymbolGraph } from "../engine/types.js";
 
 const DEFAULT_TOP_N = 5;
-
-/**
- * Builds a reverse caller index: for each function, the set of callers.
- * Returns Map<qualifiedName, Set<callerQualifiedName>>.
- */
-export function buildCallerIndex(symbolMap: SymbolMap): Map<string, Set<string>> {
-    const index = new Map<string, Set<string>>();
-    for (const [callerId, entry] of symbolMap) {
-        for (const callee of entry.callees) {
-            let callers = index.get(callee.qualifiedName);
-            if (!callers) {
-                callers = new Set();
-                index.set(callee.qualifiedName, callers);
-            }
-            callers.add(callerId);
-        }
-    }
-    return index;
-}
 
 /**
  * Computes hotspot functions — those appearing across the most call chains.
  * A hotspot is a non-root function that is a callee in many different chains,
  * making it a high-impact target for review.
  *
- * @param symbolMap - The symbol map to analyze
+ * @param graph - The symbol graph to analyze
  * @param topN - Number of hotspots to return (default 5)
  * @returns Array of formatted hotspot strings: "qualifiedName: N chains"
  */
-export function computeHotspots(symbolMap: SymbolMap, topN: number = DEFAULT_TOP_N): string[] {
-    // Count how many distinct callers reference each callee
-    const callerCounts = new Map<string, Set<string>>();
+export function computeHotspots(
+    graph: SymbolGraph,
+    topN: number = DEFAULT_TOP_N,
+    calleesByCallerId?: Map<string, string[]>,
+): string[] {
+    if (!calleesByCallerId) calleesByCallerId = buildCalleeIndex(graph);
 
-    for (const [callerId, entry] of symbolMap) {
-        for (const callee of entry.callees) {
-            if (!callerCounts.has(callee.qualifiedName)) {
-                callerCounts.set(callee.qualifiedName, new Set());
-            }
-            callerCounts.get(callee.qualifiedName)!.add(callerId);
-        }
-    }
-
-    // Root nodes: IDs that never appear as a callee
     const allCalleeIds = new Set<string>();
-    for (const entry of symbolMap.values()) {
-        for (const callee of entry.callees) {
-            allCalleeIds.add(callee.qualifiedName);
-        }
+    for (const list of calleesByCallerId.values()) {
+        for (const qn of list) allCalleeIds.add(qn);
     }
-    const rootIds = new Set<string>();
-    for (const id of symbolMap.keys()) {
-        if (!allCalleeIds.has(id)) {
-            rootIds.add(id);
+
+    // Root nodes: concrete nodes that never appear as a callee
+    const rootQns = new Set<string>();
+    for (const node of graph.nodes()) {
+        if (node.status !== 'concrete') continue;
+        if (!allCalleeIds.has(node.qualifiedName)) {
+            rootQns.add(node.qualifiedName);
         }
     }
 
-    // Now do full chain-based counting (matching the original callChains algorithm)
-    // For each root, DFS to find all chains, then count unique function appearances per root
+    // Chain-based counting: for each root, DFS to find all chains
     const chainCounts = new Map<string, number>();
 
-    for (const rootId of rootIds) {
-        const chains = resolvePaths(rootId, symbolMap, 0, new Set(), 10);
+    for (const rootQn of rootQns) {
+        const chains = resolvePaths(rootQn, calleesByCallerId, 0, new Set(), 10);
         const seen = new Set<string>();
         for (const chain of chains) {
             for (const step of chain) {
-                if (!seen.has(step) && !rootIds.has(step)) {
+                if (!seen.has(step) && !rootQns.has(step)) {
                     seen.add(step);
                     chainCounts.set(step, (chainCounts.get(step) ?? 0) + 1);
                 }
@@ -81,34 +55,55 @@ export function computeHotspots(symbolMap: SymbolMap, topN: number = DEFAULT_TOP
 }
 
 export function resolvePaths(
-    currentId: string,
-    symbolMap: SymbolMap,
+    currentQn: string,
+    calleesByCallerId: Map<string, string[]>,
     depth: number,
     stack: Set<string>,
     maxDepth: number,
     labels = false
 ): string[][] {
-    if (stack.has(currentId)) return [[labels ? `${currentId} (Recursive)` : currentId]];
-    if (depth >= maxDepth) return [[labels ? `${currentId} (Max Depth)` : currentId]];
+    if (stack.has(currentQn)) return [[labels ? `${currentQn} (Recursive)` : currentQn]];
+    if (depth >= maxDepth) return [[labels ? `${currentQn} (Max Depth)` : currentQn]];
 
-    const entry = symbolMap.get(currentId);
-    const callees = entry?.callees ?? [];
-    if (callees.length === 0) return [[currentId]];
+    const callees = calleesByCallerId.get(currentQn) ?? [];
+    if (callees.length === 0) return [[currentQn]];
 
     const currentStack = new Set(stack);
-    currentStack.add(currentId);
+    currentStack.add(currentQn);
 
     const paths: string[][] = [];
-    const sortedCallees = [...callees].sort((a, b) =>
-        a.qualifiedName.localeCompare(b.qualifiedName)
-    );
+    const sortedCallees = [...callees].sort((a, b) => a.localeCompare(b));
 
-    for (const callee of sortedCallees) {
-        const tailPaths = resolvePaths(callee.qualifiedName, symbolMap, depth + 1, currentStack, maxDepth, labels);
+    for (const calleeQn of sortedCallees) {
+        const tailPaths = resolvePaths(calleeQn, calleesByCallerId, depth + 1, currentStack, maxDepth, labels);
         for (const tail of tailPaths) {
-            paths.push([currentId, ...tail]);
+            paths.push([currentQn, ...tail]);
         }
     }
 
     return paths;
+}
+
+/**
+ * Builds a calleesByCallerId map from the graph.
+ * Used by callChains tool to resolve execution paths.
+ */
+export function buildCalleeIndex(graph: SymbolGraph): Map<string, string[]> {
+    const calleesByCallerId = new Map<string, string[]>();
+    for (const node of graph.nodes()) {
+        if (node.status !== 'concrete') continue;
+        const callEdges = graph.getOutEdgesOfKind(node.id, 'calls');
+        if (callEdges.length === 0) continue;
+        const callees: string[] = [];
+        for (const edge of callEdges) {
+            const calleeNode = graph.getNode(edge.to);
+            if (calleeNode?.status === 'concrete') {
+                callees.push(calleeNode.qualifiedName);
+            }
+        }
+        if (callees.length > 0) {
+            calleesByCallerId.set(node.qualifiedName, callees);
+        }
+    }
+    return calleesByCallerId;
 }

@@ -1,6 +1,5 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind
+    FileContent, SupportedLanguage, GraphNode, Visibility
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -58,13 +57,13 @@ export class TolkAdapter extends BaseAdapter {
             const captures = functionQuery.captures(tree.rootNode);
             for (const capture of captures) {
                 const funcNode = capture.node;
-                const entry = this.createFunctionNode(funcNode, file.path);
-                this.indexSymbol(entry);
+                const node = this.createFunctionNode(funcNode, file.path);
+                this.addNode(node);
             }
         }
     }
 
-    private createFunctionNode(node: Node, file: string): SymbolEntry {
+    private createFunctionNode(node: Node, file: string): GraphNode {
         // function_declaration: fun, identifier, parameter_list, [: type], block_statement
         const nameNode = node.children.find(c => c.type === 'identifier');
         const fnName = nameNode?.text ?? 'unknown';
@@ -72,7 +71,7 @@ export class TolkAdapter extends BaseAdapter {
         // Tolk has no explicit visibility modifiers in basic syntax — all functions are public
         const visibility: Visibility = 'public';
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -133,21 +132,6 @@ export class TolkAdapter extends BaseAdapter {
         return node.children[0]?.text ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
     protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Tolk);
@@ -162,18 +146,20 @@ export class TolkAdapter extends BaseAdapter {
             const captures = functionQuery.captures(tree.rootNode);
             for (const capture of captures) {
                 const funcNode = capture.node;
-                const symbol = this.findSymbolAtNode(funcNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(funcNode, file.path);
+                if (!callerNode) continue;
 
                 const callCaptures = callQuery.captures(funcNode);
                 for (const callCapture of callCaptures) {
                     if (callCapture.name !== 'FUNC') continue;
-                    const calleeName = callCapture.node.text;
-                    const callee = this.symbolsByLabel.get(calleeName)?.[0];
-                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    const callNode = callCapture.node;
+                    const calleeName = callNode.text;
+                    const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+                    const callee = this._graph.findByName(calleeName).find(n => n.status === 'concrete');
+                    if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+                        this.addCallEdge(callerNode.id, callee.qualifiedName, 'internal', callSite);
                     } else if (!callee) {
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
+                        this.addCallEdge(callerNode.id, calleeName, 'external_unknown', callSite);
                     }
                 }
             }

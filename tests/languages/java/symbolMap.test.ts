@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { JavaAdapter } from '../../../src/languages/javaAdapter.js';
-import { FileContent } from '../../../src/engine/types.js';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types.js';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
 
 describe('JavaAdapter Call Graph', () => {
     const adapter = new JavaAdapter();
@@ -18,8 +24,8 @@ public class Calculator {
 }
 `;
         const files: FileContent[] = [{ path: '/Calculator.java', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -28,12 +34,12 @@ public class Calculator {
 
         expect(addEntry).toBeDefined();
         expect(helperEntry).toBeDefined();
-        expect(addEntry?.contract).toBe('Calculator');
-        expect(helperEntry?.contract).toBe('Calculator');
+        expect(graph.getContainerOf(addEntry!.id)?.label).toBe('Calculator');
+        expect(graph.getContainerOf(helperEntry!.id)?.label).toBe('Calculator');
         expect(addEntry?.visibility).toBe('public');
         expect(helperEntry?.visibility).toBe('private');
 
-        const callee = addEntry!.callees.find(c => c.qualifiedName === helperEntry!.qualifiedName);
+        const callee = getCallees(graph, addEntry!).find(c => c.qualifiedName === helperEntry!.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -50,8 +56,8 @@ public class Writer {
 }
 `;
         const files: FileContent[] = [{ path: '/test.java', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
@@ -60,11 +66,11 @@ public class Writer {
         const write = functions.find(e => e.label === 'write');
         const encode = functions.find(e => e.label === 'encode');
 
-        expect(read?.contract).toBe('Reader');
-        expect(write?.contract).toBe('Writer');
+        expect(graph.getContainerOf(read!.id)?.label).toBe('Reader');
+        expect(graph.getContainerOf(write!.id)?.label).toBe('Writer');
 
-        expect(read!.callees.find(c => c.qualifiedName === parse!.qualifiedName)).toBeDefined();
-        expect(write!.callees.find(c => c.qualifiedName === encode!.qualifiedName)).toBeDefined();
+        expect(getCallees(graph, read!).find(c => c.qualifiedName === parse!.qualifiedName)).toBeDefined();
+        expect(getCallees(graph, write!).find(c => c.qualifiedName === encode!.qualifiedName)).toBeDefined();
     });
 
     it('should handle visibility modifiers', async () => {
@@ -77,8 +83,8 @@ public class Service {
 }
 `;
         const files: FileContent[] = [{ path: '/Service.java', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const pub = functions.find(e => e.label === 'publicMethod');
         const priv = functions.find(e => e.label === 'privateMethod');
@@ -110,21 +116,21 @@ public class Util {
 }
 `
         };
-        const symbolMap = await adapter.generateSymbolMap([file1, file2]);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph([file1, file2]);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(4);
 
         const run = functions.find(e => e.label === 'run');
-        const helper = functions.find(e => e.label === 'helper' && e.file === '/Main.java');
+        const helper = functions.find(e => e.label === 'helper' && e.locator?.file === '/Main.java');
         const process = functions.find(e => e.label === 'process');
         const validate = functions.find(e => e.label === 'validate');
 
-        expect(run?.file).toBe('/Main.java');
-        expect(process?.file).toBe('/Util.java');
+        expect(run?.locator?.file).toBe('/Main.java');
+        expect(process?.locator?.file).toBe('/Util.java');
 
-        expect(run!.callees.find(c => c.qualifiedName === helper!.qualifiedName)).toBeDefined();
-        expect(process!.callees.find(c => c.qualifiedName === validate!.qualifiedName)).toBeDefined();
+        expect(getCallees(graph, run!).find(c => c.qualifiedName === helper!.qualifiedName)).toBeDefined();
+        expect(getCallees(graph, process!).find(c => c.qualifiedName === validate!.qualifiedName)).toBeDefined();
     });
 
     it('should handle constructor declarations', async () => {
@@ -142,17 +148,17 @@ public class Widget {
 }
 `;
         const files: FileContent[] = [{ path: '/Widget.java', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const ctor = functions.find(e => e.label === 'Widget');
         const init = functions.find(e => e.label === 'init');
 
         expect(ctor).toBeDefined();
         expect(init).toBeDefined();
-        expect(ctor?.contract).toBe('Widget');
+        expect(graph.getContainerOf(ctor!.id)?.label).toBe('Widget');
 
-        const callee = ctor!.callees.find(c => c.qualifiedName === init!.qualifiedName);
+        const callee = getCallees(graph, ctor!).find(c => c.qualifiedName === init!.qualifiedName);
         expect(callee).toBeDefined();
     });
 });

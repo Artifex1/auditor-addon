@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
     writeScanState, readScanState, deleteScanState,
-    symbolMapToRecord, recordToSymbolMap,
     ScanState
 } from '../../src/static/persistence.js';
-import { SymbolMap, SymbolEntry, SupportedLanguage } from '../../src/engine/types.js';
+import { SymbolGraph, SupportedLanguage } from '../../src/engine/types.js';
 
 function makeScanState(overrides?: Partial<ScanState>): ScanState {
     return {
@@ -15,7 +14,7 @@ function makeScanState(overrides?: Partial<ScanState>): ScanState {
         effective: {
             solidity: { domain: 'on-chain', inheritanceModel: 'classical' },
         },
-        symbolMap: {},
+        graph: new SymbolGraph().toJSON(),
         gaps: [],
         status: 'ready',
         findings: [],
@@ -82,6 +81,34 @@ describe('persistence', () => {
             expect(loaded!.findings).toHaveLength(1);
             expect(loaded!.findings[0].ruleId).toBe('R1');
         });
+
+        it('round-trips a graph state', async () => {
+            const graph = new SymbolGraph();
+            graph.addNode({
+                id: 'n1',
+                kind: 'function',
+                qualifiedName: 'Foo.bar',
+                status: 'concrete',
+                language: SupportedLanguage.Solidity,
+                label: 'bar',
+                locator: { file: '/a.sol', startIndex: 0, endIndex: 10, line: 5, column: 0 },
+                visibility: 'public',
+                resolvedBy: 'static',
+                confidence: 'high',
+            });
+
+            const state = makeScanState({ graph: graph.toJSON() });
+            createdIds.push(state.scanId);
+
+            await writeScanState(state);
+            const loaded = await readScanState(state.scanId);
+
+            expect(loaded).not.toBeNull();
+            const restoredGraph = SymbolGraph.fromJSON(loaded!.graph);
+            const nodes = [...restoredGraph.nodes()];
+            expect(nodes).toHaveLength(1);
+            expect(nodes[0].qualifiedName).toBe('Foo.bar');
+        });
     });
 
     describe('deleteScanState', () => {
@@ -102,48 +129,6 @@ describe('persistence', () => {
         it('returns null for non-existent scan', async () => {
             const loaded = await readScanState('does-not-exist');
             expect(loaded).toBeNull();
-        });
-    });
-
-    describe('symbolMapToRecord / recordToSymbolMap', () => {
-        it('round-trips a symbol map', () => {
-            const entry: SymbolEntry = {
-                qualifiedName: 'Foo.bar',
-                label: 'bar',
-                file: '/a.sol',
-                line: 5,
-                language: SupportedLanguage.Solidity,
-                writesState: ['x'],
-                readsState: ['y'],
-                callsExternal: false,
-                callees: [{ qualifiedName: 'Foo.baz', targetKind: 'internal' }],
-                isPublic: true,
-                hasAccessControl: false,
-                modifiers: [],
-                resolvedBy: 'static',
-                confidence: 'high',
-                visibility: 'public',
-            };
-
-            const map: SymbolMap = new Map();
-            map.set('Foo.bar', entry);
-
-            const record = symbolMapToRecord(map);
-            expect(record['Foo.bar']).toBeDefined();
-            expect(record['Foo.bar'].qualifiedName).toBe('Foo.bar');
-
-            const restored = recordToSymbolMap(record);
-            expect(restored.size).toBe(1);
-            expect(restored.get('Foo.bar')?.callees).toHaveLength(1);
-        });
-
-        it('handles empty map', () => {
-            const map: SymbolMap = new Map();
-            const record = symbolMapToRecord(map);
-            expect(Object.keys(record)).toHaveLength(0);
-
-            const restored = recordToSymbolMap(record);
-            expect(restored.size).toBe(0);
         });
     });
 });

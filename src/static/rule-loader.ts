@@ -16,12 +16,12 @@ export interface LoadResult {
     failed: string[];
 }
 
-function isRule(rule: unknown): rule is Rule {
+export function isRule(rule: unknown): rule is Rule {
     return typeof rule === 'object' && rule !== null
         && 'id' in rule && 'finalize' in rule && typeof (rule as any).finalize === 'function';
 }
 
-function isMapRule(rule: unknown): rule is MapRule {
+export function isMapRule(rule: unknown): rule is MapRule {
     return typeof rule === 'object' && rule !== null
         && 'id' in rule && 'check' in rule && typeof (rule as any).check === 'function'
         && !('finalize' in rule);

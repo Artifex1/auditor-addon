@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CairoAdapter } from '../../../src/languages/cairoAdapter.js';
-import { FileContent, SupportedLanguage } from '../../../src/engine/types.js';
+import { FileContent, SupportedLanguage, SymbolGraph } from '../../../src/engine/types.js';
 import { TreeSitterService } from '../../../src/util/treeSitter.js';
 import { Query } from 'web-tree-sitter';
 
@@ -77,7 +77,7 @@ describe('CairoAdapter Traits', () => {
         });
     });
 
-    describe('resolveCallee via generateSymbolMap', () => {
+    describe('resolveCallee via generateGraph', () => {
         it('resolves internal calls between functions', async () => {
             const code = `
                 fn caller() {
@@ -86,12 +86,15 @@ describe('CairoAdapter Traits', () => {
                 fn callee() {}
             `;
             const files: FileContent[] = [{ path: '/test.cairo', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const callerEntry = Array.from(symbolMap.values()).find(e => e.label === 'caller');
+            const callerEntry = Array.from(graph.nodes()).find(e => e.label === 'caller');
             expect(callerEntry).toBeDefined();
-            if (callerEntry && callerEntry.callees.length > 0) {
-                expect(callerEntry.callees[0].qualifiedName).toContain('callee');
+            const callees = graph.getOutEdges(callerEntry!.id)
+                .filter(e => e.kind === 'calls')
+                .map(e => graph.getNode(e.to));
+            if (callees.length > 0) {
+                expect(callees[0]?.qualifiedName).toContain('callee');
             }
         });
     });

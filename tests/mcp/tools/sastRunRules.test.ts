@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createSastRunRulesHandler } from '../../../src/mcp/tools/sastRunRules.js';
 import { writeScanState, deleteScanState, ScanState } from '../../../src/static/persistence.js';
-import { SupportedLanguage } from '../../../src/engine/types.js';
+import { SymbolGraph, SupportedLanguage } from '../../../src/engine/types.js';
 import { Engine } from '../../../src/engine/index.js';
 
 describe('sast_run_rules MCP tool', () => {
@@ -12,6 +12,21 @@ describe('sast_run_rules MCP tool', () => {
     function makeScanState(): ScanState {
         const id = 'test-' + Math.random().toString(36).slice(2, 8);
         scanIds.push(id);
+
+        const graph = new SymbolGraph();
+        graph.addNode({
+            id: 'n1',
+            kind: 'function',
+            qualifiedName: 'Test.foo',
+            status: 'concrete',
+            language: SupportedLanguage.Solidity,
+            label: 'foo',
+            locator: { file: '/a.sol', startIndex: 0, endIndex: 10, line: 5, column: 0 },
+            visibility: 'public',
+            resolvedBy: 'static',
+            confidence: 'high',
+        });
+
         return {
             scanId: id,
             files: ['/a.sol'],
@@ -20,25 +35,7 @@ describe('sast_run_rules MCP tool', () => {
             effective: {
                 solidity: { domain: 'on-chain', inheritanceModel: 'classical' },
             },
-            symbolMap: {
-                'Test.foo': {
-                    qualifiedName: 'Test.foo',
-                    label: 'foo',
-                    file: '/a.sol',
-                    line: 5,
-                    language: SupportedLanguage.Solidity,
-                    writesState: [],
-                    readsState: [],
-                    callsExternal: false,
-                    callees: [],
-                    isPublic: true,
-                    hasAccessControl: false,
-                    modifiers: [],
-                    resolvedBy: 'static',
-                    confidence: 'high',
-                    visibility: 'public',
-                },
-            },
+            graph: graph.toJSON(),
             gaps: [],
             status: 'ready',
             findings: [],

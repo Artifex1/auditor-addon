@@ -1,5 +1,5 @@
 import { SupportedLanguage } from "../../engine/types.js";
-import type { MapRule, FindingInstance, RuleContext, SymbolMap } from "../../engine/types.js";
+import type { MapRule, FindingInstance, RuleContext, SymbolGraph } from "../../engine/types.js";
 
 /**
  * SOL-017: Variable Could Be Constant
@@ -22,33 +22,37 @@ function createRule(): MapRule {
             domains: ['on-chain'],
         },
 
-        check(symbolMap: SymbolMap, _ctx: RuleContext): FindingInstance[] {
+        check(graph: SymbolGraph, _ctx: RuleContext): FindingInstance[] {
             const findings: FindingInstance[] = [];
 
             // Collect all state variables
-            const stateVars = [...symbolMap.values()].filter(e => e.kind === 'state_variable');
-            // Collect all functions
-            const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+            const stateVars = [...graph.nodes()].filter(n => n.kind === 'state_variable' && n.status === 'concrete');
 
             for (const sv of stateVars) {
-                // Skip if already constant or immutable
-                if (sv.modifiers.some(m => m.name === 'constant' || m.name === 'immutable')) continue;
+                // Skip if already constant or immutable (check via has_modifier edges)
+                const modEdges = graph.getOutEdgesOfKind(sv.id, 'has_modifier');
+                const hasConstOrImmutable = modEdges.some(e => {
+                    const mod = graph.getNode(e.to);
+                    return mod?.label === 'constant' || mod?.label === 'immutable';
+                });
+                if (hasConstOrImmutable) continue;
+
                 // Must have an initializer to be promotable to constant
-                if (!sv.modifiers.some(m => m.name === 'has_initializer')) continue;
+                const hasInitializer = modEdges.some(e => {
+                    const mod = graph.getNode(e.to);
+                    return mod?.label === 'has_initializer';
+                });
+                if (!hasInitializer) continue;
 
-                // Check if any function writes to this variable
-                const varName = sv.label;
-                const isWritten = functions.some(fn =>
-                    fn.contract === sv.contract &&
-                    fn.writesState.some(w => w === varName || w.startsWith(varName + '[') || w.startsWith(varName + '.'))
-                );
+                // Check via graph edges: any function with a writes edge to this variable
+                const writers = graph.getWriters(sv.id);
 
-                if (!isWritten) {
+                if (writers.length === 0) {
                     findings.push({
                         location: {
-                            file: sv.file,
-                            line: sv.line,
-                            col: sv.range?.start.column ?? 0,
+                            file: sv.locator?.file ?? '',
+                            line: sv.locator?.line ?? 0,
+                            col: sv.locator?.column ?? 0,
                         },
                         snippet: `${sv.qualifiedName}: never written — could be constant`,
                     });

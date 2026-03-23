@@ -1,6 +1,5 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind
+    FileContent, SupportedLanguage, GraphNode, Visibility
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -63,8 +62,8 @@ export class NoirAdapter extends BaseAdapter {
             const funcCaptures = functionQuery.captures(tree.rootNode);
             for (const capture of funcCaptures) {
                 if (this.isNestedFunction(capture.node)) continue;
-                const entry = this.createFunctionNode(capture.node, file.path);
-                this.indexSymbol(entry);
+                const node = this.createFunctionNode(capture.node, file.path);
+                this.addNode(node);
             }
         }
     }
@@ -78,12 +77,12 @@ export class NoirAdapter extends BaseAdapter {
         return false;
     }
 
-    private createFunctionNode(node: Node, file: string): SymbolEntry {
+    private createFunctionNode(node: Node, file: string): GraphNode {
         const nameNode = node.childForFieldName('name');
         const fnName = nameNode?.text ?? 'unknown';
         const visibility = this.extractVisibility(node);
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -156,21 +155,6 @@ export class NoirAdapter extends BaseAdapter {
         return node.childForFieldName('left')?.text ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
     protected override async identifyCalls(files: FileContent[]) {
         const service = TreeSitterService.getInstance();
         const lang = await service.getLanguage(SupportedLanguage.Noir);
@@ -196,19 +180,21 @@ export class NoirAdapter extends BaseAdapter {
                 const functionNode = capture.node;
                 if (this.isNestedFunction(functionNode)) continue;
 
-                const symbol = this.findSymbolAtNode(functionNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(functionNode, file.path);
+                if (!callerNode) continue;
 
                 // Simple calls
                 const simpleCaptures = simpleCallQuery.captures(functionNode);
                 for (const callCapture of simpleCaptures) {
                     if (callCapture.name !== 'FUNC') continue;
-                    const callName = callCapture.node.text;
-                    const callee = this.symbolsByLabel.get(callName)?.[0];
-                    if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                    const callNode = callCapture.node;
+                    const callName = callNode.text;
+                    const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+                    const callee = this._graph.findByName(callName).find(n => n.status === 'concrete');
+                    if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+                        this.addCallEdge(callerNode.id, callee.qualifiedName, 'internal', callSite);
                     } else if (!callee) {
-                        this.addCallee(symbol.qualifiedName, this.makeCallee(callName, 'external_unknown'));
+                        this.addCallEdge(callerNode.id, callName, 'external_unknown', callSite);
                     }
                 }
 
@@ -217,15 +203,17 @@ export class NoirAdapter extends BaseAdapter {
                     const scopedCaptures = scopedCallQuery.captures(functionNode);
                     for (const callCapture of scopedCaptures) {
                         if (callCapture.name !== 'FUNC') continue;
-                        const callText = callCapture.node.text;
+                        const callNode = callCapture.node;
+                        const callText = callNode.text;
+                        const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
                         const funcName = callText.includes('::')
                             ? callText.split('::').pop()!
                             : callText;
-                        const callee = this.symbolsByLabel.get(funcName)?.[0];
-                        if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-                            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
+                        const callee = this._graph.findByName(funcName).find(n => n.status === 'concrete');
+                        if (callee && callee.qualifiedName !== callerNode.qualifiedName) {
+                            this.addCallEdge(callerNode.id, callee.qualifiedName, 'internal', callSite);
                         } else if (!callee) {
-                            this.addCallee(symbol.qualifiedName, this.makeCallee(callText, 'external_unknown'));
+                            this.addCallEdge(callerNode.id, callText, 'external_unknown', callSite);
                         }
                     }
                 }

@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -47,18 +47,10 @@ export class JavaAdapter extends BaseAdapter {
             },
             constants: {
                 baseRateNlocPerDay: 250,
-                //  Java tends to be verbose but structurally simpler than C++/Rust.
-                //  We expect slightly lower CC density before considering it "complex."
                 complexityMidpoint: 13,
-                //  Once Java control flow gets significantly more tangled than normal
-                //  business logic, we ramp penalties a bit faster.
                 complexitySteepness: 9,
-                //  Deep OO / branching can add up to ~90% extra review time, while
-                //  simple Java can give ~25% speedup at best.
                 complexityBenefitCap: 0.25,
                 complexityPenaltyCap: 0.9,
-                //  Many Java codebases rely on readable code plus moderate Javadoc.
-                //  Around 25% comments unlocks most of the doc benefit (up to ~25%).
                 commentFullBenefitDensity: 25,
                 commentBenefitCap: 0.25
             }
@@ -84,6 +76,14 @@ export class JavaAdapter extends BaseAdapter {
                     ?? classNode.children.find(c => c.type === 'identifier')?.text
                     ?? 'unknown';
 
+                this.addContainerNode({
+                    name: className,
+                    containerKind: 'class',
+                    visibility: this.extractVisibility(classNode),
+                    node: classNode,
+                    file: file.path,
+                });
+
                 const bodyNode = classNode.childForFieldName('body');
                 if (!bodyNode) continue;
 
@@ -93,14 +93,14 @@ export class JavaAdapter extends BaseAdapter {
                     // Only direct methods of this class (not nested classes)
                     if (this.isInsideNestedClass(methodNode, bodyNode)) continue;
 
-                    const entry = this.createMethodNode(methodNode, file.path, className);
-                    if (entry) this.indexSymbol(entry);
+                    const node = this.createMethodNode(methodNode, file.path, className);
+                    if (node) this.addNode(node, className);
                 }
             }
         }
     }
 
-    private createMethodNode(node: Node, file: string, className: string): SymbolEntry | undefined {
+    private createMethodNode(node: Node, file: string, className: string): GraphNode | undefined {
         // method_declaration: modifiers? type name formal_parameters body
         // constructor_declaration: modifiers? name formal_parameters body
         const nameNode = node.childForFieldName('name')
@@ -111,13 +111,12 @@ export class JavaAdapter extends BaseAdapter {
         const visibility = this.extractVisibility(node);
         const qualifiedName = `${className}.${fnName}`;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName,
             label: fnName,
             file,
             node,
             visibility,
-            contract: className,
         });
     }
 
@@ -166,18 +165,20 @@ export class JavaAdapter extends BaseAdapter {
                     const methodNode = mCapture.node;
                     if (this.isInsideNestedClass(methodNode, bodyNode)) continue;
 
-                    const symbol = this.findSymbolAtNode(methodNode, file.path);
-                    if (!symbol) continue;
+                    const callerNode = this.findNodeAtPosition(methodNode, file.path);
+                    if (!callerNode) continue;
 
                     const callCaptures = callQuery.captures(methodNode);
                     for (const callCapture of callCaptures) {
                         if (callCapture.name !== 'FUNC') continue;
-                        const calleeName = callCapture.node.text;
-                        const callee = this.resolveCall(calleeName, symbol);
-                        if (callee && callee.qualifiedName !== symbol.qualifiedName) {
-                            this.addCallee(symbol.qualifiedName, this.makeCallee(callee.qualifiedName));
-                        } else if (!callee) {
-                            this.addCallee(symbol.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
+                        const callNode = callCapture.node;
+                        const calleeName = callNode.text;
+                        const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
+                        const resolved = this.resolveCall(calleeName, callerNode);
+                        if (resolved && resolved.qualifiedName !== callerNode.qualifiedName) {
+                            this.addCallEdge(callerNode.id, resolved.qualifiedName, 'internal', callSite);
+                        } else if (!resolved) {
+                            this.addCallEdge(callerNode.id, calleeName, 'external_unknown', callSite);
                         }
                     }
                 }
@@ -276,30 +277,15 @@ export class JavaAdapter extends BaseAdapter {
         return result;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
-    private resolveCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveCall(name: string, caller: GraphNode): GraphNode | undefined {
         // 1. Same class methods first
-        if (caller.contract) {
-            const classNodes = this.symbolsByContainer.get(caller.contract);
-            const match = classNodes?.find(n => n.label === name);
+        const callerContainer = this.getContainerName(caller.id);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, name);
             if (match) return match;
         }
         // 2. Any method with that name
-        return this.symbolsByLabel.get(name)?.[0];
+        return this._graph.findByName(name).find(n => n.status === 'concrete');
     }
 
     private static readonly STDLIB_RECEIVERS = new Set([
@@ -309,7 +295,7 @@ export class JavaAdapter extends BaseAdapter {
         'StringBuilder', 'StringBuffer', 'Number', 'Comparable', 'AutoCloseable',
         'Throwable', 'Exception', 'Error', 'List', 'Map', 'Set', 'Queue', 'Deque',
         'ArrayList', 'HashMap', 'HashSet', 'LinkedList', 'TreeMap', 'TreeSet',
-        'stream', 'Stream', 'Collectors', 'Optional',
+        'stream', 'Stream', 'Collectors',
         // Logging frameworks
         'log', 'logger', 'Logger', 'LOG',
     ]);
@@ -334,7 +320,7 @@ export class JavaAdapter extends BaseAdapter {
         // I/O methods on streams, channels, sockets
         'read', 'write', 'close', 'flush', 'available', 'readLine', 'readAllBytes',
         'isClosed', 'isConnected', 'isInputShutdown', 'isOutputShutdown',
-        'remaining', 'position', 'limit', 'capacity', 'rewind', 'flip', 'clear',
+        'remaining', 'position', 'limit', 'rewind', 'flip', 'clear',
         // Tokenizer / scanner
         'hasMoreTokens', 'nextToken', 'hasNext', 'next', 'nextLine', 'nextInt',
         // Logging methods

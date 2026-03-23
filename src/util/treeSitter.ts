@@ -116,10 +116,3 @@ export class TreeSitterService {
         }
     }
 }
-
-/**
- * Convenience helper to get a parser for a language
- */
-export async function getParser(lang: SupportedLanguage): Promise<Parser> {
-    return TreeSitterService.getInstance().createParser(lang);
-}

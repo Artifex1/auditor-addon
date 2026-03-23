@@ -1,6 +1,5 @@
 import { SupportedLanguage } from "../../engine/types.js";
-import type { MapRule, FindingInstance, RuleContext, SymbolMap } from "../../engine/types.js";
-import { buildCallerIndex } from "../hotspots.js";
+import type { MapRule, FindingInstance, RuleContext, SymbolGraph } from "../../engine/types.js";
 
 /**
  * MAP-001: Broad Visibility
@@ -12,7 +11,7 @@ import { buildCallerIndex } from "../hotspots.js";
  * For `internal` functions: if all callers share the same contract,
  * the function could be private.
  *
- * Requires languages where adapters populate `contract` + `visibility`.
+ * Requires languages where adapters populate `container` + `visibility`.
  */
 function createRule(): MapRule {
     return {
@@ -32,55 +31,59 @@ function createRule(): MapRule {
             ],
         },
 
-        check(symbolMap: SymbolMap, _ctx: RuleContext): FindingInstance[] {
+        check(graph: SymbolGraph, _ctx: RuleContext): FindingInstance[] {
             const findings: FindingInstance[] = [];
-            const callerIndex = buildCallerIndex(symbolMap);
 
-            for (const [qn, entry] of symbolMap) {
-                if (entry.kind !== 'function') continue;
+            const nodeContainer = graph.getContainerOf.bind(graph);
 
-                // Skip virtual/override (modifier names)
-                if (entry.modifiers.some(m =>
-                    m.name === 'virtual' || m.name === 'override'
-                )) continue;
+            for (const node of graph.nodes()) {
+                if (node.kind !== 'function') continue;
+                if (node.status !== 'concrete') continue;
+
+                // Skip virtual/override — check has_modifier edges
+                const hasModifierEdges = graph.getOutEdgesOfKind(node.id, 'has_modifier');
+                const hasVirtualOrOverride = hasModifierEdges.some(e => {
+                    const modNode = graph.getNode(e.to);
+                    return modNode && (modNode.label === 'virtual' || modNode.label === 'override');
+                });
+                if (hasVirtualOrOverride) continue;
 
                 // Skip constructors, fallback, receive
-                if (['constructor', 'fallback', 'receive'].includes(entry.label)) continue;
+                if (['constructor', 'fallback', 'receive'].includes(node.label)) continue;
 
-                const callers = callerIndex.get(qn);
+                // Use graph edges for caller lookup
+                const callEdges = graph.getInEdgesOfKind(node.id, 'calls');
+                const file = node.locator?.file ?? '';
+                const line = node.locator?.line ?? 0;
+                const col = node.locator?.column ?? 0;
 
-                if (entry.visibility === 'public') {
-                    // Check if any caller is from a different contract
-                    const hasCrossModuleCaller = callers && [...callers].some(callerId => {
-                        const caller = symbolMap.get(callerId);
-                        return caller && caller.contract !== entry.contract;
+                // Resolve node's container via graph edge
+                const nodeContainerNode = nodeContainer(node.id);
+
+                if (node.visibility === 'public') {
+                    // Check if any caller is from a different container
+                    const hasCrossModuleCaller = callEdges.some(e => {
+                        const callerContainerNode = nodeContainer(e.from);
+                        return callerContainerNode?.id !== nodeContainerNode?.id;
                     });
 
                     if (!hasCrossModuleCaller) {
                         findings.push({
-                            location: {
-                                file: entry.file,
-                                line: entry.line,
-                                col: entry.range?.start.column ?? 0,
-                            },
-                            snippet: `${qn}: public with no cross-module callers — could be external or tighter`,
+                            location: { file, line, col },
+                            snippet: `${node.qualifiedName}: public with no cross-module callers — could be external or tighter`,
                         });
                     }
-                } else if (entry.visibility === 'internal') {
-                    if (!callers || callers.size === 0) continue;
-                    // All callers same contract?
-                    const allSameContract = [...callers].every(callerId => {
-                        const caller = symbolMap.get(callerId);
-                        return caller && caller.contract === entry.contract;
+                } else if (node.visibility === 'internal') {
+                    if (callEdges.length === 0) continue;
+                    // All callers same container?
+                    const allSameContainer = nodeContainerNode && callEdges.every(e => {
+                        const callerContainerNode = nodeContainer(e.from);
+                        return callerContainerNode?.id === nodeContainerNode.id;
                     });
-                    if (allSameContract && entry.contract) {
+                    if (allSameContainer) {
                         findings.push({
-                            location: {
-                                file: entry.file,
-                                line: entry.line,
-                                col: entry.range?.start.column ?? 0,
-                            },
-                            snippet: `${qn}: internal but only called within ${entry.contract} — could be private`,
+                            location: { file, line, col },
+                            snippet: `${node.qualifiedName}: internal but only called within ${nodeContainerNode.label} — could be private`,
                         });
                     }
                 }

@@ -5,7 +5,7 @@ import { FileContent, SupportedLanguage } from '../../../src/engine/types.js';
 describe('MoveAdapter Traits', () => {
     const adapter = new MoveAdapter();
 
-    describe('resolveCallee via generateSymbolMap', () => {
+    describe('resolveCallee via generateGraph', () => {
         it('resolves calls within a module', async () => {
             const code = `
 module 0x1::test {
@@ -16,12 +16,15 @@ module 0x1::test {
 }
 `;
             const files: FileContent[] = [{ path: '/test.move', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const callerEntry = Array.from(symbolMap.values()).find(e => e.label === 'caller');
+            const callerEntry = Array.from(graph.nodes()).find(e => e.label === 'caller');
             expect(callerEntry).toBeDefined();
-            if (callerEntry && callerEntry.callees.length > 0) {
-                expect(callerEntry.callees[0].qualifiedName).toContain('callee');
+            const callees = graph.getOutEdges(callerEntry!.id)
+                .filter(e => e.kind === 'calls')
+                .map(e => graph.getNode(e.to));
+            if (callees.length > 0) {
+                expect(callees[0]?.qualifiedName).toContain('callee');
             }
         });
     });
@@ -35,12 +38,12 @@ module 0x1::test {
 }
 `;
             const files: FileContent[] = [{ path: '/test.move', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const exported = Array.from(symbolMap.values()).find(e => e.label === 'exported');
-            const internal = Array.from(symbolMap.values()).find(e => e.label === 'internal');
-            expect(exported?.isPublic).toBe(true);
-            expect(internal?.isPublic).toBe(false);
+            const exported = Array.from(graph.nodes()).find(e => e.label === 'exported');
+            const internal = Array.from(graph.nodes()).find(e => e.label === 'internal');
+            expect(exported?.visibility).toBe('public');
+            expect(internal?.visibility).toBe('private');
         });
     });
 });

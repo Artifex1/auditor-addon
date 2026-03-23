@@ -85,19 +85,20 @@ describe('GoAdapter Traits', () => {
         });
     });
 
-    describe('resolveCallee via generateSymbolMap', () => {
+    describe('resolveCallee via generateGraph', () => {
         it('resolves calls between functions', async () => {
             const code = `package main
 func Caller() { Callee() }
 func Callee() {}
 `;
             const files: FileContent[] = [{ path: '/test.go', content: code }];
-            const symbolMap = await adapter.generateSymbolMap(files);
+            const graph = await adapter.generateGraph(files);
 
-            const callerEntry = Array.from(symbolMap.values()).find(e => e.label === 'Caller');
+            const callerEntry = Array.from(graph.nodes()).find(e => e.label === 'Caller');
             expect(callerEntry).toBeDefined();
-            expect(callerEntry!.callees.length).toBeGreaterThan(0);
-            expect(callerEntry!.callees[0].qualifiedName).toContain('Callee');
+            const callees = graph.getOutEdges(callerEntry!.id).filter(e => e.kind === 'calls');
+            expect(callees.length).toBeGreaterThan(0);
+            expect(graph.getNode(callees[0].to)?.qualifiedName).toContain('Callee');
         });
     });
 });

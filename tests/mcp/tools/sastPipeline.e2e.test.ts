@@ -94,8 +94,8 @@ contract Vulnerable {
         expect(text).toContain('scanId');
         expect(text).toContain('status');
         expect(text).toContain('symbolMapStats');
-        // 3 symbols: balances state var + 2 functions
-        expect(text).toContain('total: 3');
+        // 4 symbols: container node + balances state var + 2 functions
+        expect(text).toContain('total: 4');
 
         const match = text.match(/scanId[:\s]+"?([a-f0-9-]+)"?/);
         expect(match).toBeTruthy();

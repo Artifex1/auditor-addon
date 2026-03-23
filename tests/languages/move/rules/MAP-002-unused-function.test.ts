@@ -6,13 +6,13 @@ import rule from '../../../../src/static/rules/MAP-002-unused-function.js';
 
 describe('MAP-002: Unused function (Move)', () => {
     it('flags unused private function', async () => {
-        const { ctx, symbolMap } = await buildContextForAdapter(new MoveAdapter(), SupportedLanguage.Move, {
+        const { ctx, graph } = await buildContextForAdapter(new MoveAdapter(), SupportedLanguage.Move, {
             '/test.move': `module 0x1::test {
     fun unused_helper(): u64 { 1 }
     public fun main(): u64 { 2 }
 }`,
         });
-        const findings = await runMapRule(ctx, symbolMap, rule);
+        const findings = await runMapRule(ctx, graph, rule);
         expect(findings.some(f => f.snippet.includes('unused_helper'))).toBe(true);
     });
 });

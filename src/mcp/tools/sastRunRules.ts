@@ -1,19 +1,19 @@
 import { z } from "zod";
 import { encode } from "@toon-format/toon";
 import {
-    Severity, FindingKind, RuleFinding, FindingInstance, Rule, MapRule,
-    SupportedLanguage, RuleContext
+    Severity, FindingKind, RuleFinding, FindingInstance,
+    SymbolGraph, SupportedLanguage, RuleContext
 } from "../../engine/types.js";
-import { readScanState, writeScanState, recordToSymbolMap } from "../../static/persistence.js";
-import { loadCustomRules, ruleApplies, AnyRule, LoadedRule } from "../../static/rule-loader.js";
+import { readScanState, writeScanState } from "../../static/persistence.js";
+import { loadCustomRules, ruleApplies, isRule, isMapRule, AnyRule, LoadedRule } from "../../static/rule-loader.js";
 import { walkShallow, walkDeep, deduplicateInstances } from "../../static/walker.js";
 import { TreeSitterService } from "../../util/treeSitter.js";
 import { Engine } from "../../engine/index.js";
-import type { Tree, Node, Parser } from "web-tree-sitter";
+import type { Tree } from "web-tree-sitter";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export const sastRunRulesSchema = {
-    description: "Run SAiST rules against an enriched symbol map. Supports shipped and custom rules with severity filtering.",
+    description: "Run SAiST rules against an enriched symbol graph. Supports shipped and custom rules with severity filtering.",
     inputSchema: {
         scanId: z.string().describe("Scan ID from sast_init_scan"),
         ruleIds: z.array(z.string()).optional().describe("Specific rule IDs to run; omit for all applicable"),
@@ -24,14 +24,6 @@ export const sastRunRulesSchema = {
             .describe("Finding kind filter; omit to run all"),
     },
 };
-
-function isRule(rule: AnyRule): rule is Rule {
-    return 'finalize' in rule && typeof (rule as any).finalize === 'function';
-}
-
-function isMapRule(rule: AnyRule): rule is MapRule {
-    return 'check' in rule && typeof (rule as any).check === 'function' && !('finalize' in rule);
-}
 
 export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engine) {
     return async (input: {
@@ -49,7 +41,7 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                 };
             }
 
-            const symbolMap = recordToSymbolMap(state.symbolMap);
+            const graph = SymbolGraph.fromJSON(state.graph);
             const effective = state.effective;
 
             // Shipped rules are pre-loaded; custom rules are loaded on demand via tsx
@@ -85,7 +77,8 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                 instances: FindingInstance[];
             }>();
 
-            let rulesRun = 0;
+            const ranRuleIds = new Set<string>();     // regular Rules (count unique IDs across languages)
+            const ranMapRuleIds = new Set<string>(); // MapRules run once per scan, not per language
 
             for (const lang of state.languages) {
                 const meta = effective[lang];
@@ -94,7 +87,15 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                 const adapter = engine.getAdapter(lang as SupportedLanguage);
                 if (!adapter) continue;
 
-                let parser: Parser | null = null;
+                // Compute file set for this language once — used by all shallow rules
+                const langFiles = new Set<string>();
+                for (const node of graph.nodes()) {
+                    if (node.language === lang && node.locator) {
+                        langFiles.add(node.locator.file);
+                    }
+                }
+
+                let parser: any | null = null;
                 const getTree = async (file: string): Promise<Tree> => {
                     if (treeCache.has(file)) return treeCache.get(file)!;
                     const src = sourceFiles.get(file);
@@ -107,7 +108,7 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                 };
 
                 const ctx: RuleContext = {
-                    symbolMap,
+                    graph,
                     trait: adapter,
                     effective: meta,
                     sourceFiles,
@@ -120,30 +121,35 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                     if (!ruleApplies(rule.appliesTo, meta, lang as SupportedLanguage)) continue;
 
                     if (isRule(rule)) {
-                        rulesRun++;
+                        ranRuleIds.add(rule.id);
                         const instances: FindingInstance[] = [];
 
                         if (rule.deep) {
-                            for (const [_qn, entry] of symbolMap) {
-                                if (entry.language !== lang) continue;
-                                if (!entry.range) continue;
+                            // Deep walk: iterate concrete function nodes for this language
+                            for (const node of graph.nodes()) {
+                                if (node.kind !== 'function') continue;
+                                if (node.status !== 'concrete') continue;
+                                if (node.language !== lang) continue;
+                                if (!node.locator) continue;
                                 try {
-                                    const tree = await getTree(entry.file);
-                                    const funcNode = findNodeAt(tree.rootNode, entry.range.start.line - 1, entry.range.start.column);
+                                    const tree = await getTree(node.locator.file);
+                                    // Use byte-offset re-entry for O(log n) lookup
+                                    const funcNode = tree.rootNode.descendantForIndex(
+                                        node.locator.startIndex,
+                                        node.locator.endIndex
+                                    );
                                     if (!funcNode) continue;
-                                    ctx.currentFile = entry.file;
+                                    ctx.currentFile = node.locator.file;
                                     rule.reset();
                                     const visited = new Set<string>();
-                                    visited.add(entry.qualifiedName);
-                                    await walkDeep(funcNode, rule, ctx, visited, 0, rule.deep.maxDepth);
+                                    visited.add(node.id);
+                                    await walkDeep(node.id, funcNode, rule, ctx, visited, 0, rule.deep.maxDepth);
                                     instances.push(...rule.finalize(ctx));
                                 } catch { /* skip unparseable functions */ }
                             }
                         } else {
-                            const langFiles = [...sourceFiles.entries()].filter(([p]) =>
-                                [...symbolMap.values()].some(e => e.file === p && e.language === lang)
-                            );
-                            for (const [file] of langFiles) {
+                            // Shallow walk: iterate source files for this language
+                            for (const file of langFiles) {
                                 try {
                                     const tree = await getTree(file);
                                     ctx.currentFile = file;
@@ -160,8 +166,9 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
                             else findingsByRule.set(rule.id, { rule, source, instances });
                         }
                     } else if (isMapRule(rule)) {
-                        rulesRun++;
-                        const instances = rule.check(symbolMap, ctx);
+                        if (ranMapRuleIds.has(rule.id)) continue;
+                        ranMapRuleIds.add(rule.id);
+                        const instances = rule.check(graph, ctx);
                         if (instances.length > 0) {
                             const existing = findingsByRule.get(rule.id);
                             if (existing) existing.instances.push(...instances);
@@ -193,6 +200,7 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
             state.updatedAt = new Date().toISOString();
             await writeScanState(state);
 
+            const rulesRun = ranRuleIds.size + ranMapRuleIds.size;
             const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
             const byKind: Record<FindingKind, number> = { issue: 0, smell: 0, pointer: 0 };
             for (const f of findings) {
@@ -228,15 +236,4 @@ export function createSastRunRulesHandler(shippedRules: AnyRule[], engine: Engin
             };
         }
     };
-}
-
-function findNodeAt(root: Node, row: number, col: number): Node | null {
-    if (root.startPosition.row === row && root.startPosition.column === col) return root;
-    for (const child of root.children) {
-        if (child.startPosition.row > row) break;
-        if (child.endPosition.row < row) continue;
-        const found = findNodeAt(child, row, col);
-        if (found) return found;
-    }
-    return null;
 }

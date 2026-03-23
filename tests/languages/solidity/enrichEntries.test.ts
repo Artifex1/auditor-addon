@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { SolidityAdapter } from '../../../src/languages/solidityAdapter.js';
 import type { FileContent } from '../../../src/engine/types.js';
 
-describe('enrichEntries via generateSymbolMap', () => {
-    it('populates writesState for state writes', async () => {
+describe('enrichEntries via generateGraph', () => {
+    it('populates writes edges for state writes', async () => {
         const adapter = new SolidityAdapter();
         const files: FileContent[] = [{
             path: '/test.sol',
@@ -16,14 +16,16 @@ contract Foo {
 }`,
         }];
 
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const entry = [...symbolMap.values()].find(e => e.label === 'setX')!;
-        expect(entry).toBeDefined();
-        expect(entry.writesState.length).toBeGreaterThan(0);
-        expect(entry.writesState).toContain('x');
+        const graph = await adapter.generateGraph(files);
+        const node = [...graph.nodes()].find(e => e.label === 'setX')!;
+        expect(node).toBeDefined();
+        const writesEdges = graph.getOutEdgesOfKind(node.id, 'writes');
+        expect(writesEdges.length).toBeGreaterThan(0);
+        const writeTargets = writesEdges.map(e => graph.getNode(e.to)?.label);
+        expect(writeTargets).toContain('x');
     });
 
-    it('populates readsState for state reads', async () => {
+    it('populates reads edges for state reads', async () => {
         const adapter = new SolidityAdapter();
         const files: FileContent[] = [{
             path: '/test.sol',
@@ -36,13 +38,14 @@ contract Foo {
 }`,
         }];
 
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const entry = [...symbolMap.values()].find(e => e.label === 'getX')!;
-        expect(entry).toBeDefined();
-        expect(entry.readsState.length).toBeGreaterThan(0);
+        const graph = await adapter.generateGraph(files);
+        const node = [...graph.nodes()].find(e => e.label === 'getX')!;
+        expect(node).toBeDefined();
+        const readsEdges = graph.getOutEdgesOfKind(node.id, 'reads');
+        expect(readsEdges.length).toBeGreaterThan(0);
     });
 
-    it('populates modifiers via getModifiers', async () => {
+    it('populates has_modifier edges via getModifiers', async () => {
         const adapter = new SolidityAdapter();
         const files: FileContent[] = [{
             path: '/test.sol',
@@ -56,13 +59,14 @@ contract Foo {
 }`,
         }];
 
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const entry = [...symbolMap.values()].find(e => e.label === 'restricted')!;
-        expect(entry).toBeDefined();
-        expect(entry.modifiers.length).toBeGreaterThan(0);
-        expect(entry.modifiers[0].name).toBe('onlyOwner');
-        expect(entry.modifiers[0].pattern).toBe('explicit');
-        expect(entry.hasAccessControl).toBe(true);
+        const graph = await adapter.generateGraph(files);
+        const node = [...graph.nodes()].find(e => e.label === 'restricted')!;
+        expect(node).toBeDefined();
+        const modEdges = graph.getOutEdgesOfKind(node.id, 'has_modifier');
+        expect(modEdges.length).toBeGreaterThan(0);
+        const modNode = graph.getNode(modEdges[0].to);
+        expect(modNode?.label).toBe('onlyOwner');
+        expect(modNode?.pattern).toBe('explicit');
     });
 
     it('does not duplicate writes already set by buildSymbolTable', async () => {
@@ -78,10 +82,12 @@ contract Foo {
 }`,
         }];
 
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const entry = [...symbolMap.values()].find(e => e.label === 'setX')!;
-        // writesState should have no duplicates
-        const unique = new Set(entry.writesState);
-        expect(unique.size).toBe(entry.writesState.length);
+        const graph = await adapter.generateGraph(files);
+        const node = [...graph.nodes()].find(e => e.label === 'setX')!;
+        // writes edges should have no duplicates (same from+to pair)
+        const writesEdges = graph.getOutEdgesOfKind(node.id, 'writes');
+        const edgeKeys = writesEdges.map(e => `${e.from}->${e.to}`);
+        const unique = new Set(edgeKeys);
+        expect(unique.size).toBe(edgeKeys.length);
     });
 });

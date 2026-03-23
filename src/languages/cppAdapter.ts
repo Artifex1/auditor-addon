@@ -1,6 +1,6 @@
 import {
-    FileContent, SupportedLanguage, SymbolEntry, Visibility,
-    SymbolMap, CallTargetKind, ModifierInfo
+    FileContent, SupportedLanguage, GraphNode, NodeId, Visibility,
+    ModifierInfo
 } from "../engine/types.js";
 import { BaseAdapter } from "./baseAdapter.js";
 import { TreeSitterService } from "../util/treeSitter.js";
@@ -84,6 +84,15 @@ export class CppAdapter extends BaseAdapter {
             for (const capture of classCaptures) {
                 const classNode = capture.node;
                 const className = classNode.children.find(c => c.type === 'type_identifier')?.text ?? 'unknown';
+
+                this.addContainerNode({
+                    name: className,
+                    containerKind: 'class',
+                    visibility: 'public',
+                    node: classNode,
+                    file: file.path,
+                });
+
                 const bodyNode = classNode.childForFieldName('body');
                 if (!bodyNode) continue;
 
@@ -94,8 +103,8 @@ export class CppAdapter extends BaseAdapter {
                     if (child.type === 'access_specifier') {
                         currentVisibility = this.parseAccessSpecifier(child.text);
                     } else if (child.type === 'function_definition') {
-                        const entry = this.createMethodNode(child, file.path, className, currentVisibility);
-                        if (entry) this.indexSymbol(entry);
+                        const node = this.createMethodNode(child, file.path, className, currentVisibility);
+                        if (node) this.addNode(node, className);
                     } else if (child.type === 'field_declaration') {
                         // Forward declaration — record visibility for out-of-line body lookup
                         const nameNode = child.childForFieldName('declarator')
@@ -122,23 +131,22 @@ export class CppAdapter extends BaseAdapter {
                     const methodName = qualifiedId.children.find(c => c.type === 'identifier')?.text;
                     if (className && methodName) {
                         const key = `${className}::${methodName}`;
-                        const existing = this.symbolsByContainer.get(className)?.find(n => n.label === methodName);
+                        const existing = this.findInContainer(className, methodName);
                         if (!existing) {
                             // Not already indexed from an inline definition — index it now
                             const visibility = this.declaredVisibility.get(key) ?? 'public';
-                            this.indexSymbol(this.createEntry({
+                            this.addNode(this.createNode({
                                 qualifiedName: key,
                                 label: methodName,
                                 file: file.path,
                                 node: funcNode,
                                 visibility,
-                                contract: className,
-                            }));
+                            }), className);
                         }
                     }
                 } else {
-                    const entry = this.createFreeFunctionNode(funcNode, file.path);
-                    if (entry) this.indexSymbol(entry);
+                    const node = this.createFreeFunctionNode(funcNode, file.path);
+                    if (node) this.addNode(node);
                 }
             }
         }
@@ -155,7 +163,7 @@ export class CppAdapter extends BaseAdapter {
         file: string,
         className: string,
         visibility: Visibility
-    ): SymbolEntry | undefined {
+    ): GraphNode | undefined {
         // function_definition inside class: declarator has field_identifier for name
         const declarator = node.childForFieldName('declarator');
         if (!declarator) return undefined;
@@ -168,17 +176,16 @@ export class CppAdapter extends BaseAdapter {
         const fnName = nameNode.text;
         const qualifiedName = `${className}::${fnName}`;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName,
             label: fnName,
             file,
             node,
             visibility,
-            contract: className,
         });
     }
 
-    private createFreeFunctionNode(node: Node, file: string): SymbolEntry | undefined {
+    private createFreeFunctionNode(node: Node, file: string): GraphNode | undefined {
         const declarator = node.childForFieldName('declarator');
         if (!declarator) return undefined;
 
@@ -187,7 +194,7 @@ export class CppAdapter extends BaseAdapter {
 
         const fnName = nameNode.text;
 
-        return this.createEntry({
+        return this.createNode({
             qualifiedName: fnName,
             label: fnName,
             file,
@@ -223,17 +230,17 @@ export class CppAdapter extends BaseAdapter {
 
             for (const capture of funcCaptures) {
                 const funcNode = capture.node;
-                const symbol = this.findSymbolAtNode(funcNode, file.path);
-                if (!symbol) continue;
+                const callerNode = this.findNodeAtPosition(funcNode, file.path);
+                if (!callerNode) continue;
 
-                this.processCallsInNode(funcNode, symbol, simpleCallQuery, fieldCallQuery, scopedCallQuery);
+                this.processCallsInNode(funcNode, callerNode, simpleCallQuery, fieldCallQuery, scopedCallQuery);
             }
         }
     }
 
     private processCallsInNode(
         node: Node,
-        caller: SymbolEntry,
+        caller: GraphNode,
         simpleCallQuery: Query,
         fieldCallQuery: Query,
         scopedCallQuery: Query
@@ -241,39 +248,45 @@ export class CppAdapter extends BaseAdapter {
         // Simple calls: func()
         for (const capture of simpleCallQuery.captures(node)) {
             if (capture.name !== 'FUNC') continue;
-            const calleeName = capture.node.text;
+            const callNode = capture.node;
+            const calleeName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
             const callee = this.resolveCall(calleeName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+                this.addCallEdge(caller.id, callee.qualifiedName, 'internal', callSite);
             } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(calleeName, 'external_unknown'));
+                this.addCallEdge(caller.id, calleeName, 'external_unknown', callSite);
             }
         }
 
         // Field/method calls: obj.method()
         for (const capture of fieldCallQuery.captures(node)) {
             if (capture.name !== 'FUNC') continue;
-            const methodName = capture.node.text;
-            const receiver = capture.node.parent?.childForFieldName('object')?.text
-                ?? capture.node.parent?.childForFieldName('argument')?.text;
+            const callNode = capture.node;
+            const methodName = callNode.text;
+            const receiver = callNode.parent?.childForFieldName('object')?.text
+                ?? callNode.parent?.childForFieldName('argument')?.text;
             const fullName = receiver ? `${receiver}.${methodName}` : methodName;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
             const callee = this.resolveMemberCall(methodName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+                this.addCallEdge(caller.id, callee.qualifiedName, 'internal', callSite);
             } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(fullName, 'external_unknown'));
+                this.addCallEdge(caller.id, fullName, 'external_unknown', callSite);
             }
         }
 
         // Scoped calls: Class::method() or Namespace::func()
         for (const capture of scopedCallQuery.captures(node)) {
             if (capture.name !== 'FUNC') continue;
-            const funcName = capture.node.text;
+            const callNode = capture.node;
+            const funcName = callNode.text;
+            const callSite = { startIndex: callNode.startIndex, line: callNode.startPosition.row + 1 };
             const callee = this.resolveCall(funcName, caller);
             if (callee && callee.qualifiedName !== caller.qualifiedName) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(callee.qualifiedName));
+                this.addCallEdge(caller.id, callee.qualifiedName, 'internal', callSite);
             } else if (!callee) {
-                this.addCallee(caller.qualifiedName, this.makeCallee(funcName, 'external_unknown'));
+                this.addCallEdge(caller.id, funcName, 'external_unknown', callSite);
             }
         }
     }
@@ -374,42 +387,27 @@ export class CppAdapter extends BaseAdapter {
         return node.childForFieldName('left')?.text ?? null;
     }
 
-    override resolveCallee(
-        node: Node,
-        symbolMap: SymbolMap,
-        _sourceFiles: Map<string, string>
-    ): { qualifiedName: string; targetKind: CallTargetKind } | null {
-        const target = this.getCallTarget(node);
-        if (!target) return null;
-        for (const [qn, entry] of symbolMap) {
-            if (entry.label === target) {
-                return { qualifiedName: qn, targetKind: 'internal' };
-            }
-        }
-        return null;
-    }
-
-    private resolveCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveCall(name: string, caller: GraphNode): GraphNode | undefined {
+        const callerContainer = this.getContainerName(caller.id);
         // 1. Same class
-        if (caller.contract) {
-            const classNodes = this.symbolsByContainer.get(caller.contract);
-            const match = classNodes?.find(n => n.label === name);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, name);
             if (match) return match;
         }
         // 2. Free function or any match
-        const candidates = this.symbolsByLabel.get(name);
-        return candidates?.find(n => !n.contract) ?? candidates?.[0];
+        const candidates = this._graph.findByName(name);
+        return candidates.find(n => !this.getContainerName(n.id) && n.status === 'concrete') ?? candidates.find(n => n.status === 'concrete');
     }
 
-    private resolveMemberCall(name: string, caller: SymbolEntry): SymbolEntry | undefined {
+    private resolveMemberCall(name: string, caller: GraphNode): GraphNode | undefined {
+        const callerContainer = this.getContainerName(caller.id);
         // 1. Same class (this->method() pattern)
-        if (caller.contract) {
-            const classNodes = this.symbolsByContainer.get(caller.contract);
-            const match = classNodes?.find(n => n.label === name);
+        if (callerContainer) {
+            const match = this.findInContainer(callerContainer, name);
             if (match) return match;
         }
         // 2. Any class with that method name
-        return this.symbolsByLabel.get(name)?.[0];
+        return this._graph.findByName(name).find(n => n.status === 'concrete');
     }
 
     private static readonly STDLIB_PREFIXES = new Set([

@@ -4,7 +4,7 @@ import rule from '../../../../src/static/rules/SOL-018-variable-could-be-immutab
 
 describe('SOL-018: Variable could be immutable', () => {
     it('flags variable only written in constructor', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Foo {
     address owner;
@@ -16,14 +16,14 @@ contract Foo {
     }
 }`,
         });
-        const findings = await runMapRule(ctx, symbolMap, rule);
+        const findings = await runMapRule(ctx, graph, rule);
         expect(findings).toHaveLength(1);
         expect(findings[0].snippet).toContain('owner');
         expect(findings[0].snippet).toContain('could be immutable');
     });
 
     it('does not flag variable written outside constructor', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Foo {
     address owner;
@@ -35,12 +35,12 @@ contract Foo {
     }
 }`,
         });
-        const findings = await runMapRule(ctx, symbolMap, rule);
+        const findings = await runMapRule(ctx, graph, rule);
         expect(findings).toHaveLength(0);
     });
 
     it('does not flag variable already marked immutable', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Foo {
     address immutable owner;
@@ -49,12 +49,12 @@ contract Foo {
     }
 }`,
         });
-        const findings = await runMapRule(ctx, symbolMap, rule);
+        const findings = await runMapRule(ctx, graph, rule);
         expect(findings).toHaveLength(0);
     });
 
     it('does not flag variable never written (SOL-017 territory)', async () => {
-        const { ctx, symbolMap } = await buildContext({
+        const { ctx, graph } = await buildContext({
             '/test.sol': `
 contract Foo {
     uint fee = 100;
@@ -63,7 +63,7 @@ contract Foo {
     }
 }`,
         });
-        const findings = await runMapRule(ctx, symbolMap, rule);
+        const findings = await runMapRule(ctx, graph, rule);
         expect(findings).toHaveLength(0);
     });
 });

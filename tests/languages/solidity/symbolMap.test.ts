@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { SolidityAdapter } from '../../../src/languages/solidityAdapter';
-import { FileContent } from '../../../src/engine/types';
+import { FileContent, SymbolGraph, GraphNode } from '../../../src/engine/types';
+
+function getCallees(graph: SymbolGraph, node: GraphNode) {
+    return graph.getOutEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => ({ qualifiedName: graph.getNode(e.to)?.qualifiedName ?? 'unknown', targetKind: (e.attrs as any)?.targetKind }));
+}
+
+function getCallers(graph: SymbolGraph, node: GraphNode): GraphNode[] {
+    return graph.getInEdges(node.id)
+        .filter(e => e.kind === 'calls')
+        .map(e => graph.getNode(e.from))
+        .filter(Boolean) as GraphNode[];
+}
 
 describe('SolidityAdapter Call Graph', () => {
     const adapter = new SolidityAdapter();
@@ -15,11 +28,11 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         // Verify entries
@@ -31,7 +44,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(entryB?.qualifiedName).toContain('Test.b');
 
         // Verify callee
-        const callee = entryA!.callees[0];
+        const callee = getCallees(graph, entryA!)[0];
         expect(callee.qualifiedName).toBe(entryB?.qualifiedName);
         expect(callee.targetKind).toBe('internal');
     });
@@ -49,11 +62,11 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(1);
 
         const childFunc = functions.find(e => e.qualifiedName.includes('.childFunc('));
@@ -65,7 +78,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(parentFunc?.qualifiedName).toContain('Parent');
 
         // Should resolve inherited call
-        const callee = childFunc!.callees.find(c => c.qualifiedName === parentFunc?.qualifiedName);
+        const callee = getCallees(graph, childFunc!).find(c => c.qualifiedName === parentFunc?.qualifiedName);
         expect(callee).toBeDefined();
         expect(callee?.targetKind).toBe('internal');
     });
@@ -88,11 +101,11 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
-        const totalCallees = functions.reduce((sum, e) => sum + e.callees.length, 0);
+        const totalCallees = functions.reduce((sum, e) => sum + getCallees(graph, e).length, 0);
         expect(totalCallees).toBe(2);
 
         const childFunc = functions.find(e => e.qualifiedName.includes('.childFunc('));
@@ -104,11 +117,12 @@ describe('SolidityAdapter Call Graph', () => {
         expect(funcB).toBeDefined();
 
         // Should resolve both inherited calls
-        expect(childFunc!.callees).toHaveLength(2);
-        expect(childFunc!.callees.map(c => c.qualifiedName)).toContain(funcA?.qualifiedName);
-        expect(childFunc!.callees.map(c => c.qualifiedName)).toContain(funcB?.qualifiedName);
-        expect(childFunc!.callees[0].targetKind).toBe('internal');
-        expect(childFunc!.callees[1].targetKind).toBe('internal');
+        const callees = getCallees(graph, childFunc!);
+        expect(callees).toHaveLength(2);
+        expect(callees.map(c => c.qualifiedName)).toContain(funcA?.qualifiedName);
+        expect(callees.map(c => c.qualifiedName)).toContain(funcB?.qualifiedName);
+        expect(callees[0].targetKind).toBe('internal');
+        expect(callees[1].targetKind).toBe('internal');
     });
 
     it('should handle interface inheritance', async () => {
@@ -122,8 +136,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -149,8 +163,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -181,8 +195,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(3);
 
@@ -195,7 +209,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(grandFunc).toBeDefined();
 
         // Should resolve calls through inheritance chain
-        expect(childFunc!.callees).toHaveLength(2);
+        expect(getCallees(graph, childFunc!)).toHaveLength(2);
     });
 
     it('should handle super calls', async () => {
@@ -211,8 +225,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -223,7 +237,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(childFoo).toBeDefined();
 
         // Should resolve super call to parent
-        const callee = childFoo!.callees.find(c => c.qualifiedName === parentFoo?.qualifiedName);
+        const callee = getCallees(graph, childFoo!).find(c => c.qualifiedName === parentFoo?.qualifiedName);
         expect(callee).toBeDefined();
         expect(callee?.targetKind).toBe('internal');
     });
@@ -243,8 +257,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         expect(functions).toHaveLength(2);
 
@@ -256,7 +270,7 @@ describe('SolidityAdapter Call Graph', () => {
 
         // Library call should be internal (inlined) or external depending on visibility
         // Math.add is internal -> should be internal edge
-        const callee = calculate!.callees.find(c => c.qualifiedName === add?.qualifiedName);
+        const callee = getCallees(graph, calculate!).find(c => c.qualifiedName === add?.qualifiedName);
         expect(callee).toBeDefined();
         expect(callee?.targetKind).toBe('internal');
     });
@@ -276,8 +290,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         // Constructors should be included in the graph
         const initialize = functions.find(e => e.qualifiedName.includes('initialize'));
@@ -303,8 +317,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const restricted = functions.find(e => e.qualifiedName.includes('restricted'));
         const doSomething = functions.find(e => e.qualifiedName.includes('doSomething'));
@@ -328,8 +342,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const callExternal = functions.find(e => e.qualifiedName.includes('callExternal'));
         const externalFunc = functions.find(e => e.qualifiedName.includes('externalFunc'));
@@ -337,7 +351,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(callExternal).toBeDefined();
         expect(externalFunc).toBeDefined();
 
-        const callee = callExternal!.callees.find(c => c.qualifiedName === externalFunc?.qualifiedName);
+        const callee = getCallees(graph, callExternal!).find(c => c.qualifiedName === externalFunc?.qualifiedName);
         expect(callee?.targetKind).toBe('cross_module');
     });
 
@@ -362,8 +376,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const callBoth = functions.find(e => e.qualifiedName.includes('callBoth'));
         const func1 = functions.find(e => e.qualifiedName.includes('Implementation.func1'));
@@ -373,7 +387,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(func1).toBeDefined();
         expect(func2).toBeDefined();
 
-        expect(callBoth!.callees).toHaveLength(2);
+        expect(getCallees(graph, callBoth!)).toHaveLength(2);
     });
 
     it('should handle complex inheritance with overrides', async () => {
@@ -399,8 +413,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const callFoo = functions.find(e => e.qualifiedName.includes('callFoo'));
         const dFoo = functions.find(e => e.qualifiedName.includes('D.foo'));
@@ -409,7 +423,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(dFoo).toBeDefined();
 
         // Should resolve to D's implementation
-        const callee = callFoo!.callees.find(c => c.qualifiedName === dFoo?.qualifiedName);
+        const callee = getCallees(graph, callFoo!).find(c => c.qualifiedName === dFoo?.qualifiedName);
         expect(callee).toBeDefined();
     });
 
@@ -423,8 +437,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const entryA = functions.find(e => e.label === 'a');
         const entryB = functions.find(e => e.label === 'b');
@@ -433,7 +447,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(entryB).toBeDefined();
 
         // Should resolve this.b() to b
-        const callee = entryA!.callees.find(c => c.qualifiedName === entryB?.qualifiedName);
+        const callee = getCallees(graph, entryA!).find(c => c.qualifiedName === entryB?.qualifiedName);
         expect(callee).toBeDefined();
         expect(callee?.targetKind).toBe('cross_module');
     });
@@ -456,8 +470,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const test = functions.find(e => e.qualifiedName.includes('test'));
         const getX = functions.find(e => e.qualifiedName.includes('getX'));
@@ -469,9 +483,7 @@ describe('SolidityAdapter Call Graph', () => {
 
         // Chained calls are complex and require type resolution
         // This is an acceptable limitation for 80/20 approach
-        // We may identify some calls but not the full chain
-        // Accept that we might not resolve chained calls
-        expect(test!.callees.length).toBeGreaterThanOrEqual(0);
+        expect(getCallees(graph, test!).length).toBeGreaterThanOrEqual(0);
     });
 
     it('should handle array element function calls', async () => {
@@ -489,8 +501,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const callFirst = functions.find(e => e.qualifiedName.includes('callFirst'));
         const execute = functions.find(e => e.qualifiedName.includes('execute'));
@@ -500,9 +512,6 @@ describe('SolidityAdapter Call Graph', () => {
 
         // Array element calls (contracts[0].execute()) are complex
         // This is an acceptable limitation for 80/20 approach
-        // We would need to track array types and resolve element types
-        // const callee = callFirst!.callees.find(c => c.qualifiedName === execute?.qualifiedName);
-        // expect(callee).toBeDefined();
     });
 
     it('should handle internal library usage with using-for', async () => {
@@ -522,8 +531,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const calculate = functions.find(e => e.qualifiedName.includes('calculate'));
         const add = functions.find(e => e.qualifiedName.includes('add'));
@@ -532,7 +541,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(add).toBeDefined();
 
         // Should identify the library call
-        const callee = calculate!.callees.find(c => c.qualifiedName === add?.qualifiedName);
+        const callee = getCallees(graph, calculate!).find(c => c.qualifiedName === add?.qualifiedName);
         expect(callee).toBeDefined();
         // SafeMath.add is internal
         expect(callee?.targetKind).toBe('internal');
@@ -553,8 +562,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const helper = functions.find(e => e.qualifiedName.includes('helper'));
         const fallbackFunc = functions.find(e => e.qualifiedName.includes('fallback'));
@@ -565,7 +574,9 @@ describe('SolidityAdapter Call Graph', () => {
         expect(receiveFunc).toBeDefined();
 
         // Should have callees to helper from fallback and/or receive
-        const callersOfHelper = functions.filter(e => e.callees.some(c => c.qualifiedName === helper?.qualifiedName));
+        const callersOfHelper = functions.filter(e =>
+            getCallees(graph, e).some(c => c.qualifiedName === helper?.qualifiedName)
+        );
         expect(callersOfHelper.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -586,8 +597,8 @@ describe('SolidityAdapter Call Graph', () => {
             }
         `;
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const forward = functions.find(e => e.qualifiedName.includes('forward'));
         const execute = functions.find(e => e.qualifiedName.includes('execute'));
@@ -596,7 +607,6 @@ describe('SolidityAdapter Call Graph', () => {
         expect(execute).toBeDefined();
 
         // delegatecall is complex - we may not resolve it, but should at least not crash
-        // This is an acceptable limitation for 80/20
     });
 
     it('should handle assembly calls', async () => {
@@ -613,13 +623,9 @@ describe('SolidityAdapter Call Graph', () => {
                 }
             }
         `;
-        // Note: calling solidity functions from assembly is not standard Yul but some dialects or
-        // specific implementations might allow it, or we might be matching Yul builtins.
-        // However, for the purpose of testing the yul_function_call extraction:
-
         const files: FileContent[] = [{ path: '/test.sol', content: code }];
-        const symbolMap = await adapter.generateSymbolMap(files);
-        const functions = [...symbolMap.values()].filter(e => e.kind === 'function');
+        const graph = await adapter.generateGraph(files);
+        const functions = [...graph.nodes()].filter(e => e.kind === 'function');
 
         const asm = functions.find(e => e.qualifiedName.includes('asm'));
         const helper = functions.find(e => e.qualifiedName.includes('helper'));
@@ -628,10 +634,7 @@ describe('SolidityAdapter Call Graph', () => {
         expect(helper).toBeDefined();
 
         // Should identify the call to helper within assembly
-        // Note: standard solidity assembly (Yul) doesn't allow direct calls to solidity functions
-        // like this without abi encoding, but we are testing the parser's ability to pick up
-        // "helper()" as a call.
-        const callee = asm!.callees.find(c => c.qualifiedName === helper?.qualifiedName);
+        const callee = getCallees(graph, asm!).find(c => c.qualifiedName === helper?.qualifiedName);
         expect(callee).toBeDefined();
     });
 });

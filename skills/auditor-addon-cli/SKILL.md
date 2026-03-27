@@ -1,0 +1,63 @@
+# auditor-addon-cli
+
+The `aa` CLI is a single-binary tool that parses source code with tree-sitter, builds a symbol graph, and runs analysis. Pre-built binaries for all platforms are shipped in this skill's `bin/` directory.
+
+## Invoking aa
+
+The `bin/aa` dispatcher auto-detects the current platform and runs the correct binary. Invoke it using its absolute path:
+
+```bash
+<SKILL_DIR>/bin/aa <command> [options] <glob...>
+```
+
+Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
+
+## Commands
+
+| Command | Purpose |
+|:--------|:--------|
+| `aa peek <glob...>` | Extract function signatures for quick overview. |
+| `aa metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
+| `aa gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
+| `aa run <glob...>` | Build symbol graph, run rules, output findings. |
+| `aa call-chains <glob...>` | Map caller->callee chains from entry points. |
+| `aa graph <glob...>` | Build symbol graph, dump nodes and edges. |
+| `aa info <language>` | List language config (node types, properties). |
+
+### Common Options
+
+| Option | Applies to | Description |
+|:-------|:-----------|:------------|
+| `--help` | all | Per-command help. |
+| `--language=<lang>` | all except info | Force language (otherwise auto-detected from extension). |
+| `--json` | all except info | JSON output instead of TOON. |
+| `--resolutions=<file>` | gaps, run, call-chains, graph | Apply resolution CSV. |
+| `--no-expand` | gaps | Skip import-driven file expansion. |
+| `--rule=<ID>` | run | Run specific shipped rule (repeatable). |
+| `--rule-path=<path>` | run | Run adhoc rule from .lua file. |
+| `--root=<name>` | call-chains | Start from specific function (repeatable). |
+| `--max-depth=<n>` | call-chains | Limit chain depth (default: 10). |
+
+File arguments accept glob patterns (e.g., `"src/**/*.sol"`).
+
+## Output Format
+
+Output uses Token-Oriented Object Notation (TOON) by default. Pass `--json` for JSON.
+
+## Supported Languages
+
+Solidity, Rust, Go, Python, Cairo, Compact, Move, Noir, Tolk, Masm, C++, Java, JavaScript, TypeScript, TSX, Flow.
+
+## Adding aa to PATH (optional, for manual use)
+
+### macOS / Linux
+
+```bash
+ln -s "$(pwd)/bin/aa" /usr/local/bin/aa
+```
+
+### Windows (PowerShell, admin)
+
+```powershell
+New-Item -ItemType SymbolicLink -Path "C:\Windows\aa.exe" -Target "$PWD\bin\aa-x86_64-windows.exe"
+```

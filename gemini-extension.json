@@ -2,13 +2,5 @@
   "name": "auditor-addon",
   "version": "1.0.11",
   "description": "Auditor Addon helps estimate and audit code and write issues",
-  "contextFileName": "GEMINI.md",
-  "mcpServers": {
-    "auditor-addon": {
-      "command": "node",
-      "args": [
-        "${extensionPath}${/}dist${/}mcp${/}server.js"
-      ]
-    }
-  }
+  "contextFileName": "GEMINI.md"
 }

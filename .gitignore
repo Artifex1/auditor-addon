@@ -1,12 +1,11 @@
-# Dependencies
+# Zig
+.zig-cache/
+zig-out/
+
+# Node (ts-ref era)
 node_modules/
 
 # Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-logs/
 *.log
 
 # OS
@@ -22,9 +21,3 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Testing
-coverage/

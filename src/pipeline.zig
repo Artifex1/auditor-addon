@@ -25,12 +25,13 @@ pub const Pipeline = struct {
     // Files already walked (dedup)
     walked_files: std.StringHashMapUnmanaged(void),
 
-    // Container stack for qualified name construction (§4.1)
-    container_stack: std.ArrayList(ContainerFrame),
+    // Scope stack for nesting context (§4.1)
+    scope_stack: std.ArrayList(ScopeFrame),
 
-    const ContainerFrame = struct {
+    const ScopeFrame = struct {
         id: u64,
         name: []const u8,
+        kind: graph.NodeKind,
     };
 
     pub fn init(allocator: std.mem.Allocator, lang_config: *const cfg.LanguageConfig) !Pipeline {
@@ -45,7 +46,7 @@ pub const Pipeline = struct {
             .trees = .empty,
             .sources = .empty,
             .walked_files = .empty,
-            .container_stack = .empty,
+            .scope_stack = .empty,
         };
     }
 
@@ -65,7 +66,7 @@ pub const Pipeline = struct {
         self.sources.deinit(self.allocator);
 
         self.walked_files.deinit(self.allocator);
-        self.container_stack.deinit(self.allocator);
+        self.scope_stack.deinit(self.allocator);
         self.parser.destroy();
         self.graph.deinit();
     }
@@ -122,6 +123,7 @@ pub const Pipeline = struct {
             .name = file_path,
             .qualified_name = file_path,
             .language = self.lang_config.language,
+            .ast_node = tree.rootNode(),
             .locator = .{
                 .file = file_path,
                 .start_byte = 0,
@@ -131,14 +133,14 @@ pub const Pipeline = struct {
             },
         });
 
-        // Push file onto container stack
-        try self.container_stack.append(self.allocator, .{ .id = file_node_id, .name = file_path });
+        // Push file onto scope stack
+        try self.scope_stack.append(self.allocator, .{ .id = file_node_id, .name = file_path, .kind = .file });
 
         // Walk the AST
         try self.walkTree(tree, source, file_path);
 
         // Pop file from container stack
-        _ = self.container_stack.pop();
+        _ = self.scope_stack.pop();
     }
 
     fn readFile(self: *Pipeline, file_path: []const u8) ![]const u8 {
@@ -172,7 +174,7 @@ pub const Pipeline = struct {
             // On exit: check if we're leaving a container body
             {
                 const node = cursor.node();
-                self.maybePopContainer(node);
+                self.maybePopScope(node);
             }
 
             descend = true;
@@ -182,7 +184,7 @@ pub const Pipeline = struct {
                 if (!cursor.gotoParent()) return;
                 {
                     const parent_node = cursor.node();
-                    self.maybePopContainer(parent_node);
+                    self.maybePopScope(parent_node);
                 }
                 if (cursor.gotoNextSibling()) break;
             }
@@ -314,9 +316,9 @@ pub const Pipeline = struct {
             try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
         }
 
-        // Push container body onto stack (§4.1)
+        // Push container onto scope stack (§4.1)
         if (node.childByFieldName(mapping.body_field)) |_| {
-            try self.container_stack.append(self.allocator, .{ .id = id, .name = name });
+            try self.scope_stack.append(self.allocator, .{ .id = id, .name = name, .kind = .container });
         }
     }
 
@@ -353,6 +355,13 @@ pub const Pipeline = struct {
         // Emit contains edge
         if (container_id) |cid| {
             try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+        }
+
+        // Push callable onto scope stack (§4.1)
+        if (mapping.body_field) |bf| {
+            if (node.childByFieldName(bf)) |_| {
+                try self.scope_stack.append(self.allocator, .{ .id = id, .name = name, .kind = .callable });
+            }
         }
     }
 
@@ -410,6 +419,13 @@ pub const Pipeline = struct {
         if (container_id) |cid| {
             try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
         }
+
+        // Push modifier onto scope stack (§4.1)
+        if (mapping.body_field) |bf| {
+            if (node.childByFieldName(bf)) |_| {
+                try self.scope_stack.append(self.allocator, .{ .id = id, .name = name, .kind = .modifier });
+            }
+        }
     }
 
     fn processEvent(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.EventMapping) !void {
@@ -451,7 +467,7 @@ pub const Pipeline = struct {
         if (self.isBuiltin(target_name, callee_node, source)) return;
 
         // Check if this is a write-call (e.g., items.push(x))
-        if (self.isWriteCallMethod(callee_node, source)) {
+        if (self.isWriteCallMethod(target_name)) {
             // Record as state_write
             const receiver_name = self.extractReceiverName(callee_node, source) orelse return;
             try self.addPendingRef(receiver_name, .state_write, node, file_path);
@@ -518,7 +534,10 @@ pub const Pipeline = struct {
             var matched = false;
             for (lang_config.unwrap_rules) |rule| {
                 if (std.mem.eql(u8, node_type, rule.ts_type)) {
-                    current = current.childByFieldName(rule.child_field) orelse return null;
+                    current = if (rule.child_field) |f|
+                        current.childByFieldName(f) orelse return null
+                    else
+                        current.namedChild(0) orelse return null;
                     matched = true;
                     break;
                 }
@@ -617,6 +636,16 @@ pub const Pipeline = struct {
         // Step 2: Resolve all other references
         while (self.graph.pending_refs.items.len > 0) {
             const ref = self.graph.pending_refs.pop().?;
+
+            // Language-specific resolve hook runs first
+            if (self.lang_config.resolve_hook) |hook| {
+                switch (hook(ref, &self.graph)) {
+                    .resolved => continue,
+                    .drop => continue,
+                    .unhandled => {},
+                }
+            }
+
             switch (ref.kind) {
                 .call => {
                     if (self.resolveInScope(ref.container, ref.target_name, .callable)) |target| {
@@ -730,13 +759,25 @@ pub const Pipeline = struct {
 
     // ── Helpers ──────────────────────────────────────────────────────
 
+    /// Top of scope stack — the innermost enclosing scope (callable, container, or file).
+    fn currentScope(self: *const Pipeline) ?u64 {
+        if (self.scope_stack.items.len == 0) return null;
+        return self.scope_stack.items[self.scope_stack.items.len - 1].id;
+    }
+
+    /// Nearest container on the scope stack.
     fn currentContainer(self: *const Pipeline) ?u64 {
-        if (self.container_stack.items.len == 0) return null;
-        return self.container_stack.items[self.container_stack.items.len - 1].id;
+        var i = self.scope_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            const frame = self.scope_stack.items[i];
+            if (frame.kind == .container or frame.kind == .file) return frame.id;
+        }
+        return null;
     }
 
     fn buildQualifiedName(self: *Pipeline, name: []const u8) ![]const u8 {
-        if (self.container_stack.items.len <= 1) {
+        if (self.scope_stack.items.len <= 1) {
             // Only file on the stack — top-level declaration
             return try self.graph.dupeString(name);
         }
@@ -746,7 +787,7 @@ pub const Pipeline = struct {
         defer parts.deinit(self.allocator);
 
         // Skip the file frame (index 0), include all container frames
-        for (self.container_stack.items[1..]) |frame| {
+        for (self.scope_stack.items[1..]) |frame| {
             try parts.append(self.allocator, frame.name);
         }
         try parts.append(self.allocator, name);
@@ -764,42 +805,29 @@ pub const Pipeline = struct {
     }
 
     fn extractCalleeName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        const kind = callee_node.kind();
-
-        // Simple identifier call: `withdraw()`
-        if (std.mem.eql(u8, kind, self.lang_config.identifier_type)) {
-            return source[callee_node.startByte()..callee_node.endByte()];
-        }
-
-        // Member expression: `vault.withdraw()` → extract rightmost identifier
-        if (std.mem.eql(u8, kind, "member_expression") or
-            std.mem.eql(u8, kind, "field_expression"))
-        {
-            // Try "property" field (JS/TS), then "field" (Rust/Cairo)
-            const field_node = callee_node.childByFieldName("property") orelse
-                callee_node.childByFieldName("field") orelse
-                return null;
-            return source[field_node.startByte()..field_node.endByte()];
-        }
-
-        // Solidity expression wrapper
-        if (std.mem.eql(u8, kind, "expression")) {
-            if (callee_node.child(0)) |inner| {
-                return self.extractCalleeName(inner, source);
+        var current = callee_node;
+        while (true) {
+            const node_type = current.kind();
+            if (std.mem.eql(u8, node_type, self.lang_config.identifier_type)) {
+                return source[current.startByte()..current.endByte()];
             }
+            var matched = false;
+            for (self.lang_config.callee_unwrap_rules) |rule| {
+                if (std.mem.eql(u8, node_type, rule.ts_type)) {
+                    current = if (rule.child_field) |f|
+                        current.childByFieldName(f) orelse return null
+                    else
+                        current.namedChild(0) orelse return null;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) return null;
         }
-
-        return null;
     }
 
     fn extractReceiverName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        if (std.mem.eql(u8, callee_node.kind(), "member_expression") or
-            std.mem.eql(u8, callee_node.kind(), "field_expression"))
-        {
-            const object = callee_node.childByFieldName("object") orelse return null;
-            return unwrapToRoot(object, source, self.lang_config);
-        }
-        return null;
+        return unwrapToRoot(callee_node, source, self.lang_config);
     }
 
     fn extractIdentifierText(self: *const Pipeline, node: ts.Node, source: []const u8) ?[]const u8 {
@@ -814,33 +842,22 @@ pub const Pipeline = struct {
         return null;
     }
 
-    fn isBuiltin(self: *const Pipeline, name: []const u8, callee_node: ts.Node, source: []const u8) bool {
-        // Check builtin function names
+    fn isBuiltin(self: *const Pipeline, callee_name: []const u8, callee_node: ts.Node, source: []const u8) bool {
         for (self.lang_config.builtin_functions) |builtin| {
-            if (std.mem.eql(u8, name, builtin)) return true;
+            if (std.mem.eql(u8, callee_name, builtin)) return true;
         }
-
-        // Check builtin receivers (e.g., msg.sender, block.timestamp)
-        if (std.mem.eql(u8, callee_node.kind(), "member_expression")) {
-            if (callee_node.childByFieldName("object")) |obj| {
-                const obj_name = source[obj.startByte()..obj.endByte()];
-                for (self.lang_config.builtin_receivers) |builtin| {
-                    if (std.mem.eql(u8, obj_name, builtin)) return true;
-                }
+        // Check builtin receivers (e.g., msg.sender → "msg" is builtin)
+        if (unwrapToRoot(callee_node, source, self.lang_config)) |receiver| {
+            for (self.lang_config.builtin_receivers) |builtin| {
+                if (std.mem.eql(u8, receiver, builtin)) return true;
             }
         }
-
         return false;
     }
 
-    fn isWriteCallMethod(self: *const Pipeline, callee_node: ts.Node, source: []const u8) bool {
-        if (std.mem.eql(u8, callee_node.kind(), "member_expression")) {
-            if (callee_node.childByFieldName("property")) |prop| {
-                const method_name = source[prop.startByte()..prop.endByte()];
-                for (self.lang_config.write_call_methods) |wcm| {
-                    if (std.mem.eql(u8, method_name, wcm)) return true;
-                }
-            }
+    fn isWriteCallMethod(self: *const Pipeline, callee_name: []const u8) bool {
+        for (self.lang_config.write_call_methods) |wcm| {
+            if (std.mem.eql(u8, callee_name, wcm)) return true;
         }
         return false;
     }
@@ -857,31 +874,59 @@ pub const Pipeline = struct {
     }
 
     fn addPendingRef(self: *Pipeline, target_name: []const u8, kind: graph.RefKind, node: ts.Node, file_path: []const u8) !void {
-        const from = self.currentContainer() orelse return;
+        const from = self.currentScope() orelse return;
+        const container = self.currentContainer() orelse return;
         try self.graph.addPendingRef(.{
             .from = from,
-            .container = from,
+            .container = container,
             .target_name = target_name,
             .call_site = self.makeLocator(node, file_path),
             .kind = kind,
         });
     }
 
-    fn maybePopContainer(self: *Pipeline, node: ts.Node) void {
-        // Pop container when we exit its body node
-        if (self.container_stack.items.len <= 1) return; // keep file frame
+    fn maybePopScope(self: *Pipeline, node: ts.Node) void {
+        if (self.scope_stack.items.len <= 1) return; // keep file frame
 
-        const top = self.container_stack.items[self.container_stack.items.len - 1];
+        const top = self.scope_stack.items[self.scope_stack.items.len - 1];
         const top_node = self.graph.lookupNode(top.id) orelse return;
         const ast = top_node.ast_node orelse return;
-
-        // Check if node is the container's body
         const kind = top_node.language_kind;
+
+        // Check containers
         for (self.lang_config.containers) |mapping| {
             if (std.mem.eql(u8, kind, mapping.ts_type)) {
                 if (ast.childByFieldName(mapping.body_field)) |body| {
                     if (node.endByte() >= body.endByte()) {
-                        _ = self.container_stack.pop();
+                        _ = self.scope_stack.pop();
+                    }
+                }
+                return;
+            }
+        }
+
+        // Check callables
+        for (self.lang_config.callables) |mapping| {
+            if (std.mem.eql(u8, kind, mapping.ts_type)) {
+                if (mapping.body_field) |bf| {
+                    if (ast.childByFieldName(bf)) |body| {
+                        if (node.endByte() >= body.endByte()) {
+                            _ = self.scope_stack.pop();
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        // Check modifiers
+        for (self.lang_config.modifiers) |mapping| {
+            if (std.mem.eql(u8, kind, mapping.ts_type)) {
+                if (mapping.body_field) |bf| {
+                    if (ast.childByFieldName(bf)) |body| {
+                        if (node.endByte() >= body.endByte()) {
+                            _ = self.scope_stack.pop();
+                        }
                     }
                 }
                 return;

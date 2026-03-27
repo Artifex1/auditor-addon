@@ -4,10 +4,10 @@ const graph = @import("graph.zig");
 
 // ── SPEC.md §5 — Walker ──────────────────────────────────────────────
 //
-// §5.1 Scope Walker: walks AST nodes within a single function body.
+// §5.1 Scope Walker: walks full file ASTs top-to-bottom.
 //       Does not follow call edges.
-// §5.2 Deep Walker: follows calls edges across function boundaries.
-//       Uses ast_node references directly.
+// §5.2 Deep Walker: same as scope, but follows resolved calls edges
+//       across function boundaries up to max_depth.
 // §5.3 Walk Context: provided to Lua hooks.
 
 pub const WalkContext = struct {
@@ -21,15 +21,13 @@ pub const WalkContext = struct {
 pub const WalkCallback = struct {
     enter_fn: *const fn (node: ts.Node, ctx: WalkContext) void,
     exit_fn: *const fn (node: ts.Node, ctx: WalkContext) void,
-    reset_fn: ?*const fn () void = null,
     finalize_fn: ?*const fn () void = null,
 };
 
-// ── §5.1 Scope Walker (Shallow) ──────────────────────────────────────
+// ── §5.1 Scope Walker ────────────────────────────────────────────────
 
-/// Walk all callable nodes in the graph, traversing each one's AST body
-/// depth-first. Calls reset() before each callable, enter()/exit() for
-/// each AST node, and finalize() after.
+/// Walk all file ASTs top-to-bottom. Fires enter()/exit() for every node.
+/// Calls finalize() once after all files are walked.
 pub fn walkScope(
     g: *const graph.SymbolGraph,
     callback: WalkCallback,
@@ -37,12 +35,9 @@ pub fn walkScope(
     var it = g.nodes.iterator();
     while (it.next()) |entry| {
         const node = entry.value_ptr.*;
-        if (node.kind != .callable) continue;
-        const ast_node = node.ast_node orelse continue;
+        if (node.kind != .file) continue;
+        const ast_root = node.ast_node orelse continue;
         const file = if (node.locator) |loc| loc.file else "";
-
-        // §5.1: reset before each function walk
-        if (callback.reset_fn) |reset| reset();
 
         const ctx = WalkContext{
             .current_file = file,
@@ -51,56 +46,56 @@ pub fn walkScope(
             .current_node = node.id,
         };
 
-        walkAstNode(ast_node, ctx, callback);
-
-        // finalize after walk
-        if (callback.finalize_fn) |finalize| finalize();
+        walkAstNode(g, ast_root, ctx, callback);
     }
+
+    if (callback.finalize_fn) |finalize| finalize();
 }
 
 /// Depth-first walk of a single AST node and its children.
-fn walkAstNode(node: ts.Node, ctx: WalkContext, callback: WalkCallback) void {
-    callback.enter_fn(node, ctx);
+/// Updates current_node when entering a graph-tracked scope (callable, container, modifier).
+fn walkAstNode(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext, callback: WalkCallback) void {
+    // Check if this AST node corresponds to a graph node (callable, container, modifier).
+    // If so, update current_node for the duration of this subtree.
+    const updated_ctx = updateContext(g, node, ctx);
+
+    callback.enter_fn(node, updated_ctx);
 
     var i: u32 = 0;
     while (i < node.childCount()) : (i += 1) {
         if (node.child(i)) |child| {
-            walkAstNode(child, ctx, callback);
+            walkAstNode(g, child, updated_ctx, callback);
         }
     }
 
-    callback.exit_fn(node, ctx);
+    callback.exit_fn(node, updated_ctx);
 }
 
 // ── §5.2 Deep Walker ─────────────────────────────────────────────────
 
-/// Walk all callable nodes, following calls edges across function
-/// boundaries up to max_depth. Also follows has_modifier edges.
+/// Walk all file ASTs top-to-bottom, following resolved calls edges
+/// across function boundaries up to max_depth. Calls finalize() once
+/// after all files are walked.
 pub fn walkDeep(
     g: *const graph.SymbolGraph,
     callback: WalkCallback,
     max_depth: u32,
+    call_expression_type: []const u8,
     allocator: std.mem.Allocator,
 ) void {
     var it = g.nodes.iterator();
     while (it.next()) |entry| {
         const node = entry.value_ptr.*;
-        if (node.kind != .callable) continue;
-        const ast_node = node.ast_node orelse continue;
+        if (node.kind != .file) continue;
+        const ast_root = node.ast_node orelse continue;
         const file = if (node.locator) |loc| loc.file else "";
 
-        if (callback.reset_fn) |reset| reset();
+        var visited: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        defer visited.deinit(allocator);
 
         var call_stack: std.ArrayList(u64) = .empty;
         defer call_stack.deinit(allocator);
         call_stack.append(allocator, node.id) catch continue;
-
-        var visited: std.AutoHashMapUnmanaged(u64, void) = .empty;
-        defer visited.deinit(allocator);
-        visited.put(allocator, node.id, {}) catch continue;
-
-        // §5.2: walk modifier bodies first
-        walkModifiers(g, node.id, callback, file, &call_stack, allocator);
 
         const ctx = WalkContext{
             .current_file = file,
@@ -109,41 +104,13 @@ pub fn walkDeep(
             .current_node = node.id,
         };
 
-        walkAstNodeDeep(g, ast_node, ctx, callback, max_depth, 0, &visited, &call_stack, allocator);
-
-        if (callback.finalize_fn) |finalize| finalize();
+        walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, &visited, &call_stack, allocator);
     }
+
+    if (callback.finalize_fn) |finalize| finalize();
 }
 
-/// Walk modifier bodies before the function body (§5.2).
-fn walkModifiers(
-    g: *const graph.SymbolGraph,
-    callable_id: u64,
-    callback: WalkCallback,
-    file: []const u8,
-    call_stack: *std.ArrayList(u64),
-    allocator: std.mem.Allocator,
-) void {
-    // Find has_modifier edges from this callable
-    for (g.edges.items) |edge| {
-        if (edge.from == callable_id and edge.kind == .has_modifier) {
-            if (g.lookupNode(edge.to)) |mod_node| {
-                if (mod_node.ast_node) |mod_ast| {
-                    const ctx = WalkContext{
-                        .current_file = file,
-                        .depth = 0,
-                        .call_stack = call_stack.items,
-                        .current_node = mod_node.id,
-                    };
-                    walkAstNode(mod_ast, ctx, callback);
-                }
-            }
-        }
-    }
-    _ = allocator;
-}
-
-/// Deep walk: follows call edges across functions.
+/// Deep walk: full AST traversal with call-edge following.
 fn walkAstNodeDeep(
     g: *const graph.SymbolGraph,
     node: ts.Node,
@@ -151,22 +118,25 @@ fn walkAstNodeDeep(
     callback: WalkCallback,
     max_depth: u32,
     depth: u32,
+    call_expression_type: []const u8,
     visited: *std.AutoHashMapUnmanaged(u64, void),
     call_stack: *std.ArrayList(u64),
     allocator: std.mem.Allocator,
 ) void {
-    callback.enter_fn(node, ctx);
+    const updated_ctx = updateContext(g, node, ctx);
+
+    callback.enter_fn(node, updated_ctx);
 
     var i: u32 = 0;
     while (i < node.childCount()) : (i += 1) {
         const child = node.child(i) orelse continue;
         const child_kind = child.kind();
 
-        // Check if this is a call expression — follow the call edge
-        if (depth < max_depth and std.mem.eql(u8, child_kind, "call_expression")) {
-            // Find outgoing calls edges from current callable
+        // Follow resolved call edges when encountering a call expression
+        if (depth < max_depth and std.mem.eql(u8, child_kind, call_expression_type)) {
             for (g.edges.items) |edge| {
-                if (edge.from == ctx.current_node and edge.kind == .calls) {
+                if (edge.from == updated_ctx.current_node and edge.kind == .calls) {
+                    if (edge.from == edge.to) continue; // skip self-edges (external calls)
                     if (visited.contains(edge.to)) continue;
                     if (g.lookupNode(edge.to)) |callee| {
                         if (callee.ast_node) |callee_ast| {
@@ -174,13 +144,13 @@ fn walkAstNodeDeep(
                             call_stack.append(allocator, callee.id) catch continue;
 
                             const deep_ctx = WalkContext{
-                                .current_file = if (callee.locator) |loc| loc.file else ctx.current_file,
+                                .current_file = if (callee.locator) |loc| loc.file else updated_ctx.current_file,
                                 .depth = depth + 1,
                                 .call_stack = call_stack.items,
                                 .current_node = callee.id,
                             };
 
-                            walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, visited, call_stack, allocator);
+                            walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, visited, call_stack, allocator);
 
                             _ = call_stack.pop();
                         }
@@ -189,10 +159,42 @@ fn walkAstNodeDeep(
             }
         }
 
-        walkAstNodeDeep(g, child, ctx, callback, max_depth, depth, visited, call_stack, allocator);
+        walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, visited, call_stack, allocator);
     }
 
-    callback.exit_fn(node, ctx);
+    callback.exit_fn(node, updated_ctx);
+}
+
+// ── Context Tracking ──────────────────────────────────────────────────
+
+/// If this AST node corresponds to a graph node (callable, container, modifier),
+/// return a context with current_node updated. Otherwise return ctx unchanged.
+fn updateContext(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext) WalkContext {
+    const line = node.startPoint().row + 1;
+    const start_byte = node.startByte();
+
+    // Look for a graph node at this position
+    var it = g.nodes.iterator();
+    while (it.next()) |entry| {
+        const gn = entry.value_ptr.*;
+        switch (gn.kind) {
+            .callable, .container, .modifier => {
+                if (gn.ast_node) |gn_ast| {
+                    if (gn_ast.startByte() == start_byte) {
+                        _ = line;
+                        return .{
+                            .current_file = ctx.current_file,
+                            .depth = ctx.depth,
+                            .call_stack = ctx.call_stack,
+                            .current_node = gn.id,
+                        };
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    return ctx;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -218,7 +220,7 @@ fn findNodeByKind(tree: *const ts.Tree, kind_name: []const u8) ?ts.Node {
     }
 }
 
-test "walkScope calls enter and exit for each AST node in callable body" {
+test "walkScope walks full file AST including contract and function nodes" {
     const allocator = std.testing.allocator;
 
     const source = "contract Foo { function bar() public { uint x = 1; } }";
@@ -228,67 +230,74 @@ test "walkScope calls enter and exit for each AST node in callable body" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    const fn_node = findNodeByKind(tree, "function_definition") orelse return error.NoFunction;
-
     var g = graph.SymbolGraph.init(allocator);
     defer g.deinit();
 
-    const fn_id = graph.nodeId("bar", "test.sol", 1);
+    // File node with AST root
+    const file_id = graph.nodeId("test.sol", "test.sol", 1);
     _ = try g.addNode(.{
-        .id = fn_id,
-        .kind = .callable,
-        .language_kind = "function_definition",
-        .name = "bar",
-        .qualified_name = "Foo.bar",
+        .id = file_id,
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "test.sol",
+        .qualified_name = "test.sol",
         .language = .solidity,
-        .ast_node = fn_node,
+        .ast_node = tree.rootNode(),
         .locator = .{ .file = "test.sol", .start_byte = 0, .end_byte = @intCast(source.len), .line = 1, .column = 0 },
     });
 
     const S = struct {
         var enter_count: u32 = 0;
         var exit_count: u32 = 0;
-        var reset_called: bool = false;
+        var finalize_called: bool = false;
+        var saw_contract: bool = false;
+        var saw_function: bool = false;
 
-        fn enter(_: ts.Node, _: WalkContext) void {
+        fn enter(node: ts.Node, _: WalkContext) void {
             enter_count += 1;
+            if (std.mem.eql(u8, node.kind(), "contract_declaration")) saw_contract = true;
+            if (std.mem.eql(u8, node.kind(), "function_definition")) saw_function = true;
         }
         fn exit(_: ts.Node, _: WalkContext) void {
             exit_count += 1;
         }
-        fn reset() void {
-            reset_called = true;
+        fn finalize() void {
+            finalize_called = true;
         }
     };
 
     S.enter_count = 0;
     S.exit_count = 0;
-    S.reset_called = false;
+    S.finalize_called = false;
+    S.saw_contract = false;
+    S.saw_function = false;
 
     walkScope(&g, .{
         .enter_fn = &S.enter,
         .exit_fn = &S.exit,
-        .reset_fn = &S.reset,
+        .finalize_fn = &S.finalize,
     });
 
     try std.testing.expect(S.enter_count > 0);
     try std.testing.expectEqual(S.enter_count, S.exit_count);
-    try std.testing.expect(S.reset_called);
+    try std.testing.expect(S.finalize_called);
+    try std.testing.expect(S.saw_contract);
+    try std.testing.expect(S.saw_function);
 }
 
-test "walkScope skips non-callable nodes" {
+test "walkScope skips nodes without ast_node" {
     const allocator = std.testing.allocator;
 
     var g = graph.SymbolGraph.init(allocator);
     defer g.deinit();
 
-    // Add a container node (no ast_node) — should be skipped
+    // File node without ast_node — should be skipped
     _ = try g.addNode(.{
-        .id = graph.nodeId("Foo", "test.sol", 1),
-        .kind = .container,
-        .language_kind = "contract_declaration",
-        .name = "Foo",
-        .qualified_name = "Foo",
+        .id = graph.nodeId("test.sol", "test.sol", 1),
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "test.sol",
+        .qualified_name = "test.sol",
         .language = .solidity,
     });
 

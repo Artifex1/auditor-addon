@@ -202,15 +202,19 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa peek: no files specified\n");
         return;
     }
 
+    // Use an arena for all peek allocations — single bulk free at the end
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+
     var all_sigs: std.ArrayList(output.FileSignatures) = .empty;
-    defer all_sigs.deinit(allocator);
 
     for (files) |file_path| {
         const lang = forced_lang orelse detectLanguage(file_path) orelse continue;
@@ -225,15 +229,15 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
         const tree = parser.parseString(source, null) orelse continue;
         defer tree.destroy();
 
-        const sigs = try peek_mod.extractSignatures(tree, source, lang_config, file_path, allocator);
+        const sigs = try peek_mod.extractSignatures(tree, source, lang_config, file_path, aa);
         var sig_texts: std.ArrayList([]const u8) = .empty;
         for (sigs) |s| {
-            try sig_texts.append(allocator, s.text);
+            try sig_texts.append(aa, s.text);
         }
 
-        try all_sigs.append(allocator, .{
+        try all_sigs.append(aa, .{
             .file = file_path,
-            .signatures = try sig_texts.toOwnedSlice(allocator),
+            .signatures = try sig_texts.toOwnedSlice(aa),
         });
     }
 
@@ -267,7 +271,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa metrics: no files specified\n");
@@ -333,7 +337,7 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     const no_expand = res.args.@"no-expand" != 0;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa gaps: no files specified\n");
@@ -385,7 +389,7 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     const use_json = res.args.json != 0;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa run: no files specified\n");
@@ -408,23 +412,29 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
         try applyResolutionFile(&pipe.graph, res_path, allocator);
     }
 
+    // Arena for all rule execution allocations (Lua string dups, hits, metadata)
+    var rule_arena = std.heap.ArenaAllocator.init(allocator);
+    defer rule_arena.deinit();
+    const ra = rule_arena.allocator();
+
     // Set up AST bridge
     var bridge = ast_bridge.AstBridge.init(allocator, &pipe.sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
     // Collect all findings across rules
     var all_findings: std.ArrayList(output.Finding) = .empty;
-    defer all_findings.deinit(allocator);
 
     // Load and execute rules
+    // Use arena allocator for rule execution (Lua string dups, hits, metadata)
+    // but bridge and lua_adapter internals use the main allocator
     // --rule-path: adhoc rule from file
     if (res.args.@"rule-path") |rule_path| {
-        try executeRule(allocator, &pipe.graph, &bridge, rule_path, null, &all_findings);
+        try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, rule_path, null, &all_findings);
     }
 
     // --rule-inline: adhoc rule from string
     if (res.args.@"rule-inline") |rule_code| {
-        try executeRule(allocator, &pipe.graph, &bridge, null, rule_code, &all_findings);
+        try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, rule_code, &all_findings);
     }
 
     // TODO: shipped rules from rules/ directory
@@ -449,14 +459,16 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
 }
 
 fn executeRule(
-    allocator: std.mem.Allocator,
+    arena_alloc: std.mem.Allocator, // for strings/hits that outlive Lua
+    lua_alloc: std.mem.Allocator, // for Lua VM and bridge internals
     g: *graph.SymbolGraph,
     bridge: *ast_bridge.AstBridge,
+    lang_config: *const cfg.LanguageConfig,
     rule_path: ?[]const u8,
     rule_code: ?[]const u8,
     all_findings: *std.ArrayList(output.Finding),
 ) !void {
-    const lua = try lua_adapter.initLua(allocator, g, bridge);
+    const lua = try lua_adapter.initLua(arena_alloc, lua_alloc, g, bridge);
     defer lua.deinit();
 
     // Load rule
@@ -469,12 +481,12 @@ fn executeRule(
 
     // Execute based on rule type
     const hits = if (std.mem.eql(u8, metadata.rule_type, "map"))
-        try lua_adapter.executeMapRule(lua, g, bridge, allocator)
+        try lua_adapter.executeMapRule(lua, g, bridge, arena_alloc)
     else
-        try lua_adapter.executeVisitorRule(lua, g, metadata, bridge, allocator);
+        try lua_adapter.executeVisitorRule(lua, g, metadata, bridge, lang_config, arena_alloc);
 
     if (hits.len > 0) {
-        try all_findings.append(allocator, .{
+        try all_findings.append(arena_alloc, .{
             .rule_id = metadata.id,
             .severity = metadata.severity,
             .name = metadata.name,
@@ -509,7 +521,7 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
         null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa call-chains: no files specified\n");
@@ -582,7 +594,7 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
-    defer allocator.free(files);
+    defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
         try stderrPrint("aa graph: no files specified\n");
@@ -670,6 +682,11 @@ fn cmdInfo(iter: anytype) !void {
 }
 
 // ── Shared Helpers ────────────────────────────────────────────────────
+
+fn freeExpandedFiles(files: []const []const u8, allocator: std.mem.Allocator) void {
+    for (files) |f| allocator.free(f);
+    allocator.free(files);
+}
 
 fn stderrPrint(msg: []const u8) !void {
     var buf: [1024]u8 = undefined;

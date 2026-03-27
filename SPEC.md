@@ -298,25 +298,35 @@ RefKind = enum {
 
 **Walk phase state:**
 
-The walk maintains a container stack to track nesting context:
+The walk maintains a scope stack to track nesting context. Both containers
+and callables are pushed — a callable inside a contract is just the next
+scope level:
 
 ```
-container_stack: ArrayList(u64)     -- stack of container node IDs
+scope_stack: ArrayList(ScopeFrame)  -- stack of scope-bearing node IDs + names
+
+ScopeFrame { id: u64, name: []const u8, kind: NodeKind }
 
 Before walking a file → create file node, push its ID
-On entering a container's body → push container node ID
-On exiting a container's body  → pop
+On entering a container's body → push container
+On entering a callable's body  → push callable
+On exiting a scope's body      → pop
 After walking a file → pop file node
-current_container = stack.last()    -- always non-null (file is always on the stack)
+
+current_scope     = stack.last()                      -- always non-null (file is always on the stack)
+current_container = nearest frame with kind=container  -- for scoped resolution
 ```
 
 The stack provides:
+- **`from` field** on `PendingRef` items: `current_scope` — the nearest
+  enclosing scope (callable or container). A call inside a function gets
+  `from = function`, not `from = contract`.
+- **`container` field** on `PendingRef` items: `current_container` — the
+  nearest enclosing container, for scoped name resolution.
 - **`container` field** on child nodes: callables, variables, modifiers, events
   get `container = current_container`.
-- **`container` field** on `PendingRef` items: scoped resolution knows which
-  container to start searching from.
 - **`qualified_name` construction**: join stack entries with "." — e.g.,
-  stack `[Vault]` + callable `withdraw` → `"Vault.withdraw"`. For nested
+  stack `[Vault, withdraw]` → `"Vault.withdraw"`. For nested
   containers (Python classes-in-classes, Rust mod-in-mod), the stack naturally
   handles depth: `[OuterMod, InnerMod]` + fn `foo` → `"OuterMod.InnerMod.foo"`.
 - **`contains` edges**: emitted between `current_container` and child nodes.
@@ -325,9 +335,10 @@ The stack provides:
 - When an import statement is encountered: record `PendingRef` with
   `kind = .import` and `target_name = raw_import_path`.
 - When a container node is encountered (per config mapping): create graph node,
-  push onto container stack. On exiting the container's body, pop.
+  push onto scope stack. On exiting the container's body, pop.
 - When a callable is encountered inside a container: create graph node, emit
-  `contains` edge from `current_container`, store `ast_node` reference directly.
+  `contains` edge from `current_container`, push onto scope stack, store
+  `ast_node` reference directly. On exiting the callable's body, pop.
 - When a variable/modifier/event is encountered: create graph node, emit
   `contains` edge from `current_container`.
 - When a call expression is encountered: record `PendingRef` with `kind = .call`.

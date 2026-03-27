@@ -161,7 +161,7 @@ pub const WritePattern = struct {
 
 pub const UnwrapRule = struct {
     ts_type: []const u8,
-    child_field: []const u8,
+    child_field: ?[]const u8, // null = transparent wrapper, take first named child
 };
 
 pub const InheritanceStrategy = enum {
@@ -179,6 +179,18 @@ pub const MetricsConfig = struct {
 };
 
 pub const CustomHandlerFn = *const fn (*graph.SymbolGraph, ts.Node, []const u8) void;
+
+/// Result of a language-specific resolve hook.
+pub const ResolveAction = union(enum) {
+    /// Hook didn't handle this ref — run default resolution.
+    unhandled,
+    /// Hook emitted edge(s) and/or gap(s) itself. Skip default resolution.
+    resolved,
+    /// Discard this ref entirely. No edge, no gap.
+    drop,
+};
+
+pub const ResolveHookFn = *const fn (ref: graph.PendingRef, g: *graph.SymbolGraph) ResolveAction;
 
 pub const LanguageConfig = struct {
     language: Language,
@@ -208,12 +220,17 @@ pub const LanguageConfig = struct {
     builtin_functions: []const []const u8 = &.{},
     builtin_receivers: []const []const u8 = &.{},
 
-    // Expression unwrapping
+    // Expression unwrapping (walks toward root identifier, e.g. balances[x] → balances)
     unwrap_rules: []const UnwrapRule,
+    // Callee unwrapping (walks toward callee name, e.g. vault.withdraw() → withdraw)
+    callee_unwrap_rules: []const UnwrapRule = &.{},
     identifier_type: []const u8,
 
-    // Custom handler for edge cases
+    // Custom handler for edge cases during walk
     custom_handler: ?CustomHandlerFn = null,
+
+    // Language-specific resolve hook (§4.1) — called before default resolution
+    resolve_hook: ?ResolveHookFn = null,
 
     // Metrics
     metrics: MetricsConfig,

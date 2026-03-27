@@ -52,16 +52,21 @@ pub const config = cfg.LanguageConfig{
 
     .unwrap_rules = &.{
         .{ .ts_type = "member_expression", .child_field = "object" },
-        .{ .ts_type = "subscript_expression", .child_field = "object" },
-        .{ .ts_type = "slice_expression", .child_field = "object" },
+        .{ .ts_type = "array_access", .child_field = "base" },
+        .{ .ts_type = "slice_access", .child_field = "base" },
         .{ .ts_type = "parenthesized_expression", .child_field = "expression" },
         .{ .ts_type = "type_cast_expression", .child_field = "expression" },
-        // Solidity wraps sub-expressions in "expression" nodes
-        .{ .ts_type = "expression", .child_field = "expression" },
+        .{ .ts_type = "expression", .child_field = null }, // transparent wrapper
+    },
+    .callee_unwrap_rules = &.{
+        .{ .ts_type = "member_expression", .child_field = "property" },
+        .{ .ts_type = "struct_expression", .child_field = "type" }, // addr.call{value: x} → addr.call
+        .{ .ts_type = "expression", .child_field = null }, // transparent wrapper
     },
     .identifier_type = "identifier",
 
     .custom_handler = &solidityCustomHandler,
+    .resolve_hook = &solidityResolveHook,
 
     .metrics = .{
         .branching_types = &.{
@@ -92,6 +97,45 @@ fn solidityCustomHandler(_: *graph.SymbolGraph, node: ts.Node, _: []const u8) vo
         // using SafeMath for uint256 — attaches library methods to a type
         // TODO: record using-for relationship for call resolution
     }
+}
+
+const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delegatecall", "staticcall" };
+
+/// Solidity resolve hook: external low-level calls (.call, .send, .transfer,
+/// .delegatecall, .staticcall) emit a calls edge with target_kind=external
+/// AND a gap so the agent can optionally resolve the target contract.
+fn solidityResolveHook(ref: graph.PendingRef, g: *graph.SymbolGraph) cfg.ResolveAction {
+    if (ref.kind != .call) return .unhandled;
+
+    for (&external_call_methods) |ecm| {
+        if (std.mem.eql(u8, ref.target_name, ecm)) {
+            // Emit edge: from callable, self-referencing (no resolved target)
+            g.addEdge(.{
+                .from = ref.from,
+                .to = ref.from,
+                .kind = .calls,
+                .attrs = .{
+                    .call_site_byte = ref.call_site.start_byte,
+                    .call_site_line = ref.call_site.line,
+                    .target_kind = .external,
+                },
+            }) catch {};
+
+            // Also emit gap for optional agent resolution
+            const gap_id = graph.gapId(ref.from, ref.target_name, .calls);
+            _ = g.addGap(.{
+                .id = gap_id,
+                .from = ref.from,
+                .expected_target = ref.target_name,
+                .edge_kind = .calls,
+                .call_site = ref.call_site,
+                .priority = .low,
+            }) catch {};
+
+            return .resolved;
+        }
+    }
+    return .unhandled;
 }
 
 const std = @import("std");

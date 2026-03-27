@@ -9,30 +9,32 @@ const graph = @import("graph.zig");
 // The table is cleared between rule invocations to prevent unbounded growth.
 
 pub const AstBridge = struct {
+    allocator: std.mem.Allocator,
     handles: std.ArrayList(ts.Node),
     /// Source text keyed by file path — for node text extraction.
     sources: *const std.StringHashMapUnmanaged([]const u8),
 
-    pub fn init(_: std.mem.Allocator, sources: *const std.StringHashMapUnmanaged([]const u8)) AstBridge {
+    pub fn init(allocator: std.mem.Allocator, sources: *const std.StringHashMapUnmanaged([]const u8)) AstBridge {
         return .{
+            .allocator = allocator,
             .handles = .empty,
             .sources = sources,
         };
     }
 
-    pub fn deinit(self: *AstBridge, allocator: std.mem.Allocator) void {
-        self.handles.deinit(allocator);
+    pub fn deinit(self: *AstBridge) void {
+        self.handles.deinit(self.allocator);
     }
 
     /// Clear all handles. Called between rule invocations (§7).
-    pub fn clear(self: *AstBridge, _: std.mem.Allocator) void {
+    pub fn clear(self: *AstBridge) void {
         self.handles.shrinkRetainingCapacity(0);
     }
 
     /// Register a ts.Node and return its integer handle.
-    pub fn pushNode(self: *AstBridge, node: ts.Node, allocator: std.mem.Allocator) !u32 {
+    pub fn pushNode(self: *AstBridge, node: ts.Node) !u32 {
         const idx: u32 = @intCast(self.handles.items.len);
-        try self.handles.append(allocator, node);
+        try self.handles.append(self.allocator, node);
         return idx;
     }
 
@@ -64,75 +66,75 @@ pub const AstBridge = struct {
     // ── SPEC.md §6.4 — ast.* API implementations ────────────────────
 
     /// ast.node(graph_node_id) -> handle
-    pub fn nodeFromGraph(self: *AstBridge, g: *const graph.SymbolGraph, node_id: u64, allocator: std.mem.Allocator) !?u32 {
+    pub fn nodeFromGraph(self: *AstBridge, g: *const graph.SymbolGraph, node_id: u64) !?u32 {
         const gn = g.lookupNode(node_id) orelse return null;
         const ast_node = gn.ast_node orelse return null;
-        return try self.pushNode(ast_node, allocator);
+        return try self.pushNode(ast_node);
     }
 
     /// ast.children(handle) -> []handle
-    pub fn children(self: *AstBridge, handle: u32, allocator: std.mem.Allocator) ![]u32 {
+    pub fn children(self: *AstBridge, handle: u32) ![]u32 {
         const node = self.getNode(handle) orelse return &.{};
         const count = node.childCount();
         var result: std.ArrayList(u32) = .empty;
         var i: u32 = 0;
         while (i < count) : (i += 1) {
             if (node.child(i)) |child| {
-                const h = try self.pushNode(child, allocator);
-                try result.append(allocator, h);
+                const h = try self.pushNode(child);
+                try result.append(self.allocator, h);
             }
         }
-        return try result.toOwnedSlice(allocator);
+        return try result.toOwnedSlice(self.allocator);
     }
 
     /// ast.named_children(handle) -> []handle
-    pub fn namedChildren(self: *AstBridge, handle: u32, allocator: std.mem.Allocator) ![]u32 {
+    pub fn namedChildren(self: *AstBridge, handle: u32) ![]u32 {
         const node = self.getNode(handle) orelse return &.{};
         const count = node.namedChildCount();
         var result: std.ArrayList(u32) = .empty;
         var i: u32 = 0;
         while (i < count) : (i += 1) {
             if (node.namedChild(i)) |child| {
-                const h = try self.pushNode(child, allocator);
-                try result.append(allocator, h);
+                const h = try self.pushNode(child);
+                try result.append(self.allocator, h);
             }
         }
-        return try result.toOwnedSlice(allocator);
+        return try result.toOwnedSlice(self.allocator);
     }
 
     /// ast.child(handle, index) -> ?handle
-    pub fn childAt(self: *AstBridge, handle: u32, index: u32, allocator: std.mem.Allocator) !?u32 {
+    pub fn childAt(self: *AstBridge, handle: u32, index: u32) !?u32 {
         const node = self.getNode(handle) orelse return null;
         const child = node.child(index) orelse return null;
-        return try self.pushNode(child, allocator);
+        return try self.pushNode(child);
     }
 
     /// ast.child_by_field(handle, field_name) -> ?handle
-    pub fn childByField(self: *AstBridge, handle: u32, field_name: []const u8, allocator: std.mem.Allocator) !?u32 {
+    pub fn childByField(self: *AstBridge, handle: u32, field_name: []const u8) !?u32 {
         const node = self.getNode(handle) orelse return null;
         const child = node.childByFieldName(field_name) orelse return null;
-        return try self.pushNode(child, allocator);
+        return try self.pushNode(child);
     }
 
     /// ast.parent(handle) -> ?handle
-    pub fn parentOf(self: *AstBridge, handle: u32, allocator: std.mem.Allocator) !?u32 {
+    pub fn parentOf(self: *AstBridge, handle: u32) !?u32 {
         const node = self.getNode(handle) orelse return null;
         const p = node.parent() orelse return null;
-        return try self.pushNode(p, allocator);
+        return try self.pushNode(p);
     }
 
     /// ast.next_sibling(handle) -> ?handle
-    pub fn nextSibling(self: *AstBridge, handle: u32, allocator: std.mem.Allocator) !?u32 {
+    pub fn nextSibling(self: *AstBridge, handle: u32) !?u32 {
         const node = self.getNode(handle) orelse return null;
         const sib = node.nextNamedSibling() orelse return null;
-        return try self.pushNode(sib, allocator);
+        return try self.pushNode(sib);
     }
 
     /// ast.prev_sibling(handle) -> ?handle
-    pub fn prevSibling(self: *AstBridge, handle: u32, allocator: std.mem.Allocator) !?u32 {
+    pub fn prevSibling(self: *AstBridge, handle: u32) !?u32 {
         const node = self.getNode(handle) orelse return null;
         const sib = node.prevNamedSibling() orelse return null;
-        return try self.pushNode(sib, allocator);
+        return try self.pushNode(sib);
     }
 
     /// ast.type(handle) -> string
@@ -148,22 +150,22 @@ pub const AstBridge = struct {
     }
 
     /// ast.find(handle, type_name) -> []handle (recursive descendant search)
-    pub fn findDescendants(self: *AstBridge, handle: u32, type_name: []const u8, allocator: std.mem.Allocator) ![]u32 {
+    pub fn findDescendants(self: *AstBridge, handle: u32, type_name: []const u8) ![]u32 {
         const node = self.getNode(handle) orelse return &.{};
         var result: std.ArrayList(u32) = .empty;
-        try self.findDescendantsRecursive(node, type_name, &result, allocator);
-        return try result.toOwnedSlice(allocator);
+        try self.findDescendantsRecursive(node, type_name, &result);
+        return try result.toOwnedSlice(self.allocator);
     }
 
-    fn findDescendantsRecursive(self: *AstBridge, node: ts.Node, type_name: []const u8, result: *std.ArrayList(u32), allocator: std.mem.Allocator) !void {
+    fn findDescendantsRecursive(self: *AstBridge, node: ts.Node, type_name: []const u8, result: *std.ArrayList(u32)) !void {
         var i: u32 = 0;
         while (i < node.childCount()) : (i += 1) {
             if (node.child(i)) |child| {
                 if (std.mem.eql(u8, child.kind(), type_name)) {
-                    const h = try self.pushNode(child, allocator);
-                    try result.append(allocator, h);
+                    const h = try self.pushNode(child);
+                    try result.append(self.allocator, h);
                 }
-                try self.findDescendantsRecursive(child, type_name, result, allocator);
+                try self.findDescendantsRecursive(child, type_name, result);
             }
         }
     }
@@ -218,10 +220,10 @@ test "pushNode and getNode round-trip" {
     try sources.put(allocator, "test.sol", source);
 
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
     const root = tree.rootNode();
-    const handle = try bridge.pushNode(root, allocator);
+    const handle = try bridge.pushNode(root);
     const retrieved = bridge.getNode(handle);
 
     try std.testing.expect(retrieved != null);
@@ -233,7 +235,7 @@ test "getNode returns null for invalid handle" {
 
     var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
     try std.testing.expect(bridge.getNode(999) == null);
 }
@@ -250,9 +252,9 @@ test "nodeType returns tree-sitter kind" {
 
     var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
-    const handle = try bridge.pushNode(tree.rootNode(), allocator);
+    const handle = try bridge.pushNode(tree.rootNode());
     try std.testing.expectEqualStrings("source_file", bridge.nodeType(handle).?);
 }
 
@@ -268,10 +270,10 @@ test "children returns child handles" {
 
     var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
-    const root_handle = try bridge.pushNode(tree.rootNode(), allocator);
-    const child_handles = try bridge.children(root_handle, allocator);
+    const root_handle = try bridge.pushNode(tree.rootNode());
+    const child_handles = try bridge.children(root_handle);
     defer allocator.free(child_handles);
 
     try std.testing.expect(child_handles.len > 0);
@@ -297,12 +299,12 @@ test "clear resets handle table" {
 
     var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
-    _ = try bridge.pushNode(tree.rootNode(), allocator);
+    _ = try bridge.pushNode(tree.rootNode());
     try std.testing.expectEqual(@as(usize, 1), bridge.handles.items.len);
 
-    bridge.clear(allocator);
+    bridge.clear();
     try std.testing.expectEqual(@as(usize, 0), bridge.handles.items.len);
 }
 
@@ -321,9 +323,9 @@ test "nodeText returns source text slice" {
     try sources.put(allocator, "test.sol", source);
 
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
-    const handle = try bridge.pushNode(tree.rootNode(), allocator);
+    const handle = try bridge.pushNode(tree.rootNode());
     const text = bridge.textOf(handle);
     try std.testing.expect(text != null);
     try std.testing.expectEqualStrings(source, text.?);
@@ -341,8 +343,8 @@ test "startLine returns 1-indexed line number" {
 
     var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
     var bridge = AstBridge.init(allocator, &sources);
-    defer bridge.deinit(allocator);
+    defer bridge.deinit();
 
-    const handle = try bridge.pushNode(tree.rootNode(), allocator);
+    const handle = try bridge.pushNode(tree.rootNode());
     try std.testing.expectEqual(@as(u32, 1), bridge.startLine(handle).?);
 }

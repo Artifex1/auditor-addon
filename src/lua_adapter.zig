@@ -1,6 +1,7 @@
 const std = @import("std");
 const zlua = @import("zlua");
 const ts = @import("tree-sitter");
+const cfg = @import("languages/config.zig");
 const graph = @import("graph.zig");
 const ast_bridge = @import("ast_bridge.zig");
 const walker = @import("walker.zig");
@@ -38,13 +39,16 @@ pub const LoadedRule = struct {
 };
 
 /// Initialize a Lua state with graph.*, ast.*, and report.* APIs registered.
-pub fn initLua(allocator: std.mem.Allocator, g: *const graph.SymbolGraph, bridge: *ast_bridge.AstBridge) !*Lua {
+/// Initialize Lua with registered APIs.
+/// `string_allocator` owns strings that outlive Lua (hits, metadata).
+/// `lua_allocator` owns the Lua VM and bridge internals.
+pub fn initLua(string_allocator: std.mem.Allocator, lua_allocator: std.mem.Allocator, g: *const graph.SymbolGraph, bridge: *ast_bridge.AstBridge) !*Lua {
     g_graph = g;
     g_bridge = bridge;
-    g_allocator = allocator;
+    g_allocator = string_allocator;
     g_hits = .empty;
 
-    const lua = try Lua.init(allocator);
+    const lua = try Lua.init(lua_allocator);
     lua.openLibs();
 
     // Register graph.* table (§6.3)
@@ -84,11 +88,12 @@ fn readRuleMetadata(lua: *Lua) !RuleMetadata {
         return error.NoRuleTable;
     }
 
-    const id = getStringField(lua, "id") orelse "unknown";
-    const name = getStringField(lua, "name") orelse "unnamed";
-    const severity = getStringField(lua, "severity") orelse "info";
-    const rule_type = getStringField(lua, "type") orelse "scope";
-    const description = getStringField(lua, "description") orelse "";
+    // Dupe strings from Lua into g_allocator so they outlive the Lua state
+    const id = g_allocator.dupe(u8, getStringField(lua, "id") orelse "unknown") catch return error.OutOfMemory;
+    const name = g_allocator.dupe(u8, getStringField(lua, "name") orelse "unnamed") catch return error.OutOfMemory;
+    const severity = g_allocator.dupe(u8, getStringField(lua, "severity") orelse "info") catch return error.OutOfMemory;
+    const rule_type = g_allocator.dupe(u8, getStringField(lua, "type") orelse "scope") catch return error.OutOfMemory;
+    const description = g_allocator.dupe(u8, getStringField(lua, "description") orelse "") catch return error.OutOfMemory;
 
     // max_depth
     _ = lua.getField(-1, "max_depth");
@@ -127,6 +132,7 @@ pub fn executeVisitorRule(
     g: *const graph.SymbolGraph,
     metadata: RuleMetadata,
     bridge: *ast_bridge.AstBridge,
+    lang_config: *const cfg.LanguageConfig,
     allocator: std.mem.Allocator,
 ) ![]output.Hit {
     g_graph = g;
@@ -137,7 +143,6 @@ pub fn executeVisitorRule(
     const cb = walker.WalkCallback{
         .enter_fn = &luaEnterCallback,
         .exit_fn = &luaExitCallback,
-        .reset_fn = &luaResetCallback,
         .finalize_fn = &luaFinalizeCallback,
     };
 
@@ -145,13 +150,13 @@ pub fn executeVisitorRule(
     g_lua = lua;
 
     if (std.mem.eql(u8, metadata.rule_type, "deep")) {
-        walker.walkDeep(g, cb, metadata.max_depth, allocator);
+        walker.walkDeep(g, cb, metadata.max_depth, lang_config.call_expression.ts_type, allocator);
     } else {
         walker.walkScope(g, cb);
     }
 
     // Clear AST handles between rules (§7)
-    bridge.clear(allocator);
+    bridge.clear();
 
     return try g_hits.toOwnedSlice(allocator);
 }
@@ -176,7 +181,7 @@ pub fn executeMapRule(
     }
     lua.protectedCall(.{ .args = 0, .results = 0 }) catch {};
 
-    bridge.clear(allocator);
+    bridge.clear();
 
     return try g_hits.toOwnedSlice(allocator);
 }
@@ -184,15 +189,6 @@ pub fn executeMapRule(
 // ── Walker Callbacks ─────────────────────────────────────────────────
 
 var g_lua: *Lua = undefined;
-
-fn luaResetCallback() void {
-    _ = g_lua.getGlobal("reset") catch return;
-    if (!g_lua.isFunction(-1)) {
-        g_lua.pop(1);
-        return;
-    }
-    g_lua.protectedCall(.{ .args = 0, .results = 0 }) catch {};
-}
 
 fn luaFinalizeCallback() void {
     _ = g_lua.getGlobal("finalize") catch return;
@@ -212,13 +208,16 @@ fn luaExitCallback(node: ts.Node, ctx: walker.WalkContext) void {
 }
 
 fn callLuaHook(hook_name: [:0]const u8, node: ts.Node, ctx: walker.WalkContext) void {
+    // Ensure enough stack space for function + 2 tables + fields
+    g_lua.checkStack(20) catch return;
+
     _ = g_lua.getGlobal(hook_name) catch return;
     if (!g_lua.isFunction(-1)) {
         g_lua.pop(1);
         return;
     }
 
-    // Push node table: {kind, line, file, name}
+    // Push node table: {kind, line, file, name, handle}
     pushAstNodeTable(node, ctx);
 
     // Push context table: {depth, current_file, current_node}
@@ -253,7 +252,7 @@ fn pushAstNodeTable(node: ts.Node, ctx: walker.WalkContext) void {
     g_lua.setField(-2, "name");
 
     // Register as AST handle so Lua can use ast.* on it
-    const handle = g_bridge.pushNode(node, g_allocator) catch 0;
+    const handle = g_bridge.pushNode(node) catch 0;
     g_lua.pushInteger(@intCast(handle));
     g_lua.setField(-2, "handle");
 }
@@ -267,7 +266,8 @@ fn pushContextTable(ctx: walker.WalkContext) void {
     _ = g_lua.pushString(ctx.current_file);
     g_lua.setField(-2, "current_file");
 
-    g_lua.pushInteger(@intCast(ctx.current_node));
+    // Node IDs are u64 hashes — push as i64 (Lua 5.5 integers are 64-bit)
+    g_lua.pushInteger(@bitCast(ctx.current_node));
     g_lua.setField(-2, "current_node");
 }
 
@@ -322,7 +322,7 @@ fn luaGraphGetNodesByKind(lua: *Lua) i32 {
 }
 
 fn luaGraphGetNode(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const node = g_graph.lookupNode(id) orelse {
         lua.pushNil();
         return 1;
@@ -332,7 +332,7 @@ fn luaGraphGetNode(lua: *Lua) i32 {
 }
 
 fn luaGraphGetProperty(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const key = lua.toString(2) catch return 0;
     const node = g_graph.lookupNode(id) orelse {
         lua.pushNil();
@@ -346,8 +346,21 @@ fn luaGraphGetProperty(lua: *Lua) i32 {
     return 1;
 }
 
+fn pushEdgeAttrs(lua: *Lua, edge: graph.GraphEdge) void {
+    if (edge.attrs) |attrs| {
+        if (attrs.call_site_line) |line| {
+            lua.pushInteger(@intCast(line));
+            lua.setField(-2, "call_site_line");
+        }
+        if (attrs.target_kind) |tk| {
+            _ = lua.pushString(@tagName(tk));
+            lua.setField(-2, "target_kind");
+        }
+    }
+}
+
 fn luaGraphGetOutgoingEdges(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const kind_filter: ?graph.EdgeKind = if (lua.isString(2))
         std.meta.stringToEnum(graph.EdgeKind, lua.toString(2) catch "")
     else
@@ -358,18 +371,19 @@ fn luaGraphGetOutgoingEdges(lua: *Lua) i32 {
 
     lua.createTable(@intCast(edges.len), 0);
     for (edges, 0..) |edge, i| {
-        lua.createTable(0, 3);
-        lua.pushInteger(@intCast(edge.to));
+        lua.createTable(0, 5);
+        lua.pushInteger(@bitCast(edge.to));
         lua.setField(-2, "to");
         _ = lua.pushString(@tagName(edge.kind));
         lua.setField(-2, "kind");
+        pushEdgeAttrs(lua, edge);
         lua.rawSetIndex(-2, @intCast(i + 1));
     }
     return 1;
 }
 
 fn luaGraphGetIncomingEdges(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const kind_filter: ?graph.EdgeKind = if (lua.isString(2))
         std.meta.stringToEnum(graph.EdgeKind, lua.toString(2) catch "")
     else
@@ -380,18 +394,19 @@ fn luaGraphGetIncomingEdges(lua: *Lua) i32 {
 
     lua.createTable(@intCast(edges.len), 0);
     for (edges, 0..) |edge, i| {
-        lua.createTable(0, 3);
-        lua.pushInteger(@intCast(edge.from));
+        lua.createTable(0, 5);
+        lua.pushInteger(@bitCast(edge.from));
         lua.setField(-2, "from");
         _ = lua.pushString(@tagName(edge.kind));
         lua.setField(-2, "kind");
+        pushEdgeAttrs(lua, edge);
         lua.rawSetIndex(-2, @intCast(i + 1));
     }
     return 1;
 }
 
 fn luaGraphGetChildren(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const children_ids = g_graph.getChildren(id);
 
     lua.createTable(@intCast(children_ids.len), 0);
@@ -405,7 +420,7 @@ fn luaGraphGetChildren(lua: *Lua) i32 {
 }
 
 fn luaGraphGetParent(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const node = g_graph.lookupNode(id) orelse {
         lua.pushNil();
         return 1;
@@ -421,7 +436,7 @@ fn luaGraphGetParent(lua: *Lua) i32 {
 }
 
 fn luaGraphGetCallers(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const edges = g_graph.getIncomingEdges(id, .calls, g_allocator) catch return 0;
     defer g_allocator.free(edges);
 
@@ -436,7 +451,7 @@ fn luaGraphGetCallers(lua: *Lua) i32 {
 }
 
 fn luaGraphGetCallees(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
     const edges = g_graph.getOutgoingEdges(id, .calls, g_allocator) catch return 0;
     defer g_allocator.free(edges);
 
@@ -453,7 +468,7 @@ fn luaGraphGetCallees(lua: *Lua) i32 {
 fn pushGraphNodeTable(lua: *Lua, node: *graph.GraphNode) void {
     lua.createTable(0, 6);
 
-    lua.pushInteger(@intCast(node.id));
+    lua.pushInteger(@bitCast(node.id));
     lua.setField(-2, "id");
 
     _ = lua.pushString(@tagName(node.kind));
@@ -531,8 +546,8 @@ fn registerAstApi(lua: *Lua) void {
 }
 
 fn luaAstNode(lua: *Lua) i32 {
-    const id: u64 = @intCast(lua.toInteger(1) catch return 0);
-    const handle = g_bridge.nodeFromGraph(g_graph, id, g_allocator) catch return 0;
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
+    const handle = g_bridge.nodeFromGraph(g_graph, id) catch return 0;
     if (handle) |h| {
         lua.pushInteger(@intCast(h));
         return 1;
@@ -543,8 +558,8 @@ fn luaAstNode(lua: *Lua) i32 {
 
 fn luaAstChildren(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
-    const handles = g_bridge.children(handle, g_allocator) catch return 0;
-    defer g_allocator.free(handles);
+    const handles = g_bridge.children(handle) catch return 0;
+    defer g_bridge.allocator.free(handles);
 
     lua.createTable(@intCast(handles.len), 0);
     for (handles, 0..) |h, i| {
@@ -556,8 +571,8 @@ fn luaAstChildren(lua: *Lua) i32 {
 
 fn luaAstNamedChildren(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
-    const handles = g_bridge.namedChildren(handle, g_allocator) catch return 0;
-    defer g_allocator.free(handles);
+    const handles = g_bridge.namedChildren(handle) catch return 0;
+    defer g_bridge.allocator.free(handles);
 
     lua.createTable(@intCast(handles.len), 0);
     for (handles, 0..) |h, i| {
@@ -570,7 +585,7 @@ fn luaAstNamedChildren(lua: *Lua) i32 {
 fn luaAstChild(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
     const index: u32 = @intCast(lua.toInteger(2) catch return 0);
-    const h = g_bridge.childAt(handle, index, g_allocator) catch return 0;
+    const h = g_bridge.childAt(handle, index) catch return 0;
     if (h) |val| {
         lua.pushInteger(@intCast(val));
     } else {
@@ -582,7 +597,7 @@ fn luaAstChild(lua: *Lua) i32 {
 fn luaAstChildByField(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
     const field = lua.toString(2) catch return 0;
-    const h = g_bridge.childByField(handle, field, g_allocator) catch return 0;
+    const h = g_bridge.childByField(handle, field) catch return 0;
     if (h) |val| {
         lua.pushInteger(@intCast(val));
     } else {
@@ -593,7 +608,7 @@ fn luaAstChildByField(lua: *Lua) i32 {
 
 fn luaAstParent(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
-    const h = g_bridge.parentOf(handle, g_allocator) catch return 0;
+    const h = g_bridge.parentOf(handle) catch return 0;
     if (h) |val| {
         lua.pushInteger(@intCast(val));
     } else {
@@ -604,7 +619,7 @@ fn luaAstParent(lua: *Lua) i32 {
 
 fn luaAstNextSibling(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
-    const h = g_bridge.nextSibling(handle, g_allocator) catch return 0;
+    const h = g_bridge.nextSibling(handle) catch return 0;
     if (h) |val| {
         lua.pushInteger(@intCast(val));
     } else {
@@ -615,7 +630,7 @@ fn luaAstNextSibling(lua: *Lua) i32 {
 
 fn luaAstPrevSibling(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
-    const h = g_bridge.prevSibling(handle, g_allocator) catch return 0;
+    const h = g_bridge.prevSibling(handle) catch return 0;
     if (h) |val| {
         lua.pushInteger(@intCast(val));
     } else {
@@ -647,8 +662,8 @@ fn luaAstText(lua: *Lua) i32 {
 fn luaAstFind(lua: *Lua) i32 {
     const handle: u32 = @intCast(lua.toInteger(1) catch return 0);
     const type_name = lua.toString(2) catch return 0;
-    const handles = g_bridge.findDescendants(handle, type_name, g_allocator) catch return 0;
-    defer g_allocator.free(handles);
+    const handles = g_bridge.findDescendants(handle, type_name) catch return 0;
+    defer g_bridge.allocator.free(handles);
 
     lua.createTable(@intCast(handles.len), 0);
     for (handles, 0..) |h, i| {
@@ -700,11 +715,12 @@ fn registerReportApi(lua: *Lua) void {
 }
 
 /// report.hit({file, line, node_text})
+/// Strings are duped into g_allocator since Lua owns its string memory.
 fn luaReportHit(lua: *Lua) i32 {
     if (!lua.isTable(1)) return 0;
 
     _ = lua.getField(1, "file");
-    const file = lua.toString(-1) catch "";
+    const file_raw = lua.toString(-1) catch "";
     lua.pop(1);
 
     _ = lua.getField(1, "line");
@@ -715,8 +731,12 @@ fn luaReportHit(lua: *Lua) i32 {
     lua.pop(1);
 
     _ = lua.getField(1, "node_text");
-    const node_text = lua.toString(-1) catch "";
+    const text_raw = lua.toString(-1) catch "";
     lua.pop(1);
+
+    // Dupe strings — Lua GC will collect the originals after rule execution
+    const file = g_allocator.dupe(u8, file_raw) catch return 0;
+    const node_text = g_allocator.dupe(u8, text_raw) catch return 0;
 
     g_hits.append(g_allocator, .{
         .file = file,

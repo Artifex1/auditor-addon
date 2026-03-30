@@ -4,7 +4,7 @@ const graph = @import("graph.zig");
 // ── SPEC.md §11 — Call Chains ─────────────────────────────────────────
 //
 // Maps caller→callee relationships through the graph.
-// DFS from root nodes (callables with no incoming calls edges).
+// DFS from root nodes (callables with no incoming call refs).
 
 pub const CallChain = struct {
     path: []const []const u8, // sequence of callable names
@@ -14,7 +14,22 @@ pub const RootChainSet = struct {
     root_name: []const u8,
     root_id: u64,
     chains: std.ArrayList(CallChain),
+
+    pub fn deinit(self: *RootChainSet, allocator: std.mem.Allocator) void {
+        for (self.chains.items) |chain| {
+            allocator.free(chain.path);
+        }
+        self.chains.deinit(allocator);
+    }
 };
+
+/// Free an array of RootChainSets returned by computeCallChains.
+pub fn freeCallChains(results: []RootChainSet, allocator: std.mem.Allocator) void {
+    for (results) |*cs| {
+        cs.deinit(allocator);
+    }
+    allocator.free(results);
+}
 
 /// Compute call chains from all roots or specific named roots.
 /// Returns one RootChainSet per root.
@@ -51,7 +66,7 @@ pub fn computeCallChains(
     return results.toOwnedSlice(allocator);
 }
 
-/// Find root nodes: callables with no incoming `calls` edges,
+/// Find root nodes: callables with no incoming `call` refs,
 /// or specific nodes if root_filter is provided.
 pub fn findRoots(
     g: *const graph.SymbolGraph,
@@ -77,10 +92,8 @@ pub fn findRoots(
             if (!matched) continue;
             try roots.append(allocator, node);
         } else {
-            // Check if this callable has any incoming calls edges
-            const incoming = try g.getIncomingEdges(node.id, .calls, allocator);
-            defer allocator.free(incoming);
-            if (incoming.len == 0) {
+            // Check if this callable has any incoming call refs
+            if (!g.hasIncomingRefs(node.id, .call)) {
                 try roots.append(allocator, node);
             }
         }
@@ -89,7 +102,7 @@ pub fn findRoots(
     return roots.toOwnedSlice(allocator);
 }
 
-/// DFS traversal following outgoing calls edges.
+/// DFS traversal following outgoing call refs.
 fn dfs(
     g: *const graph.SymbolGraph,
     node_id: u64,
@@ -108,27 +121,27 @@ fn dfs(
     try visited.put(allocator, node_id, {});
     try path.append(allocator, node_name);
 
-    // Get outgoing calls
-    const callees = try g.getOutgoingEdges(node_id, .calls, allocator);
-    defer allocator.free(callees);
+    // Get outgoing call refs
+    const refs = try g.getOutgoingRefs(node_id, .call, allocator);
+    defer allocator.free(refs);
 
-    if (callees.len == 0) {
+    // Collect all callee targets from refs
+    var has_callees = false;
+    for (refs) |ref| {
+        for (ref.targets.items) |target| {
+            if (g.lookupNode(target)) |callee_node| {
+                has_callees = true;
+                try dfs(g, callee_node.id, callee_node.name, path, visited, chains, max_depth, depth + 1, allocator);
+            }
+        }
+    }
+
+    if (!has_callees) {
         // Leaf node — record chain if it has more than just the root
         if (path.items.len > 1) {
             const chain_path = try allocator.dupe([]const u8, path.items);
             try chains.append(allocator, .{ .path = chain_path });
         }
-    } else {
-        for (callees) |edge| {
-            if (g.lookupNode(edge.to)) |callee_node| {
-                try dfs(g, callee_node.id, callee_node.name, path, visited, chains, max_depth, depth + 1, allocator);
-            }
-        }
-
-        // If this is a non-leaf that also has calls, record the direct path too
-        // (only if no children were visited — all children were in visited set)
-        // Actually per spec: record each unique caller→callee path. The DFS
-        // already records at leaves, which captures full paths.
     }
 
     _ = path.pop();
@@ -167,7 +180,17 @@ test "findRoots: callable with no incoming calls is root" {
         .language = .solidity,
     });
 
-    try g.addEdge(.{ .from = a_id, .to = b_id, .kind = .calls });
+    var targets: std.ArrayListUnmanaged(u64) = .empty;
+    try targets.append(std.testing.allocator, b_id);
+    try g.addRef(.{
+        .id = graph.refId("test.sol", 10),
+        .from = a_id,
+        .kind = .call,
+        .target_name = "B",
+        .site = .{ .file = "test.sol", .start_byte = 10, .end_byte = 20, .line = 2, .column = 0 },
+        .targets = targets,
+        .resolved = true,
+    });
 
     const roots = try findRoots(&g, null, std.testing.allocator);
     defer std.testing.allocator.free(roots);

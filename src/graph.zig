@@ -13,17 +13,16 @@ pub const NodeKind = enum {
     event,
 };
 
-// ── §2.3 Edge Types ───────────────────────────────────────────────────
+// ── §2.4 Reference Types ─────────────────────────────────────────────
 
-pub const EdgeKind = enum {
-    imports,
-    contains,
-    calls,
-    reads,
-    writes,
-    has_modifier,
-    inherits,
-    emits,
+pub const RefKind = enum {
+    import,
+    call,
+    inheritance,
+    state_read,
+    state_write,
+    modifier_use,
+    event_emit,
 };
 
 pub const CallTargetKind = enum {
@@ -34,10 +33,46 @@ pub const CallTargetKind = enum {
     unknown,
 };
 
-pub const EdgeAttrs = struct {
-    call_site_byte: ?u32 = null,
-    call_site_line: ?u32 = null,
+pub const Priority = enum {
+    high,
+    medium,
+    low,
+};
+
+pub const Reference = struct {
+    id: u64, // hash(file, start_byte)
+    from: u64, // enclosing scope node (callable or container)
+    kind: RefKind,
+    target_name: []const u8,
+    site: SourceLocator,
+
+    // Resolution: 0..N target node IDs
+    targets: std.ArrayListUnmanaged(u64),
     target_kind: ?CallTargetKind = null,
+
+    // Gap signal (orthogonal to targets)
+    gap: ?Priority = null,
+    resolved: bool = false,
+
+    pub fn hasTargets(self: *const Reference) bool {
+        return self.targets.items.len > 0;
+    }
+
+    pub fn firstTarget(self: *const Reference) ?u64 {
+        if (self.targets.items.len > 0) return self.targets.items[0];
+        return null;
+    }
+
+    pub fn addTarget(self: *Reference, allocator: std.mem.Allocator, target_id: u64) !void {
+        try self.targets.append(allocator, target_id);
+    }
+};
+
+// ── §2.3 Contains Edge (Structural) ──────────────────────────────────
+
+pub const ContainsEdge = struct {
+    from: u64,
+    to: u64,
 };
 
 // ── §2.1 Graph Node ───────────────────────────────────────────────────
@@ -64,52 +99,6 @@ pub const GraphNode = struct {
     properties: std.StringHashMapUnmanaged([]const u8) = .empty,
 };
 
-// ── §2.3 Graph Edge ───────────────────────────────────────────────────
-
-pub const GraphEdge = struct {
-    from: u64,
-    to: u64,
-    kind: EdgeKind,
-    attrs: ?EdgeAttrs = null,
-};
-
-// ── §2.4 Edge Gaps ────────────────────────────────────────────────────
-
-pub const Priority = enum {
-    high,
-    medium,
-    low,
-};
-
-pub const EdgeGap = struct {
-    id: u64,
-    from: u64,
-    expected_target: []const u8,
-    edge_kind: EdgeKind,
-    call_site: ?SourceLocator = null,
-    priority: Priority,
-};
-
-// ── §4.1 Pending References ───────────────────────────────────────────
-
-pub const RefKind = enum {
-    import,
-    call,
-    inheritance,
-    state_read,
-    state_write,
-    modifier_use,
-    event_emit,
-};
-
-pub const PendingRef = struct {
-    from: u64, // source node (callable or container)
-    container: u64, // container context for scoped lookups
-    target_name: []const u8,
-    call_site: SourceLocator,
-    kind: RefKind,
-};
-
 // ── §2.5 Content-Addressed IDs ────────────────────────────────────────
 
 pub fn nodeId(name: []const u8, file: []const u8, line: u32) u64 {
@@ -120,37 +109,36 @@ pub fn nodeId(name: []const u8, file: []const u8, line: u32) u64 {
     return hasher.final();
 }
 
-pub fn gapId(from: u64, expected_target: []const u8, edge_kind: EdgeKind) u64 {
+pub fn refId(file: []const u8, start_byte: u32) u64 {
     var hasher = std.hash.Wyhash.init(0);
-    hasher.update(std.mem.asBytes(&from));
-    hasher.update(expected_target);
-    hasher.update(std.mem.asBytes(&@intFromEnum(edge_kind)));
+    hasher.update(file);
+    hasher.update(std.mem.asBytes(&start_byte));
     return hasher.final();
 }
 
-// ── Symbol Graph ──────────────────────────────────────────────────────
+// ── §2.6 Symbol Graph ────────────────────────────────────────────────
 
 pub const SymbolGraph = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
     nodes: std.AutoHashMapUnmanaged(u64, *GraphNode),
-    edges: std.ArrayListUnmanaged(GraphEdge),
-    gaps: std.AutoHashMapUnmanaged(u64, *EdgeGap),
-    pending_refs: std.ArrayListUnmanaged(PendingRef),
+    contains: std.ArrayListUnmanaged(ContainsEdge),
+    refs: std.ArrayListUnmanaged(Reference),
 
-    // Reverse index: container_id → children node IDs
+    // Indices
     children_index: std.AutoHashMapUnmanaged(u64, std.ArrayListUnmanaged(u64)),
+    site_index: std.AutoHashMapUnmanaged(u64, u32), // ref.id → index in refs
 
     pub fn init(backing_allocator: std.mem.Allocator) SymbolGraph {
         return .{
             .allocator = backing_allocator,
             .arena = std.heap.ArenaAllocator.init(backing_allocator),
             .nodes = .empty,
-            .edges = .empty,
-            .gaps = .empty,
-            .pending_refs = .empty,
+            .contains = .empty,
+            .refs = .empty,
             .children_index = .empty,
+            .site_index = .empty,
         };
     }
 
@@ -161,9 +149,15 @@ pub const SymbolGraph = struct {
             entry.value_ptr.deinit(self.allocator);
         }
         self.children_index.deinit(self.allocator);
-        self.pending_refs.deinit(self.allocator);
-        self.gaps.deinit(self.allocator);
-        self.edges.deinit(self.allocator);
+
+        // Free target lists inside references
+        for (self.refs.items) |*r| {
+            r.targets.deinit(self.allocator);
+        }
+        self.refs.deinit(self.allocator);
+
+        self.site_index.deinit(self.allocator);
+        self.contains.deinit(self.allocator);
         self.nodes.deinit(self.allocator);
         self.arena.deinit();
     }
@@ -172,6 +166,8 @@ pub const SymbolGraph = struct {
     pub fn dupeString(self: *SymbolGraph, s: []const u8) ![]const u8 {
         return self.arena.allocator().dupe(u8, s);
     }
+
+    // ── Node operations ──────────────────────────────────────────────
 
     pub fn addNode(self: *SymbolGraph, node: GraphNode) !*GraphNode {
         const alloc = self.arena.allocator();
@@ -191,64 +187,17 @@ pub const SymbolGraph = struct {
         return ptr;
     }
 
-    pub fn addEdge(self: *SymbolGraph, edge: GraphEdge) !void {
-        try self.edges.append(self.allocator, edge);
-    }
-
-    pub fn addGap(self: *SymbolGraph, gap: EdgeGap) !*EdgeGap {
-        const alloc = self.arena.allocator();
-        const ptr = try alloc.create(EdgeGap);
-        ptr.* = gap;
-        try self.gaps.put(self.allocator, gap.id, ptr);
-        return ptr;
-    }
-
-    pub fn addPendingRef(self: *SymbolGraph, ref: PendingRef) !void {
-        try self.pending_refs.append(self.allocator, ref);
-    }
-
     pub fn lookupNode(self: *const SymbolGraph, id: u64) ?*GraphNode {
         return self.nodes.get(id);
     }
 
-    pub fn lookupGap(self: *const SymbolGraph, id: u64) ?*EdgeGap {
-        return self.gaps.get(id);
-    }
-
-    /// Get all outgoing edges from a node, optionally filtered by kind.
-    pub fn getOutgoingEdges(self: *const SymbolGraph, from_id: u64, kind_filter: ?EdgeKind, allocator: std.mem.Allocator) ![]const GraphEdge {
-        var result: std.ArrayListUnmanaged(GraphEdge) = .empty;
-        for (self.edges.items) |edge| {
-            if (edge.from == from_id) {
-                if (kind_filter) |k| {
-                    if (edge.kind != k) continue;
-                }
-                try result.append(allocator, edge);
-            }
-        }
-        return try result.toOwnedSlice(allocator);
-    }
-
-    /// Get all incoming edges to a node, optionally filtered by kind.
-    pub fn getIncomingEdges(self: *const SymbolGraph, to_id: u64, kind_filter: ?EdgeKind, allocator: std.mem.Allocator) ![]const GraphEdge {
-        var result: std.ArrayListUnmanaged(GraphEdge) = .empty;
-        for (self.edges.items) |edge| {
-            if (edge.to == to_id) {
-                if (kind_filter) |k| {
-                    if (edge.kind != k) continue;
-                }
-                try result.append(allocator, edge);
-            }
-        }
-        return try result.toOwnedSlice(allocator);
-    }
-
-    /// Get children node IDs of a container.
-    pub fn getChildren(self: *const SymbolGraph, container_id: u64) []const u64 {
-        if (self.children_index.get(container_id)) |list| {
-            return list.items;
-        }
-        return &.{};
+    /// Derive the enclosing container for a scope node.
+    /// If the node is itself a container, returns its own ID.
+    /// Otherwise returns node.container (the parent container).
+    pub fn containerOf(self: *const SymbolGraph, scope_id: u64) ?u64 {
+        const node = self.nodes.get(scope_id) orelse return null;
+        if (node.kind == .container or node.kind == .file) return scope_id;
+        return node.container orelse scope_id;
     }
 
     /// Find a container node by name (for inheritance resolution).
@@ -275,14 +224,18 @@ pub const SymbolGraph = struct {
         return null;
     }
 
-    /// Remove a gap by ID (used when resolution promotes it to a concrete edge).
-    pub fn removeGap(self: *SymbolGraph, id: u64) bool {
-        return self.gaps.remove(id);
+    /// Get children node IDs of a container.
+    pub fn getChildren(self: *const SymbolGraph, container_id: u64) []const u64 {
+        if (self.children_index.get(container_id)) |list| {
+            return list.items;
+        }
+        return &.{};
     }
 
     /// Get all nodes of a specific kind.
     pub fn getNodesByKind(self: *const SymbolGraph, kind: NodeKind, allocator: std.mem.Allocator) ![]const *GraphNode {
         var result: std.ArrayListUnmanaged(*GraphNode) = .empty;
+        errdefer result.deinit(allocator);
         var it = self.nodes.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.*.kind == kind) {
@@ -292,17 +245,124 @@ pub const SymbolGraph = struct {
         return try result.toOwnedSlice(allocator);
     }
 
-    /// Get total counts for summary output.
+    // ── Contains edge operations ─────────────────────────────────────
+
+    pub fn addContains(self: *SymbolGraph, from: u64, to: u64) !void {
+        try self.contains.append(self.allocator, .{ .from = from, .to = to });
+    }
+
+    // ── Reference operations ─────────────────────────────────────────
+
+    pub fn addRef(self: *SymbolGraph, ref: Reference) !void {
+        try self.refs.append(self.allocator, ref);
+    }
+
+    /// Build site_index after resolution. Maps each ref.id → index in refs.
+    pub fn buildSiteIndex(self: *SymbolGraph) !void {
+        self.site_index.clearRetainingCapacity();
+        for (self.refs.items, 0..) |ref, idx| {
+            try self.site_index.put(self.allocator, ref.id, @intCast(idx));
+        }
+    }
+
+    /// O(1) lookup of reference by ref_id (requires buildSiteIndex).
+    pub fn lookupRef(self: *const SymbolGraph, rid: u64) ?*const Reference {
+        if (self.site_index.get(rid)) |idx| {
+            return &self.refs.items[idx];
+        }
+        return null;
+    }
+
+    /// Mutable O(1) lookup of reference by ref_id.
+    pub fn lookupRefMut(self: *SymbolGraph, rid: u64) ?*Reference {
+        if (self.site_index.get(rid)) |idx| {
+            return &self.refs.items[idx];
+        }
+        return null;
+    }
+
+    /// Get all outgoing references from a node, optionally filtered by kind.
+    /// Returns a slice allocated with the provided allocator.
+    pub fn getOutgoingRefs(self: *const SymbolGraph, from_id: u64, kind_filter: ?RefKind, allocator: std.mem.Allocator) ![]const Reference {
+        var result: std.ArrayListUnmanaged(Reference) = .empty;
+        errdefer result.deinit(allocator);
+        for (self.refs.items) |ref| {
+            if (ref.from == from_id and ref.resolved and ref.hasTargets()) {
+                if (kind_filter) |k| {
+                    if (ref.kind != k) continue;
+                }
+                try result.append(allocator, ref);
+            }
+        }
+        return try result.toOwnedSlice(allocator);
+    }
+
+    /// Get all incoming references to a node, optionally filtered by kind.
+    pub fn getIncomingRefs(self: *const SymbolGraph, target_id: u64, kind_filter: ?RefKind, allocator: std.mem.Allocator) ![]const Reference {
+        var result: std.ArrayListUnmanaged(Reference) = .empty;
+        errdefer result.deinit(allocator);
+        for (self.refs.items) |ref| {
+            if (!ref.resolved or !ref.hasTargets()) continue;
+            if (kind_filter) |k| {
+                if (ref.kind != k) continue;
+            }
+            for (ref.targets.items) |target| {
+                if (target == target_id) {
+                    try result.append(allocator, ref);
+                    break;
+                }
+            }
+        }
+        return try result.toOwnedSlice(allocator);
+    }
+
+    /// Check if a node has any incoming references of a given kind.
+    pub fn hasIncomingRefs(self: *const SymbolGraph, target_id: u64, kind_filter: RefKind) bool {
+        for (self.refs.items) |ref| {
+            if (!ref.resolved or !ref.hasTargets()) continue;
+            if (ref.kind != kind_filter) continue;
+            for (ref.targets.items) |target| {
+                if (target == target_id) return true;
+            }
+        }
+        return false;
+    }
+
+    /// Get resolved inheritance targets for a container (for resolveInScope).
+    /// Returns target node IDs in insertion order (preserves declaration order).
+    pub fn getResolvedInheritanceTargets(self: *const SymbolGraph, container_id: u64, allocator: std.mem.Allocator) ![]const u64 {
+        var result: std.ArrayListUnmanaged(u64) = .empty;
+        errdefer result.deinit(allocator);
+        for (self.refs.items) |ref| {
+            if (ref.from == container_id and ref.kind == .inheritance and ref.resolved and ref.hasTargets()) {
+                for (ref.targets.items) |target| {
+                    try result.append(allocator, target);
+                }
+            }
+        }
+        return try result.toOwnedSlice(allocator);
+    }
+
+    // ── Counts ───────────────────────────────────────────────────────
+
     pub fn nodeCount(self: *const SymbolGraph) u32 {
         return @intCast(self.nodes.count());
     }
 
-    pub fn edgeCount(self: *const SymbolGraph) u32 {
-        return @intCast(self.edges.items.len);
+    pub fn containsCount(self: *const SymbolGraph) u32 {
+        return @intCast(self.contains.items.len);
+    }
+
+    pub fn refCount(self: *const SymbolGraph) u32 {
+        return @intCast(self.refs.items.len);
     }
 
     pub fn gapCount(self: *const SymbolGraph) u32 {
-        return @intCast(self.gaps.count());
+        var count: u32 = 0;
+        for (self.refs.items) |ref| {
+            if (ref.gap != null) count += 1;
+        }
+        return count;
     }
 };
 
@@ -322,15 +382,21 @@ test "nodeId differs for different inputs" {
     try std.testing.expect(id1 != id3);
 }
 
-test "gapId is deterministic" {
-    const id1 = gapId(123, "onlyOwner", .calls);
-    const id2 = gapId(123, "onlyOwner", .calls);
+test "refId is deterministic" {
+    const id1 = refId("src/Vault.sol", 100);
+    const id2 = refId("src/Vault.sol", 100);
     try std.testing.expectEqual(id1, id2);
 }
 
-test "gapId differs for different edge kinds" {
-    const id1 = gapId(123, "Ownable", .calls);
-    const id2 = gapId(123, "Ownable", .inherits);
+test "refId differs for different byte offsets" {
+    const id1 = refId("src/Vault.sol", 100);
+    const id2 = refId("src/Vault.sol", 200);
+    try std.testing.expect(id1 != id2);
+}
+
+test "refId differs for different files" {
+    const id1 = refId("src/Vault.sol", 100);
+    const id2 = refId("src/Ownable.sol", 100);
     try std.testing.expect(id1 != id2);
 }
 
@@ -353,7 +419,7 @@ test "SymbolGraph add and lookup node" {
     try std.testing.expectEqualStrings("Vault", found.?.name);
 }
 
-test "SymbolGraph children index" {
+test "SymbolGraph children index via addNode" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
@@ -383,42 +449,464 @@ test "SymbolGraph children index" {
     try std.testing.expectEqual(fn_id, children[0]);
 }
 
-test "SymbolGraph add and lookup gap" {
+test "SymbolGraph contains edges" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
-    const from = nodeId("withdraw", "src/Vault.sol", 10);
-    const gap = gapId(from, "onlyOwner", .calls);
-    _ = try g.addGap(.{
-        .id = gap,
-        .from = from,
-        .expected_target = "onlyOwner",
-        .edge_kind = .calls,
-        .priority = .high,
-    });
+    try g.addContains(1, 2);
+    try g.addContains(1, 3);
 
-    try std.testing.expect(g.lookupGap(gap) != null);
-    try std.testing.expect(g.removeGap(gap));
-    try std.testing.expect(g.lookupGap(gap) == null);
+    try std.testing.expectEqual(@as(u32, 2), g.containsCount());
+    try std.testing.expectEqual(@as(u64, 2), g.contains.items[0].to);
+    try std.testing.expectEqual(@as(u64, 3), g.contains.items[1].to);
 }
 
-test "SymbolGraph edges" {
+test "Reference lifecycle: pending → resolved with target" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
-    try g.addEdge(.{ .from = 1, .to = 2, .kind = .calls });
-    try g.addEdge(.{ .from = 1, .to = 3, .kind = .contains });
-    try g.addEdge(.{ .from = 4, .to = 1, .kind = .calls });
+    var ref = Reference{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "withdraw",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
+        .targets = .empty,
+    };
 
-    const outgoing = try g.getOutgoingEdges(1, null, std.testing.allocator);
-    defer std.testing.allocator.free(outgoing);
-    try std.testing.expectEqual(@as(usize, 2), outgoing.len);
+    // Starts pending
+    try std.testing.expect(!ref.resolved);
+    try std.testing.expect(!ref.hasTargets());
 
-    const calls_only = try g.getOutgoingEdges(1, .calls, std.testing.allocator);
-    defer std.testing.allocator.free(calls_only);
-    try std.testing.expectEqual(@as(usize, 1), calls_only.len);
+    // Resolve with target
+    try ref.addTarget(std.testing.allocator, 42);
+    ref.resolved = true;
+    defer ref.targets.deinit(std.testing.allocator);
 
-    const incoming = try g.getIncomingEdges(1, .calls, std.testing.allocator);
+    try std.testing.expect(ref.resolved);
+    try std.testing.expect(ref.hasTargets());
+    try std.testing.expectEqual(@as(u64, 42), ref.firstTarget().?);
+}
+
+test "Reference lifecycle: pending → gap" {
+    const ref = Reference{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "onlyOwner",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    };
+
+    try std.testing.expect(ref.resolved);
+    try std.testing.expect(!ref.hasTargets());
+    try std.testing.expectEqual(Priority.high, ref.gap.?);
+}
+
+test "Reference lifecycle: provisional (target + gap)" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    var ref = Reference{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "call",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
+        .targets = .empty,
+        .target_kind = .external,
+        .gap = .low,
+        .resolved = true,
+    };
+    defer ref.targets.deinit(std.testing.allocator);
+
+    // Has gap AND could have a target
+    try std.testing.expect(ref.resolved);
+    try std.testing.expect(ref.gap != null);
+    try std.testing.expectEqual(CallTargetKind.external, ref.target_kind.?);
+}
+
+test "Reference multi-target (dynamic dispatch)" {
+    var ref = Reference{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "withdraw",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
+        .targets = .empty,
+        .gap = .low,
+        .resolved = true,
+    };
+    defer ref.targets.deinit(std.testing.allocator);
+
+    try ref.addTarget(std.testing.allocator, 100);
+    try ref.addTarget(std.testing.allocator, 200);
+
+    try std.testing.expectEqual(@as(usize, 2), ref.targets.items.len);
+    try std.testing.expectEqual(@as(u64, 100), ref.targets.items[0]);
+    try std.testing.expectEqual(@as(u64, 200), ref.targets.items[1]);
+}
+
+test "SymbolGraph addRef and site_index lookup" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const rid = refId("test.sol", 50);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "withdraw",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
+        .targets = .empty,
+        .resolved = true,
+    });
+
+    try g.buildSiteIndex();
+
+    const found = g.lookupRef(rid);
+    try std.testing.expect(found != null);
+    try std.testing.expectEqualStrings("withdraw", found.?.target_name);
+
+    // Not found
+    const missing = g.lookupRef(refId("other.sol", 50));
+    try std.testing.expect(missing == null);
+}
+
+test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Resolved call ref with target
+    var ref1_targets: std.ArrayListUnmanaged(u64) = .empty;
+    try ref1_targets.append(std.testing.allocator, 10);
+    try g.addRef(.{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = ref1_targets,
+        .resolved = true,
+    });
+
+    // Resolved write ref with target
+    var ref2_targets: std.ArrayListUnmanaged(u64) = .empty;
+    try ref2_targets.append(std.testing.allocator, 20);
+    try g.addRef(.{
+        .id = refId("test.sol", 70),
+        .from = 1,
+        .kind = .state_write,
+        .target_name = "balance",
+        .site = .{ .file = "test.sol", .start_byte = 70, .end_byte = 80, .line = 7, .column = 0 },
+        .targets = ref2_targets,
+        .resolved = true,
+    });
+
+    // Unresolved gap (no targets)
+    try g.addRef(.{
+        .id = refId("test.sol", 90),
+        .from = 1,
+        .kind = .call,
+        .target_name = "bar",
+        .site = .{ .file = "test.sol", .start_byte = 90, .end_byte = 100, .line = 9, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    // All outgoing from node 1
+    const all = try g.getOutgoingRefs(1, null, std.testing.allocator);
+    defer std.testing.allocator.free(all);
+    try std.testing.expectEqual(@as(usize, 2), all.len); // only resolved with targets
+
+    // Only calls
+    const calls = try g.getOutgoingRefs(1, .call, std.testing.allocator);
+    defer std.testing.allocator.free(calls);
+    try std.testing.expectEqual(@as(usize, 1), calls.len);
+    try std.testing.expectEqualStrings("foo", calls[0].target_name);
+}
+
+test "SymbolGraph getIncomingRefs" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    var targets: std.ArrayListUnmanaged(u64) = .empty;
+    try targets.append(std.testing.allocator, 10);
+
+    try g.addRef(.{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = targets,
+        .resolved = true,
+    });
+
+    const incoming = try g.getIncomingRefs(10, .call, std.testing.allocator);
     defer std.testing.allocator.free(incoming);
     try std.testing.expectEqual(@as(usize, 1), incoming.len);
+    try std.testing.expectEqual(@as(u64, 1), incoming[0].from);
+
+    // No incoming to nonexistent target
+    const none = try g.getIncomingRefs(999, .call, std.testing.allocator);
+    defer std.testing.allocator.free(none);
+    try std.testing.expectEqual(@as(usize, 0), none.len);
+}
+
+test "SymbolGraph hasIncomingRefs" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    var targets: std.ArrayListUnmanaged(u64) = .empty;
+    try targets.append(std.testing.allocator, 10);
+
+    try g.addRef(.{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = targets,
+        .resolved = true,
+    });
+
+    try std.testing.expect(g.hasIncomingRefs(10, .call));
+    try std.testing.expect(!g.hasIncomingRefs(10, .state_write));
+    try std.testing.expect(!g.hasIncomingRefs(999, .call));
+}
+
+test "SymbolGraph getResolvedInheritanceTargets preserves order" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // contract C is A, B → inheritance refs added in order A, B
+    var t1: std.ArrayListUnmanaged(u64) = .empty;
+    try t1.append(std.testing.allocator, 100);
+    try g.addRef(.{
+        .id = refId("test.sol", 10),
+        .from = 1,
+        .kind = .inheritance,
+        .target_name = "A",
+        .site = .{ .file = "test.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
+        .targets = t1,
+        .resolved = true,
+    });
+
+    var t2: std.ArrayListUnmanaged(u64) = .empty;
+    try t2.append(std.testing.allocator, 200);
+    try g.addRef(.{
+        .id = refId("test.sol", 30),
+        .from = 1,
+        .kind = .inheritance,
+        .target_name = "B",
+        .site = .{ .file = "test.sol", .start_byte = 30, .end_byte = 40, .line = 1, .column = 20 },
+        .targets = t2,
+        .resolved = true,
+    });
+
+    const parents = try g.getResolvedInheritanceTargets(1, std.testing.allocator);
+    defer std.testing.allocator.free(parents);
+    try std.testing.expectEqual(@as(usize, 2), parents.len);
+    try std.testing.expectEqual(@as(u64, 100), parents[0]); // A first
+    try std.testing.expectEqual(@as(u64, 200), parents[1]); // B second
+}
+
+test "SymbolGraph gapCount counts refs with gap annotation" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Gap ref
+    try g.addRef(.{
+        .id = refId("test.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "missing",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    });
+
+    // Resolved (no gap)
+    try g.addRef(.{
+        .id = refId("test.sol", 70),
+        .from = 1,
+        .kind = .call,
+        .target_name = "found",
+        .site = .{ .file = "test.sol", .start_byte = 70, .end_byte = 80, .line = 7, .column = 0 },
+        .targets = .empty,
+        .resolved = true,
+    });
+
+    // Provisional (target + gap)
+    try g.addRef(.{
+        .id = refId("test.sol", 90),
+        .from = 1,
+        .kind = .call,
+        .target_name = "external",
+        .site = .{ .file = "test.sol", .start_byte = 90, .end_byte = 100, .line = 9, .column = 0 },
+        .targets = .empty,
+        .gap = .low,
+        .resolved = true,
+    });
+
+    try std.testing.expectEqual(@as(u32, 2), g.gapCount()); // gap + provisional
+    try std.testing.expectEqual(@as(u32, 3), g.refCount());
+}
+
+test "SymbolGraph lookupRefMut allows mutation" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const rid = refId("test.sol", 50);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+    });
+
+    try g.buildSiteIndex();
+
+    // Mutate: add target and clear gap (simulating resolution)
+    if (g.lookupRefMut(rid)) |ref| {
+        try ref.addTarget(g.allocator, 42);
+        ref.gap = null;
+        ref.resolved = true;
+    }
+
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expect(ref.resolved);
+    try std.testing.expect(ref.gap == null);
+    try std.testing.expectEqual(@as(u64, 42), ref.firstTarget().?);
+}
+
+test "lookupContainerByName" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    _ = try g.addNode(.{
+        .id = nodeId("Vault", "test.sol", 1),
+        .kind = .container,
+        .language_kind = "contract_declaration",
+        .name = "Vault",
+        .qualified_name = "Vault",
+        .language = .solidity,
+    });
+
+    _ = try g.addNode(.{
+        .id = nodeId("withdraw", "test.sol", 5),
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "withdraw",
+        .qualified_name = "Vault.withdraw",
+        .language = .solidity,
+    });
+
+    try std.testing.expect(g.lookupContainerByName("Vault") != null);
+    try std.testing.expect(g.lookupContainerByName("Missing") == null);
+    // callable is not a container
+    try std.testing.expect(g.lookupContainerByName("withdraw") == null);
+}
+
+test "lookupChildByName" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const cid = nodeId("Vault", "test.sol", 1);
+    _ = try g.addNode(.{
+        .id = cid,
+        .kind = .container,
+        .language_kind = "contract_declaration",
+        .name = "Vault",
+        .qualified_name = "Vault",
+        .language = .solidity,
+    });
+
+    _ = try g.addNode(.{
+        .id = nodeId("withdraw", "test.sol", 5),
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "withdraw",
+        .qualified_name = "Vault.withdraw",
+        .container = cid,
+        .language = .solidity,
+    });
+
+    _ = try g.addNode(.{
+        .id = nodeId("balance", "test.sol", 3),
+        .kind = .variable,
+        .language_kind = "state_variable_declaration",
+        .name = "balance",
+        .qualified_name = "Vault.balance",
+        .container = cid,
+        .language = .solidity,
+    });
+
+    // Find callable by name
+    try std.testing.expect(g.lookupChildByName(cid, "withdraw", .callable) != null);
+    // Wrong kind
+    try std.testing.expect(g.lookupChildByName(cid, "withdraw", .variable) == null);
+    // Find variable by name
+    try std.testing.expect(g.lookupChildByName(cid, "balance", .variable) != null);
+    // Not found
+    try std.testing.expect(g.lookupChildByName(cid, "missing", .callable) == null);
+}
+
+test "two calls to same target produce different refIds" {
+    // This is the key bug the old model had — gapId(from, "transfer", .calls) would collide
+    const id1 = refId("src/Vault.sol", 100); // first call to transfer()
+    const id2 = refId("src/Vault.sol", 200); // second call to transfer()
+    try std.testing.expect(id1 != id2);
+}
+
+test "SymbolGraph deinit cleans up all allocations" {
+    // This test verifies no leaks by running under the testing allocator
+    var g = SymbolGraph.init(std.testing.allocator);
+
+    _ = try g.addNode(.{
+        .id = nodeId("Vault", "test.sol", 1),
+        .kind = .container,
+        .language_kind = "contract_declaration",
+        .name = "Vault",
+        .qualified_name = "Vault",
+        .language = .solidity,
+    });
+
+    const fn_id = nodeId("withdraw", "test.sol", 5);
+    _ = try g.addNode(.{
+        .id = fn_id,
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "withdraw",
+        .qualified_name = "Vault.withdraw",
+        .container = nodeId("Vault", "test.sol", 1),
+        .language = .solidity,
+    });
+
+    try g.addContains(nodeId("Vault", "test.sol", 1), fn_id);
+
+    var targets: std.ArrayListUnmanaged(u64) = .empty;
+    try targets.append(std.testing.allocator, fn_id);
+
+    try g.addRef(.{
+        .id = refId("test.sol", 50),
+        .from = fn_id,
+        .kind = .call,
+        .target_name = "withdraw",
+        .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = targets,
+        .resolved = true,
+    });
+
+    try g.buildSiteIndex();
+
+    g.deinit(); // testing allocator will catch leaks
 }

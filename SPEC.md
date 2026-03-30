@@ -4,16 +4,20 @@ Port of the auditor-addon static analysis engine from TypeScript to a Zig CLI wi
 
 ## 1. Design Principles
 
-- **80/20 graph construction**: Zig builds nodes and easy edges deterministically. Hard edges (deep inheritance resolution, type-resolved state access, cross-contract dispatch) are annotated as **gaps** for an LLM agent to fill.
+- **80/20 graph construction**: Zig builds nodes and resolves easy references deterministically. Hard references (deep inheritance resolution, type-resolved state access, cross-contract dispatch) are annotated as **gaps** for an LLM agent to fill.
+- **Unified reference model**: Every non-structural relationship (calls, reads, writes, modifiers, inheritance, imports, emits) is a **Reference** — a site-specific link from source location to zero or more target nodes. References replace the old edge/gap/PendingRef split with a single type that carries resolution state.
 - **Config-driven adapters**: Language-specific knowledge is expressed as declarative config (node type mappings, field names, property extraction) + minimal Zig custom handlers for edge cases.
 - **Common taxonomy**: Rules target a language-agnostic node model. Language-specific detail is accessible via the AST bridge for pattern-level rules.
 - **Lua rules with visitor pattern**: Rules define `enter(node)`/`exit(node)` hooks. The Zig walker drives traversal (scope or deep), Lua reacts. No iteration boilerplate in rules.
 - **Two rule families**: Visitor rules (AST-aware, walker-driven) and Map rules (graph-only, no AST walking).
-- **Import-driven file expansion**: A single scan automatically discovers imports, parses referenced files, and iterates until no new files are found. Nodes are cheap to rebuild; edges are the persisted artifact.
+- **Import-driven file expansion**: A single scan automatically discovers imports, parses referenced files, and iterates until no new files are found. Nodes are cheap to rebuild; references are the persisted artifact.
 
 ---
 
 ## 2. Data Model
+
+The graph has three concepts: **Nodes** (declared source entities), **Contains
+edges** (structural parent→child), and **References** (all other relationships).
 
 ### 2.1 Graph Node
 
@@ -65,91 +69,100 @@ package-level functions (Go) use the file node as their container directly.
 
 Languages that lack a concept simply produce no nodes of that kind. Rules that check for it find nothing and move on.
 
-### 2.3 Edges
+### 2.3 Contains Edges (Structural)
+
+Contains edges are the only traditional graph edges. They model the structural
+parent→child relationship between containers and their members:
 
 ```
-GraphEdge {
-    from:       u64
-    to:         u64
-    kind:       EdgeKind
-    attrs:      ?EdgeAttrs
+ContainsEdge {
+    from:   u64     -- container (file, contract, class, impl, module)
+    to:     u64     -- child (callable, variable, modifier, event, nested container)
+}
+```
+
+Contains edges are set at walk time, always concrete, never unresolved. They are
+not references — they don't go through resolution and never become gaps.
+
+### 2.4 References (Unified Relationship Model)
+
+Every non-structural relationship in the graph is a **Reference** — a site-specific
+link from a source location to zero or more target nodes. References unify what
+was previously three separate types: `PendingRef`, `GraphEdge`, and `EdgeGap`.
+
+A reference is identified by its source location (`hash(file, start_byte)`) and
+carries orthogonal resolution and gap state:
+
+```
+Reference {
+    id:           u64               -- hash(file, start_byte), unique per source location
+    from:         u64               -- enclosing scope node (callable or container)
+    container:    u64               -- enclosing container (for scoped resolution)
+    kind:         RefKind           -- what type of reference this is
+    target_name:  []const u8        -- name being referenced (always preserved)
+    site:         SourceLocator     -- where the reference occurs in source
+
+    -- Resolution: 0..N target node IDs
+    targets:      []u64             -- empty = unresolved, 1 = normal, N = dispatch
+    target_kind:  ?CallTargetKind  -- for call refs: internal, external, etc.
+
+    -- Gap signal (orthogonal to targets)
+    gap:          ?Priority         -- non-null = agent should look at this
+    resolved:     bool              -- true once resolution has been attempted
 }
 
-EdgeKind = enum {
-    imports,        -- file → file
-    contains,       -- container → member
-    calls,          -- callable → callable
-    reads,          -- callable → variable
-    writes,         -- callable → variable (state modification)
-    has_modifier,   -- callable → modifier
-    inherits,       -- container → container (parent)
-    emits,          -- callable → event
-}
-
-EdgeAttrs = struct {
-    -- For call edges: where the call happens (for execution path display)
-    call_site_byte: ?u32
-    call_site_line: ?u32
-    -- For call edges: classification
-    target_kind:    ?CallTargetKind     -- internal | cross_module | external | interface_dispatch
+RefKind = enum {
+    import,         -- file → file
+    call,           -- callable → callable
+    inheritance,    -- container → container (parent)
+    state_read,     -- callable → variable
+    state_write,    -- callable → variable (state modification)
+    modifier_use,   -- callable → modifier
+    event_emit,     -- callable → event
 }
 
 CallTargetKind = enum {
     internal,           -- same container
-    cross_module,       -- this.foo() or different container
+    cross_module,       -- different container in scope
     external,           -- external contract/library call
-    interface_dispatch, -- call through interface (needs agent resolution)
+    interface_dispatch, -- call through interface (may have multiple targets)
     unknown,
 }
-```
 
-### 2.4 Edge Gaps
-
-Gaps are **unresolved edges**, not nodes. Every node in the graph is concrete — it
-was encountered during the AST walk. The hard problems are relational: a call to a
-function not in the graph, inheritance from an out-of-scope contract, a state write
-to an unresolved target, or an import path that can't be resolved to a file on
-disk. These are all modeled as `EdgeGap`, a separate collection from concrete edges.
-
-```
-EdgeGap {
-    id:               u64             -- hash(from, expected_target, edge_kind), for O(1) lookup
-    from:             u64             -- known source node (caller, container, etc.)
-    expected_target:  []const u8      -- unresolved name (e.g., "onlyOwner", "Ownable")
-    edge_kind:        EdgeKind        -- calls, inherits, writes, etc.
-    call_site:        ?SourceLocator  -- where the reference occurs
-    priority:         Priority        -- high | medium | low (for agent triage)
+Priority = enum {
+    high,       -- critical for analysis (missing modifier, unresolved inheritance)
+    medium,     -- affects completeness (unresolved call)
+    low,        -- nice to have (external call target refinement)
 }
 ```
 
-Gap IDs are deterministic hashes of the composite key:
+**Reference ID** is `hash(file, start_byte)`:
+- **Deterministic**: same source → same byte offsets → same IDs across re-scans.
+- **Collision-free**: two AST nodes cannot start at the same byte in the same file.
+- **Walker-computable**: `hash(ctx.current_file, node.startByte())` — O(1) lookup
+  during deep walk.
+- **Opaque to agents**: agents see the ref_id in gaps output and echo it back in
+  the resolution file. They never compute it.
 
-```zig
-fn gapId(from: u64, expected_target: []const u8, edge_kind: EdgeKind) u64 {
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(std.mem.asBytes(&from));
-    hasher.update(expected_target);
-    hasher.update(std.mem.asBytes(&@intFromEnum(edge_kind)));
-    return hasher.final();
-}
-```
+**Orthogonal resolution and gap state:**
 
-The graph maintains a `HashMap(u64, *EdgeGap)` for O(1) lookup by gap ID.
+The `targets` list and `gap` field are independent dimensions:
 
-`edge_kind` is the only honest classification at gap creation time — we know what
-kind of edge we were trying to create (call, inheritance, state write), just not
-where it points. Why it's unresolved (interface dispatch, missing import, deep
-inheritance) requires the same information that would have resolved it. The agent
-can determine the "why" from the source context.
+| targets | gap | meaning | example |
+|---------|-----|---------|---------|
+| `[X definite]` | `null` | Fully resolved, no help needed | `_transfer()` → internal call |
+| `[]` | `.low` | Resolved as external, agent could identify target | `addr.call()` → known external, unknown destination |
+| `[X candidate, Y candidate]` | `null` | Agent provided multiple dispatch targets | `IVault(addr).withdraw()` → two implementations |
+| `[]` | `.high` | Unresolved, agent should help | `onlyOwner` → modifier not in scope |
+| `[]` | `null` | Dropped — not worth a gap | `amount` → local variable, not state |
 
-**Lifecycle**: Gaps are created during the resolution phase, after all files
-(including transitive imports) have been walked. If a reference resolves, it
-becomes a `GraphEdge` directly — it was never a gap. Gaps represent what's left
-after the full import closure: references that could not be resolved statically.
-The only thing that resolves a gap is the agent via the resolution file
-(see §8.3), which promotes it to a concrete edge when passed via
-`--resolutions`. Rules only see concrete edges; gaps are invisible to the
-rule engine.
+This replaces the old model where edges and gaps were separate collections that
+couldn't express "resolved but also worth investigating."
+
+**Lifecycle**: References start with `resolved = false` during the walk phase (was
+`PendingRef`). During resolution, each reference transitions: targets are populated
+(was `GraphEdge`), gap is set if needed (was `EdgeGap`), and `resolved` is set to
+true. Dropped references get `resolved = true` with empty targets and no gap.
 
 ### 2.5 Content-Addressed Node IDs
 
@@ -165,7 +178,18 @@ fn nodeId(name: []const u8, file: []const u8, line: u32) u64 {
 }
 ```
 
-Properties:
+Reference IDs are deterministic hashes of the source location:
+
+```zig
+fn refId(file: []const u8, start_byte: u32) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(file);
+    hasher.update(std.mem.asBytes(&start_byte));
+    return hasher.final();
+}
+```
+
+**Node ID properties:**
 - **Deterministic**: same source → same IDs across re-scans.
 - **Serialization-friendly**: u64 values, no pointers, works in JSON/TOON.
 - **Agent-computable**: the agent can compute a node ID from `file:line:name` —
@@ -174,9 +198,28 @@ Properties:
 - **Collision-safe**: Wyhash over (name, file, line) is unique in practice — two
   declarations with the same name on the same line in the same file cannot exist.
 
-The graph maintains a `HashMap(u64, *GraphNode)` for O(1) lookup by node ID.
-Since all nodes are concrete (derived from AST), every node has a valid source
-location.
+**Reference ID properties:**
+- **Collision-free**: two AST nodes cannot start at the same byte in the same file.
+- **Not agent-computable**: ref IDs are opaque handles. The agent reads them from
+  gaps output and echoes them back in the resolution file.
+
+### 2.6 Symbol Graph
+
+The graph stores nodes, structural edges, and references with indices for
+efficient lookup:
+
+```
+SymbolGraph {
+    nodes:          HashMap(u64, *GraphNode)        -- node ID → node
+    contains:       ArrayList(ContainsEdge)          -- structural edges
+    refs:           ArrayList(Reference)             -- all non-structural relationships
+    children_index: HashMap(u64, ArrayList(u64))     -- container → child node IDs
+    site_index:     HashMap(u64, u32)                -- ref ID → index in refs list
+}
+```
+
+The `site_index` is built during resolution and enables O(1) lookup by source
+location — the deep walker's primary access pattern.
 
 ---
 
@@ -187,38 +230,38 @@ location.
 There is no persisted scan state. The full pipeline (walk + expand + resolve)
 runs from scratch on every invocation — sub-second even for hundreds of files.
 
-Agent-resolved edges are stored in a **resolution file** (CSV), managed outside
-the tool. This file is the only artifact that carries state across invocations.
-It is portable, versionable, and human-readable.
+Agent-resolved references are stored in a **resolution file** (CSV), managed
+outside the tool. This file is the only artifact that carries state across
+invocations. It is portable, versionable, and human-readable.
 
 **Rebuilt on every invocation:**
 - All graph nodes (from fresh AST parse + import expansion)
-- All statically-resolvable edges
+- All references (discovered during walk, resolved during resolution phase)
 - `ast_node` references (populated naturally during walk)
-- Edge gaps (what's left after static resolution)
+- Gap annotations (what's left after static resolution)
 
 **External artifact (resolution file):**
-- Agent-resolved edges, passed in via `--resolutions=<file>`
-- Applied after static resolution: matching gaps are eliminated, resolved
-  edges are merged into the graph
+- Agent-resolved references, passed in via `--resolutions=<file>`
+- Applied after static resolution: matching gap references gain targets,
+  gap annotations are cleared
 
 ### 3.2 Workflow
 
 ```
 Step 1:  aa gaps "src/**/*.sol"
   → full pipeline (parse, walk, expand, resolve)
-  → output gaps in TOON format
+  → output references with gap annotations in TOON format
 
 Step 2:  agent creates resolutions.csv from gap output
 
 Step 3:  aa gaps "src/**/*.sol" --resolutions=resolutions.csv
   → full pipeline again
-  → apply resolutions: validate each entry, merge valid edges
+  → apply resolutions: validate each entry, add targets, clear gaps
   → output remaining gaps + flag stale/broken resolutions
 
 Step 4:  aa run "src/**/*.sol" --resolutions=resolutions.csv
   → full pipeline + apply resolutions
-  → run rules (rules see all edges: static + agent-resolved)
+  → run rules (rules see all references: static + agent-resolved)
   → output findings in TOON format
 ```
 
@@ -226,11 +269,12 @@ Step 4:  aa run "src/**/*.sol" --resolutions=resolutions.csv
 
 When `--resolutions` is provided, after the static pipeline completes:
 - Parse the CSV file (see §8.3 for format)
-- For each resolution: look up gap by `gap_id` in the gap HashMap
+- For each resolution: look up reference by `ref_id` in the site index
 - Compute target node ID: `nodeId(target_name, target_file, target_line)`
   — same hash as §2.5 — and look up in the node HashMap
-- If both gap and target node exist → merge edge, eliminate gap
-- If gap ID not found → stale resolution, report warning
+- If reference found and has a gap, and target node exists → add target
+  to reference, clear gap annotation
+- If ref_id not found → stale resolution, report warning
 - If target node not found → broken resolution, report error
 
 ### 3.4 Import-Driven File Expansion
@@ -243,16 +287,16 @@ imports. This repeats until no new files are found.
 ```
 aa scan "src/Vault.sol"
   Round 1: parse + walk src/Vault.sol
-    → nodes created, pending edges recorded
+    → nodes created, pending references recorded
     → import "src/Ownable.sol" discovered
   Round 2: parse + walk src/Ownable.sol
     → Ownable nodes created
     → import "src/AccessControl.sol" discovered
   Round 3: parse + walk src/AccessControl.sol
     → no new imports
-  Resolution: all files walked, resolve pending edges
-    → Vault.withdraw → Ownable.onlyOwner resolves to concrete edge
-    → remaining unresolved references become edge gaps
+  Resolution: all files walked, resolve pending references
+    → Vault.withdraw → Ownable.onlyOwner: reference gains target, fully resolved
+    → remaining unresolved references get gap annotations
 ```
 
 No `--expand` flag, no multi-invocation workflow. One scan, full transitive
@@ -261,10 +305,9 @@ closure of imports.
 **Unresolvable import paths**: Not all import paths map to files on disk.
 Solidity remappings (`@openzeppelin/contracts/...`), uninstalled node_modules,
 or framework-specific path aliases may produce import paths the pipeline can't
-resolve. These become `EdgeGap` entries with `edge_kind = .imports` and
-`from = file_container_id`. The agent can resolve them by providing the correct
-file path or suggesting dependency installation. No separate gap type needed —
-import gaps are just edge gaps like any other.
+resolve. These become references with `kind = .import` and `gap = .high`.
+The agent can resolve them by providing the correct file path or suggesting
+dependency installation.
 
 ---
 
@@ -273,28 +316,9 @@ import gaps are just edge gaps like any other.
 ### 4.1 Single-Pass Walk with Deferred Resolution
 
 The pipeline does **one walk + one resolution pass**. All references discovered
-during the walk are recorded as `PendingRef` items — a unified structure
-regardless of reference type:
-
-```
-PendingRef {
-    from:          u64           -- source node (callable or container)
-    container:     u64           -- container context (for scoped lookups)
-    target_name:   []const u8   -- name to resolve (unwrapped for state refs during walk)
-    call_site:     SourceLocator -- where the reference occurs
-    kind:          RefKind       -- what kind of edge to create
-}
-
-RefKind = enum {
-    import,         -- → imports edge + queue file, or EdgeGap
-    call,           -- → calls edge or EdgeGap
-    inheritance,    -- → inherits edge or EdgeGap
-    state_read,     -- → reads edge or drop
-    state_write,    -- → writes edge or drop
-    modifier_use,   -- → has_modifier edge or EdgeGap
-    event_emit,     -- → emits edge or drop
-}
-```
+during the walk are recorded as `Reference` items (see §2.4) with
+`resolved = false`. During the resolution phase, each reference is resolved:
+targets are populated, gap annotations are set, and `resolved` is set to true.
 
 **Walk phase state:**
 
@@ -318,11 +342,11 @@ current_container = nearest frame with kind=container  -- for scoped resolution
 ```
 
 The stack provides:
-- **`from` field** on `PendingRef` items: `current_scope` — the nearest
-  enclosing scope (callable or container). A call inside a function gets
-  `from = function`, not `from = contract`.
-- **`container` field** on `PendingRef` items: `current_container` — the
-  nearest enclosing container, for scoped name resolution.
+- **`from` field** on references: `current_scope` — the nearest enclosing scope
+  (callable or container). A call inside a function gets `from = function`, not
+  `from = contract`.
+- **`container` field** on references: `current_container` — the nearest
+  enclosing container, for scoped name resolution.
 - **`container` field** on child nodes: callables, variables, modifiers, events
   get `container = current_container`.
 - **`qualified_name` construction**: join stack entries with "." — e.g.,
@@ -332,94 +356,115 @@ The stack provides:
 - **`contains` edges**: emitted between `current_container` and child nodes.
 
 **Walk phase** (single top-down AST traversal per file, iterated over imports):
-- When an import statement is encountered: record `PendingRef` with
+- When an import statement is encountered: record reference with
   `kind = .import` and `target_name = raw_import_path`.
 - When a container node is encountered (per config mapping): create graph node,
   push onto scope stack. On exiting the container's body, pop.
 - When a callable is encountered inside a container: create graph node, emit
-  `contains` edge from `current_container`, push onto scope stack, store
+  `ContainsEdge` from `current_container`, push onto scope stack, store
   `ast_node` reference directly. On exiting the callable's body, pop.
 - When a variable/modifier/event is encountered: create graph node, emit
-  `contains` edge from `current_container`.
-- When a call expression is encountered: record `PendingRef` with `kind = .call`.
-- When an inheritance specifier is encountered: record `PendingRef` with
+  `ContainsEdge` from `current_container`.
+- When a call expression is encountered: record reference with `kind = .call`.
+- When an inheritance specifier is encountered: record reference with
   `kind = .inheritance`.
-- When a modifier invocation is encountered: record `PendingRef` with
+- When a modifier invocation is encountered: record reference with
   `kind = .modifier_use`.
-- When an emit statement is encountered: record `PendingRef` with
+- When an emit statement is encountered: record reference with
   `kind = .event_emit`.
 - When an assignment/write is encountered: unwrap the LHS expression to its root
-  identifier (see §4.4), record `PendingRef` with `kind = .state_write`.
+  identifier (see §4.2), record reference with `kind = .state_write`.
 - When a state variable read is encountered: unwrap to root identifier, record
-  `PendingRef` with `kind = .state_read`.
+  reference with `kind = .state_read`.
 - Property extraction (visibility, mutability, etc.) happens inline via config.
 
 **Import expansion loop** (between walk and resolution):
 
-After walking all current files, process `PendingRef` items with `kind = .import`:
-- Resolve import path to file on disk → emit `imports` edge, queue file for
-  walking, remove from pending list.
-- Path not found → leave in pending list (becomes EdgeGap during resolution).
+After walking all current files, process references with `kind = .import`:
+- Resolve import path to file on disk → add target to the reference, queue file
+  for walking.
+- Path not found → leave unresolved (gets gap annotation during resolution).
 
-Walk any newly queued files (which may produce new import `PendingRef` items).
+Walk any newly queued files (which may produce new import references).
 Repeat until no new files are queued. Then proceed to resolution.
 
 **Resolution phase** (after all files walked, two ordered steps):
 
-**Step 1 — Create import gaps, then resolve inheritance:**
+**Step 1 — Annotate unresolved imports, then resolve inheritance:**
 ```
-for each remaining pending ref where kind == .import:
-    → create EdgeGap (path failed to resolve during expansion loop)
+for each ref where kind == .import and targets is empty:
+    ref.gap = .high
+    ref.resolved = true
 
-for each pending ref where kind == .inheritance:
+for each ref where kind == .inheritance:
     node = graph.lookup_container(ref.target_name)
-    if node → emit inherits edge
-    else   → create EdgeGap
+    if node → ref.targets = [{node.id, .definite}]
+    else   → ref.gap = .high
+    ref.resolved = true
 ```
 
-Any import `PendingRef` still in the list after the expansion loop is
-unresolvable — it becomes an `EdgeGap` directly. Inheritance must resolve
-before step 2 so that scoped lookups can walk the full inheritance chain.
+Unresolved imports get gap annotations. Inheritance must resolve before step 2
+so that scoped lookups can walk the full inheritance chain.
 
-**Step 2 — Resolve all other references:**
+**Step 2 — Resolve all other references (run resolve hook first):**
+
+For each unresolved reference, the language-specific resolve hook runs first.
+The hook can mutate the reference directly (set targets, attrs, gap). If the
+hook sets `resolved = true`, default resolution is skipped.
+
 ```
-for each remaining pending ref:
+for each ref where resolved == false:
+    if resolve_hook → hook(&ref, &graph)  -- may set targets, gap, resolved
+    if ref.resolved → continue            -- hook handled it
+
     switch (ref.kind) {
-        .call         → resolveInScope(ref, .callable) → edge or EdgeGap
+        .call         → resolveInScope(ref, .callable)
         .state_read,
-        .state_write  → resolveInScope(ref, .variable) → edge or drop
-        .modifier_use → resolveInScope(ref, .modifier) → edge or EdgeGap
-        .event_emit   → resolveInScope(ref, .event)    → edge or drop
+        .state_write  → resolveInScope(ref, .variable)
+        .modifier_use → resolveInScope(ref, .modifier)
+        .event_emit   → resolveInScope(ref, .event)
     }
+    ref.resolved = true
 ```
 
 Scoped resolution walks the inheritance chain in language-specific order:
 ```
-fn resolveInScope(ref, expected_kind) ?u64 {
+fn resolveInScope(ref, expected_kind) {
+    target = lookupInScope(ref.container, ref.target_name, expected_kind)
+    if target:
+        ref.targets = [{target.id, .definite}]
+    else:
+        // failure handling depends on kind (see table below)
+}
+
+fn lookupInScope(container_id, name, expected_kind) ?*GraphNode {
     // Check own container first
     if found in container's children of matching kind → return it
 
-    // Walk parents in language-defined order
-    for parent in inheritanceOrder(ref.container) {
+    // Walk parents in language-defined order (via resolved inheritance refs)
+    for parent in inheritanceOrder(container_id) {
         if found in parent's children → return it
     }
     return null
 }
 ```
 
-The inheritance traversal order is language-specific (see §4.5).
+The inheritance traversal order is language-specific (see §4.3).
 
 **Failure handling by kind:**
 
 | RefKind | On success | On failure | Rationale |
 |---------|-----------|------------|-----------|
-| import | `imports` edge (during walk) | EdgeGap | Missing dependency or remapping, agent can help |
-| call | `calls` edge | EdgeGap | Unresolved call is worth investigating |
-| inheritance | `inherits` edge | EdgeGap | Missing parent is worth investigating |
-| modifier_use | `has_modifier` edge | EdgeGap | Missing modifier affects access control analysis |
-| state_read | `reads` edge | drop | Likely a local, parameter, or storage pointer (§15.7) |
-| state_write | `writes` edge | drop | Same — not worth a gap |
-| event_emit | `emits` edge | drop | Likely a locally defined event or import issue |
+| import | Add target (during expansion) | `gap = .high` | Missing dependency, agent can help |
+| call | Add target | `gap = .medium` | Unresolved call is worth investigating |
+| inheritance | Add target | `gap = .high` | Missing parent is worth investigating |
+| modifier_use | Add target | `gap = .high` | Missing modifier affects access control analysis |
+| state_read | Add target | drop (no gap) | Likely a local, parameter, or storage pointer (§15.7) |
+| state_write | Add target | drop (no gap) | Same — not worth a gap |
+| event_emit | Add target | drop (no gap) | Likely a locally defined event or import issue |
+
+**Site index**: After all references are resolved, build the `site_index`
+mapping each `ref.id` to its position in the refs list.
 
 ### 4.2 Expression Unwrapping
 
@@ -431,7 +476,7 @@ and indexing. The walk phase unwraps to the root identifier before storing the
 balances[msg.sender].amount = 0     → root: "balances"
 config.limits.maxAmount = 100       → root: "config"
 totalSupply += amount               → root: "totalSupply"  (write)
-                                      root: "amount"       (read, separate PendingRef)
+                                      root: "amount"       (read, separate reference)
 items.push(x)                       → root: "items"
 ```
 
@@ -466,8 +511,10 @@ created — the expression can't be statically resolved to a state variable.
 
 ### 4.3 Inheritance Resolution Order
 
-The `resolveInScope` function walks parent containers in a language-specific
-order. This is defined per language config:
+The `lookupInScope` function walks parent containers in a language-specific
+order. Parents are found by querying resolved inheritance references
+(`kind = .inheritance` with non-empty targets) from the container. Insertion
+order in the refs list preserves declaration order from the walk.
 
 ```zig
 const InheritanceStrategy = enum {
@@ -527,6 +574,11 @@ const LanguageConfig = struct {
 
     // Optional: custom handler for edge cases the config can't express
     custom_handler: ?*const fn(*SymbolGraph, ts.Node, []const u8) void,
+
+    // Language-specific resolve hook (§4.1) — called before default resolution.
+    // Mutates the reference directly (set targets, attrs, gap, resolved).
+    // If the hook sets resolved=true, default resolution is skipped.
+    resolve_hook: ?*const fn(ref: *Reference, g: *const SymbolGraph) void,
 };
 
 const ContainerMapping = struct {
@@ -681,42 +733,62 @@ const solidity_config = LanguageConfig{
 
 ## 5. Walker
 
-### 5.1 Scope Walker (Shallow)
+Both walker types traverse full file ASTs top-to-bottom, firing `enter()`/`exit()`
+on every node — including contract declarations, state variables, and other
+non-callable nodes. Rules see the complete file structure, not just function
+bodies. This allows rules that inspect class properties, inheritance declarations,
+or cross-declaration patterns.
 
-Walks AST nodes within a single function body. Does not follow call edges.
+The walker updates `current_node` in the context as it enters graph-tracked
+scopes (callables, containers, modifiers), so rules can query the symbol graph
+relative to the enclosing scope at any point.
+
+`finalize()` is called once after all files are walked. Rules manage their own
+scope boundaries via `enter()`/`exit()` — e.g., resetting per-function state
+when entering a `function_definition` node.
+
+### 5.1 Scope Walker
+
+Walks full file ASTs. Does not follow call edges.
 
 ```
-for each concrete callable node in graph:
-    walk callable's ast_node depth-first:
-        call rule.enter(node) on entry
-        call rule.exit(node) on exit
+for each file node in graph:
+    walk file's ast_node (tree root) depth-first:
+        update current_node when entering a callable/container/modifier
+        call rule.enter(node, ctx) on entry
+        call rule.exit(node, ctx) on exit
+finalize()
 ```
 
-Used for syntax-level checks: naming conventions, missing modifiers, code style.
+Used for syntax-level checks: naming conventions, missing modifiers, code style,
+and any rule that needs to see the full file structure.
 
 ### 5.2 Deep Walker
 
-Follows `calls` edges across function boundaries. Uses `ast_node` references
-directly — no byte-offset lookup needed.
+Same full-file traversal as scope, but follows resolved call references across
+function boundaries when encountering call expressions. Uses site-based lookup
+(`refId(file, start_byte)` → site_index → reference → targets) for O(1)
+matching of each call expression to its resolved callee(s).
 
 ```
-for each concrete callable in graph:
-    walk callable's ast_node depth-first:
-        call rule.enter(node, depth=0)
-        on call_expression:
-            find outgoing 'calls' edges from current callable
-            for each callee:
-                if callee is concrete and callee.ast_node != null and not visited:
-                    mark visited
-                    walk callee.ast_node with depth+1
-        call rule.exit(node, depth=0)
+for each file node in graph:
+    walk file's ast_node (tree root) depth-first:
+        update current_node when entering a callable/container/modifier
+        call rule.enter(node, ctx)
+        on call_expression (if depth < max_depth):
+            ref = site_index.lookup(refId(current_file, node.start_byte))
+            if ref exists and ref has targets:
+                for each target in ref.targets:
+                    if target.node has ast_node and not visited:
+                        mark visited
+                        walk target's ast_node with depth+1
+        call rule.exit(node, ctx)
+finalize()
 ```
-
-Also follows `has_modifier` edges: before walking a function body, walk modifier
-bodies (via their `ast_node`) to capture pre/post conditions.
 
 Used for cross-function analysis: reentrancy, unchecked return values, access
-control chains.
+control chains. Multi-target references (dynamic dispatch) naturally follow all
+candidate targets.
 
 ### 5.3 Walk Context
 
@@ -725,11 +797,15 @@ The walker provides a context to Lua hooks:
 ```
 WalkContext {
     current_file:   []const u8
-    depth:          u32             -- 0 = root function, 1+ = followed call
-    call_stack:     []u64           -- stack of callable node IDs being walked
-    current_node:   u64             -- graph node ID of the function being walked
+    depth:          u32             -- 0 = file-level walk, 1+ = followed call
+    call_stack:     []u64           -- stack of scope node IDs being walked
+    current_node:   u64             -- graph node ID of the enclosing scope
 }
 ```
+
+`current_node` tracks the nearest enclosing callable, container, or modifier
+as the walker descends. Rules use it to query the symbol graph (e.g.,
+`graph.get_outgoing_edges(ctx.current_node, "calls")`).
 
 ---
 
@@ -746,9 +822,8 @@ Use `--rule=<ID>` to filter to specific shipped rules.
 - `--rule-inline=<lua_code>`: execute a Lua string directly
 
 Adhoc rules follow the exact same interface as shipped rules (rule table,
-`reset()`, `enter()`/`exit()`, `finalize()` for visitor rules; `check()` for
-map rules). They have full access to the `graph.*`, `ast.*`, and `report.*`
-APIs.
+`enter()`/`exit()`, `finalize()` for visitor rules; `check()` for map rules).
+They have full access to the `graph.*`, `ast.*`, and `report.*` APIs.
 
 This is the primary reason for the Lua rule engine: an agent can generate a
 rule on the fly, invoke it against the scanner, and get findings — without
@@ -758,13 +833,14 @@ and reads TOON output.
 ### 6.1 Visitor Rules (enter/exit hooks, walker-driven)
 
 Each rule file is loaded into its own Lua environment. Module-level variables
-persist across `enter()`/`exit()` calls within a single function walk. This
-allows rules to accumulate state (e.g., "have I seen an external call?") across
-the depth-first traversal.
+persist across `enter()`/`exit()` calls for the entire walk (all files). This
+allows rules to accumulate state across functions and files.
 
-The walk cycle per callable is: `reset()` → `enter()`/`exit()` (repeated for
-each AST node) → `finalize()`. `reset()` must clear any per-function state —
-without it, findings from one function walk bleed into the next.
+The walker traverses all file ASTs top-to-bottom, calling `enter()`/`exit()` on
+every node. Rules manage their own scope boundaries — e.g., resetting
+per-function state when entering a `function_definition` node. `finalize()` is
+called once after all files are walked, allowing rules to emit findings based
+on accumulated cross-file state.
 
 ```lua
 rule = {
@@ -777,31 +853,37 @@ rule = {
     languages = {"solidity"},   -- nil = all languages
 }
 
--- Module-level state: persists across enter/exit calls within one function walk
+-- Module-level state: persists across the entire walk
 local seen_external_call = false
 
--- Called before each function walk begins; clear per-function state
-function reset()
-    seen_external_call = false
-end
-
--- Called on each AST node during walk
 function enter(node, ctx)
-    -- node = { id, kind, name, language_kind, line, file }
-    -- ctx  = { depth, current_file, call_stack }
-    if is_external_call(node) then
-        seen_external_call = true
-    end
-    if seen_external_call and is_state_write(node) then
-        report.hit({
-            file = ctx.current_file,
-            line = node.line,
-            node_text = node.name,
-        })
-    end
-end
+    -- node = { kind, line, file, name, handle }
+    -- ctx  = { depth, current_file, current_node }
 
-function exit(node, ctx)
+    -- Reset per-function state at function boundaries
+    if node.kind == "function_definition" then
+        seen_external_call = false
+    end
+
+    -- Check if this specific call expression is an external call (O(1) site lookup)
+    if not seen_external_call and node.kind == "call_expression" then
+        local ref = graph.get_ref_at(ctx.current_file, node.start_byte)
+        if ref and ref.target_kind == "external" then
+            seen_external_call = true
+        end
+    end
+
+    -- After an external call, any state write is a reentrancy risk
+    if seen_external_call then
+        if node.kind == "assignment_expression"
+            or node.kind == "augmented_assignment_expression" then
+            report.hit({
+                file = ctx.current_file,
+                line = node.line,
+                node_text = ast.text(node.handle) or "",
+            })
+        end
+    end
 end
 ```
 
@@ -822,7 +904,7 @@ function check()
     for _, fn in ipairs(functions) do
         local vis = graph.get_property(fn.id, "visibility")
         if vis == "public" then
-            local callers = graph.get_incoming_edges(fn.id, "calls")
+            local callers = graph.get_incoming_edges(fn.id, "call")
             -- ... check if any caller is from a different container
         end
     end
@@ -833,17 +915,29 @@ end
 ### 6.3 Lua API — Graph Queries (`graph.*`)
 
 ```
+-- Node queries
 graph.get_nodes_by_kind(kind)                -> [{id, kind, name, qualified_name, visibility}]
 graph.get_node(id)                           -> {id, kind, name, qualified_name, visibility, ...}
 graph.get_property(id, key)                  -> string | nil
-graph.get_outgoing_edges(id, ?edge_kind)     -> [{to, kind, attrs}]
-graph.get_incoming_edges(id, ?edge_kind)     -> [{from, kind, attrs}]
-graph.get_children(id)                       -> [node]  (shorthand for contains edges)
+graph.get_children(id)                       -> [node]  (from contains edges)
 graph.get_parent(id)                         -> node | nil
+graph.language_info()                        -> {language, node_kinds, ref_kinds, properties}
+
+-- Reference queries (resolved refs presented as edges for backward compat)
+graph.get_outgoing_edges(id, ?ref_kind)      -> [{to, kind, target_name, call_site_line, target_kind}]
+graph.get_incoming_edges(id, ?ref_kind)      -> [{from, kind, target_name, call_site_line, target_kind}]
 graph.get_callers(id)                        -> [node]
 graph.get_callees(id)                        -> [node]
-graph.language_info()                        -> {language, node_kinds, edge_kinds, properties}
+
+-- Reference-native queries (new — exposes full reference state)
+graph.get_refs(id, ?ref_kind)                -> [{ref_id, from, kind, target_name, targets, gap, site_line}]
+graph.get_ref_at(file, start_byte)           -> ref | nil  (O(1) site lookup)
+graph.get_gaps(?ref_kind)                    -> [{ref_id, from, kind, target_name, gap, site_line}]
 ```
+
+`get_outgoing_edges` and `get_incoming_edges` wrap resolved references as
+edge-like tables for backward compatibility. Rules that need full reference
+state (including gaps and provisional targets) use `get_refs` instead.
 
 ### 6.4 Lua API — AST Bridge (`ast.*`)
 
@@ -933,16 +1027,13 @@ CLI output uses TOON (Token-Oriented Object Notation) — a compact format
 designed for low token consumption in LLM agent contexts. Schema is declared
 once, data follows as compact rows.
 
-**`aa scan` output** — gaps after initial scan:
+**`aa gaps` output** — gaps after initial scan:
 
 ```
-scan:
-  id: abc123
-  files[3]: src/Vault.sol,src/Ownable.sol,src/Base.sol
-gaps[3]{from,expected_target,edge_kind,file,line,priority}:
-  a4f2e81b,onlyOwner,calls,src/Vault.sol,22,high
-  b7c3d012,Ownable,inherits,src/Vault.sol,3,high
-  c9e4f123,@openzeppelin/contracts/access/Ownable.sol,imports,src/Vault.sol,1,high
+gaps[3]{ref_id,from_name,target_name,kind,file,line,priority}:
+  a4f2e81b,withdraw,onlyOwner,call,src/Vault.sol,22,high
+  b7c3d012,Vault,Ownable,inheritance,src/Vault.sol,3,high
+  c9e4f123,src/Vault.sol,@openzeppelin/contracts/access/Ownable.sol,import,src/Vault.sol,1,high
 ```
 
 **`aa run` output** — findings grouped by rule:
@@ -966,9 +1057,11 @@ nodes[3]{id,kind,name,qualified_name,visibility,language,file,line}:
   a4f2e81b,container,Vault,Vault,,solidity,src/Vault.sol,4
   b7c3d012,callable,withdraw,Vault.withdraw,public,solidity,src/Vault.sol,10
   e9a1f345,variable,balance,Vault.balance,public,solidity,src/Vault.sol,5
-edges[2]{from,to,kind,call_site_line}:
-  a4f2e81b,b7c3d012,contains,
-  b7c3d012,e9a1f345,writes,42
+contains[2]{from,to}:
+  a4f2e81b,b7c3d012
+  a4f2e81b,e9a1f345
+refs[1]{ref_id,from,kind,target_name,targets,site_line,gap}:
+  f1a2b3c4,b7c3d012,state_write,balance,[e9a1f345],42,
 ```
 
 ### 8.2 JSON (Machine Interop)
@@ -981,19 +1074,28 @@ Node IDs are serialized as hex strings of the u64 hash for readability.
 ### 8.3 Resolution File (CSV)
 
 The resolution file is the only artifact that carries state across invocations.
-It is a CSV with gap ID as key and target as `file,line,name`:
+It is a CSV with `ref_id` as key (opaque, from gaps output) and target as
+`file,line,name` (human-readable, agent-friendly):
 
 ```csv
-gap_id,edge_kind,target_file,target_line,target_name
-a4f2e81b,calls,src/Ownable.sol,15,onlyOwner
-b7c3d012,inherits,src/Ownable.sol,3,Ownable
-c9e4f123,imports,lib/openzeppelin/contracts/access/Ownable.sol,1,Ownable
+ref_id,target_file,target_line,target_name
+a4f2e81b,src/Ownable.sol,15,onlyOwner
+b7c3d012,src/Ownable.sol,3,Ownable
+c9e4f123,lib/openzeppelin/contracts/access/Ownable.sol,1,Ownable
 ```
 
-The CLI computes `nodeId(target_name, target_file, target_line)` from the CSV
-columns — same hash function as §2.5 — and looks up the node in O(1). If the
-gap ID doesn't match a current gap, it's stale. If the target node doesn't
-exist, it's broken. Both are reported as warnings.
+The CLI looks up the reference by `ref_id` in the site index, then computes
+`nodeId(target_name, target_file, target_line)` from the CSV columns — same
+hash function as §2.5 — and looks up the target node in O(1). The reference
+gains the target and its gap annotation is cleared.
+
+- If `ref_id` doesn't match a current reference → stale, report warning
+- If target node doesn't exist → broken, report error
+- Both are reported as warnings, not fatal errors
+
+The `ref_id` is collision-free (`hash(file, start_byte)`) — two calls to the
+same function from different sites produce different ref_ids and can be resolved
+independently. The agent never computes ref_ids; it reads them from gaps output.
 
 CSV is straightforward to parse in Zig without external dependencies.
 
@@ -1078,9 +1180,9 @@ aa call-chains <glob>                        -- map call chains from entry point
 ```
 
 **Algorithm:**
-1. Identify root nodes: callables with no incoming `calls` edges (entry points),
+1. Identify root nodes: callables with no incoming call references (entry points),
    or specific roots via `--root`
-2. DFS from each root, following outgoing `calls` edges
+2. DFS from each root, following resolved call references (all targets per ref)
 3. Record each unique caller→callee path as a chain
 
 **TOON output:**
@@ -1103,7 +1205,7 @@ reach sensitive functions, and scope which callables are affected by a change.
 ```
 src/
     main.zig                    -- CLI entry point, arg parsing (gaps/run/graph/info)
-    graph.zig                   -- SymbolGraph, GraphNode, GraphEdge, EdgeGap types
+    graph.zig                   -- SymbolGraph, GraphNode, Reference, ContainsEdge types
     walker.zig                  -- Scope and Deep walkers
     lua_adapter.zig             -- Lua VM init, graph/ast/report API registration
     ast_bridge.zig              -- AST handle table, tree-sitter ↔ Lua bridge
@@ -1130,27 +1232,26 @@ rules/
 ## 13. Port Strategy
 
 ### Phase 1: Core (prove the architecture)
-1. `graph.zig` — data model with node/edge/edge-gap types, content-addressed IDs
-2. `pipeline.zig` — single-pass walk + import expansion + PendingRef collection
-3. `pipeline.zig` — deferred resolution (inheritance-first, then scoped lookup)
-4. `languages/solidity.zig` — first adapter config
+1. `graph.zig` — data model with Node/Reference/ContainsEdge types, content-addressed IDs
+2. `pipeline.zig` — single-pass walk + import expansion + Reference collection
+3. `pipeline.zig` — deferred resolution (inheritance-first, then scoped lookup, site_index)
+4. `languages/solidity.zig` — first adapter config + resolve hook
 5. `output.zig` — TOON + JSON formatting for gaps and graph
 6. CLI: `gaps` + `graph` commands
-7. `resolution.zig` — CSV parsing and application, gap validation
+7. `resolution.zig` — CSV parsing and application (ref_id based)
 
-### Phase 2: Rules engine
-1. `lua_adapter.zig` — graph query API in Lua
-2. `walker.zig` — scope walker
-3. `ast_bridge.zig` — AST handle table for pattern rules
-4. Port 2-3 scope rules to Lua (e.g., naming conventions, broad visibility)
-5. CLI: `run` command with TOON findings output
-6. `report.hit()` API and findings consolidation in Zig
+### Phase 2: Rules engine ✓
+1. `lua_adapter.zig` — graph query API in Lua ✓
+2. `walker.zig` — full-file scope walker ✓
+3. `ast_bridge.zig` — AST handle table for pattern rules ✓
+4. CLI: `run` command with TOON findings output ✓
+5. `report.hit()` API and findings consolidation in Zig ✓
 
-### Phase 3: Deep analysis
-1. Deep walker with call-edge following (using `ast_node` references)
-2. Modifier body following in deep walker
-3. Port reentrancy rule (deep + AST bridge)
-4. `call-chains` command
+### Phase 3: Deep analysis ✓
+1. Deep walker with site-based reference following (using site_index + `ast_node`) ✓
+2. Reentrancy rule (deep + ref queries + AST bridge) ✓
+3. `call-chains` command ✓
+4. Resolve hooks for language-specific reference classification ✓
 
 ### Phase 4: Scale
 1. Remaining language adapter configs
@@ -1169,87 +1270,88 @@ functionality. Run all tests with `zig build test`.
 
 **`graph.zig`**:
 - Node creation and content-addressed ID determinism (`name + file + line`)
-- Edge addition and lookup (outgoing, incoming, by kind)
-- EdgeGap creation, gap ID determinism, HashMap lookup
-- Node/gap ID collision resistance (different inputs → different IDs)
+- Reference ID determinism (`file + start_byte`)
+- Reference ID collision resistance (different byte offsets → different IDs)
+- Node ID collision resistance (different inputs → different IDs)
+- ContainsEdge addition and children_index
+- Reference addition, site_index building, O(1) lookup
+- Reference lifecycle: pending → resolved (with targets) / gap / dropped
+- Multi-target references (adding multiple ResolvedTargets)
+- Outgoing/incoming reference queries by kind
+- lookupContainerByName, lookupChildByName
 
 **`pipeline.zig`**:
-- PendingRef collection from a minimal AST (mock or real parse of a small fixture)
+- Reference collection from a minimal AST (real parse of Solidity fixtures)
+- References carry correct site SourceLocator (file, start_byte)
 - Import expansion loop: file A imports B imports C → all three walked
-- Unresolvable import → EdgeGap with `edge_kind = .imports`
+- Unresolvable import → reference with `gap = .high`
 - Resolution phase ordering: inheritance resolves before scoped lookups
 - `resolveInScope`: own container → inherited → not found
+- Resolve hook: Solidity external calls get `attrs.target_kind = .external` + gap
+- Resolve hook: non-external calls pass through to default resolution
 - Expression unwrapping: `a[b].c.d` → root `"a"`
-- Builtin filtering: `require(...)` does not produce a gap
+- Builtin filtering: `require(...)` does not produce a reference
+- Site index populated after resolution
 
 **`resolution.zig`**:
 - CSV parsing (header, rows, edge cases: commas in names, empty fields)
-- Valid resolution: gap ID found + target node found → edge merged, gap eliminated
-- Stale resolution: gap ID not found → warning
+- Valid resolution: ref_id found + target node found → target added, gap cleared
+- Stale resolution: ref_id not found → warning
 - Broken resolution: target node not found → error
 - Batch application: multiple resolutions in one file
+- Provisional resolution: ref with existing default target gets agent target added
 
 **`output.zig`**:
-- TOON formatting for gaps (schema header + compact rows)
+- TOON formatting for gaps (ref_id, from_name, target_name, kind, file, line, priority)
 - TOON formatting for findings (rule groups + hit rows)
-- JSON output matches expected structure
+- TOON formatting for graph (nodes, contains, refs)
+- JSON output matches expected structure for all formats
+- Gaps output includes provisional refs (has target + has gap)
 
 **`walker.zig`**:
-- Scope walker visits all AST nodes in a callable body
-- Deep walker follows call edges across functions
-- Deep walker respects max depth
+- Scope walker visits all AST nodes in a file (including containers, variables)
+- Deep walker follows resolved call references via site_index
+- Deep walker: specific call_expression maps to correct callee (not all callees)
+- Deep walker: multi-target reference follows all targets
+- Deep walker respects max_depth
+- Deep walker skips unresolved refs (no target to follow)
 - Cycle detection (recursive calls don't infinite loop)
-- Modifier body walking before function body
+- `current_node` updates when entering callable/container/modifier scopes
+- `finalize()` called once after all files walked
 
-**`lua_adapter.zig`**:
-- `graph.*` API returns correct data from Zig graph
-- `ast.*` API: handle creation, navigation, text extraction
-- `report.hit()` records hits correctly
-- Handle table cleared between rule invocations
-
-**`ast_bridge.zig`**:
-- Handle allocation and lookup
-- Navigation: children, parent, siblings, child_by_field
-- Handle table cleanup
+**`call_chains.zig`**:
+- Root finding: callables with no incoming call references
+- DFS follows resolved call references
+- Multi-target: DFS explores all candidate targets
+- Cycle detection across chains
+- max_depth limiting
 
 **`languages/solidity.zig`** (and each language config):
 - Config-driven node extraction: parse a fixture, verify correct graph nodes
-- Config-driven edge extraction: verify PendingRefs are created for calls,
-  inheritance, modifiers, emits, state writes
-- Builtin filtering: builtins don't produce PendingRefs
+- Config-driven reference collection: verify references created for calls,
+  inheritance, modifiers, emits, state writes with correct site info
+- Resolve hook: `.call`, `.send`, `.transfer` → external + low-priority gap
+- Resolve hook: normal calls → unhandled (default resolution runs)
+- Builtin filtering: builtins don't produce references
 - Unwrap rules: Solidity-specific expression forms resolve to correct roots
 
 ### 14.2 Integration Tests
 
 End-to-end tests using small Solidity fixture files:
 
-- **Basic scan**: single file → correct nodes, edges, no gaps
-- **Import expansion**: file with imports → transitive files parsed, edges resolved
-- **Unresolved gaps**: file referencing missing contract → correct EdgeGap output
+- **Basic scan**: single file → correct nodes, contains edges, resolved refs
+- **Import expansion**: file with imports → transitive files parsed, refs resolved
+- **Unresolved gaps**: file referencing missing contract → refs with gap annotations
 - **Resolution round-trip**: scan → gaps → create resolution CSV → re-scan with
-  resolutions → gaps eliminated
-- **Stale resolution**: modify source so gap disappears → resolution flagged stale
+  resolutions → gaps cleared, targets added
+- **Stale resolution**: modify source so ref disappears → resolution flagged stale
+- **Deep walker precision**: function with multiple calls → each call_expression
+  follows exactly its resolved callee
+- **Provisional refs**: external call shows in both edges and gaps output
 - **Rule execution**: scan + run → expected findings in TOON format
 - **TOON output**: verify output parses correctly and matches expected structure
 
-Fixture files live in `test/fixtures/` organized by scenario:
-
-```
-test/
-    fixtures/
-        basic/
-            Vault.sol
-        imports/
-            Vault.sol
-            Ownable.sol
-            AccessControl.sol
-        unresolved/
-            Vault.sol           -- imports missing dependency
-        resolutions/
-            Vault.sol
-            Ownable.sol
-            resolutions.csv     -- pre-built resolution file
-```
+Fixture files live in `tests/solidity/fixtures/` organized by scenario.
 
 ### 14.3 Test Discipline
 
@@ -1257,6 +1359,8 @@ test/
 - Every bug fix gets a regression test
 - Integration tests added for each new CLI command or flag
 - Fixture files are minimal — smallest possible Solidity to exercise the feature
+- Deep walker site-matching must be tested with multi-call functions to prevent
+  regression of the "follows all callees" bug
 
 ---
 
@@ -1291,11 +1395,11 @@ references are valid only while the owning `Tree` lives). This means a HashMap o
 `file_path → *Tree` kept alive for the scan scope. Memory cost is low — tree-sitter
 trees are compact.
 
-### 15.6 Edge Attributes Extensibility
-Current spec has `EdgeAttrs` as a fixed struct. The TypeScript codebase uses
-arbitrary JSON attributes on edges. If new edge metadata is needed (e.g., call
-argument types), the struct needs extension. Consider a `properties` map on edges
-similar to nodes, at the cost of more allocations.
+### 15.6 Reference Attributes Extensibility
+Current spec has `RefAttrs` as a fixed struct with `target_kind`. If new reference
+metadata is needed (e.g., call argument types, receiver type info), the struct
+needs extension. Consider a `properties` map on references similar to nodes, at
+the cost of more allocations.
 
 ### 15.7 Storage Pointer Writes and Data Flow Analysis
 

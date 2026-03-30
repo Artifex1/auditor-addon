@@ -6,6 +6,20 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
+contract SimpleToken is IERC20 {
+    mapping(address => uint256) public balances;
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balances[msg.sender] -= amount;
+        balances[to] += amount;
+        return true;
+    }
+
+    function balanceOf(address account) external view returns (uint256) {
+        return balances[account];
+    }
+}
+
 contract GapScenarios {
     IERC20 public token;
     address public admin;

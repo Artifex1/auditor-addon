@@ -16,14 +16,11 @@ function enter(node, ctx)
         seen_external_call = false
     end
 
-    -- When we see a call_expression, check if it matches an external call edge
+    -- When we see a call_expression, check if it matches an external call ref
     if not seen_external_call and node.kind == "call_expression" then
-        local edges = graph.get_outgoing_edges(ctx.current_node, "calls")
-        for _, e in ipairs(edges) do
-            if e.target_kind == "external" and e.call_site_line == node.line then
-                seen_external_call = true
-                break
-            end
+        local ref = graph.get_ref_at(ctx.current_file, node.start_byte)
+        if ref and ref.target_kind == "external" then
+            seen_external_call = true
         end
     end
 

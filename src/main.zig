@@ -13,6 +13,7 @@ const call_chains = @import("call_chains.zig");
 const glob = @import("glob.zig");
 const lua_adapter = @import("lua_adapter.zig");
 const ast_bridge = @import("ast_bridge.zig");
+const shipped_rules = @import("rules/shipped.zig");
 
 // ── Subcommands (SPEC.md §10) ─────────────────────────────────────────
 
@@ -139,7 +140,7 @@ const run_params = clap.parseParamsComptime(
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
     \\    --rule <str>...       Run specific shipped rule(s) only.
-    \\    --rule-path <str>     Run adhoc rule from .lua file.
+    \\    --rule-path <str>...  Run adhoc rule(s) from .lua file or glob.
     \\    --rule-inline <str>   Run adhoc rule from inline Lua string.
     \\<str>...
     \\
@@ -425,25 +426,38 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     var all_findings: std.ArrayList(output.Finding) = .empty;
 
     // Load and execute rules
-    // Use arena allocator for rule execution (Lua string dups, hits, metadata)
-    // but bridge and lua_adapter internals use the main allocator
-    // --rule-path: adhoc rule from file
-    if (res.args.@"rule-path") |rule_path| {
-        try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, rule_path, null, &all_findings);
+    // --rule-path or --rule-inline: adhoc rules only (skip shipped)
+    // Otherwise: run shipped rules, optionally filtered by --rule=<ID>
+    const has_adhoc = res.args.@"rule-path".len > 0 or res.args.@"rule-inline" != null;
+
+    if (res.args.@"rule-path".len > 0) {
+        const rule_files = try expandPositionals(res.args.@"rule-path", allocator);
+        defer freeExpandedFiles(rule_files, allocator);
+        for (rule_files) |rule_path| {
+            try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, rule_path, null, &all_findings);
+        }
     }
 
-    // --rule-inline: adhoc rule from string
     if (res.args.@"rule-inline") |rule_code| {
         try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, rule_code, &all_findings);
     }
 
-    // TODO: shipped rules from rules/ directory
-    // TODO: --rule=<ID> filter
-
-    // If no rules specified, note that shipped rules aren't implemented yet
-    if (res.args.@"rule-path" == null and res.args.@"rule-inline" == null) {
-        try stderrPrint("aa run: no rules specified. Use --rule-path=<file> or --rule-inline=<lua>\n");
-        return;
+    if (!has_adhoc) {
+        const rule_filter = res.args.rule;
+        for (&shipped_rules.all) |shipped| {
+            // Apply --rule filter if specified
+            if (rule_filter.len > 0) {
+                var matched = false;
+                for (rule_filter) |filter| {
+                    if (std.mem.eql(u8, shipped.id, filter)) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) continue;
+            }
+            try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, shipped.source, &all_findings);
+        }
     }
 
     // Output findings

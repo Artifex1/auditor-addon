@@ -4,12 +4,11 @@ const graph = @import("graph.zig");
 // ── §8.3 Resolution File (CSV) ────────────────────────────────────────
 //
 // Format:
-//   gap_id,edge_kind,target_file,target_line,target_name
-//   a4f2e81b,calls,src/Ownable.sol,15,onlyOwner
+//   ref_id,target_file,target_line,target_name
+//   a4f2e81b,src/Ownable.sol,15,onlyOwner
 
 pub const Resolution = struct {
-    gap_id: u64,
-    edge_kind: graph.EdgeKind,
+    ref_id: u64,
     target_file: []const u8,
     target_line: u32,
     target_name: []const u8,
@@ -56,91 +55,86 @@ pub fn parseResolutionFile(contents: []const u8, allocator: std.mem.Allocator) !
 }
 
 fn parseCsvLine(line: []const u8) !?Resolution {
-    var fields: [5][]const u8 = undefined;
+    var fields: [4][]const u8 = undefined;
     var field_count: usize = 0;
     var it = std.mem.splitScalar(u8, line, ',');
 
     while (it.next()) |field| {
-        if (field_count >= 5) return null;
+        if (field_count >= 4) return null;
         fields[field_count] = field;
         field_count += 1;
     }
 
-    if (field_count != 5) return null;
+    if (field_count != 4) return null;
 
-    // Parse gap_id as hex
-    const gap_id = std.fmt.parseInt(u64, fields[0], 16) catch return null;
-
-    // Parse edge_kind
-    const edge_kind = parseEdgeKind(fields[1]) orelse return null;
+    // Parse ref_id as hex
+    const ref_id = std.fmt.parseInt(u64, fields[0], 16) catch return null;
 
     // Parse line number
-    const target_line = std.fmt.parseInt(u32, fields[3], 10) catch return null;
+    const target_line = std.fmt.parseInt(u32, fields[2], 10) catch return null;
 
     return Resolution{
-        .gap_id = gap_id,
-        .edge_kind = edge_kind,
-        .target_file = fields[2],
+        .ref_id = ref_id,
+        .target_file = fields[1],
         .target_line = target_line,
-        .target_name = fields[4],
+        .target_name = fields[3],
     };
 }
 
-fn parseEdgeKind(s: []const u8) ?graph.EdgeKind {
-    const map = std.StaticStringMap(graph.EdgeKind).initComptime(.{
-        .{ "imports", .imports },
-        .{ "contains", .contains },
-        .{ "calls", .calls },
-        .{ "reads", .reads },
-        .{ "writes", .writes },
-        .{ "has_modifier", .has_modifier },
-        .{ "inherits", .inherits },
-        .{ "emits", .emits },
-    });
-    return map.get(s);
-}
-
-/// Apply resolutions to the graph per §3.3:
-/// - For each resolution: look up gap by gap_id
+/// Apply resolutions to the graph:
+/// - For each resolution: look up reference by ref_id
 /// - Compute target node ID from (target_name, target_file, target_line)
-/// - If both gap and target exist: merge edge, eliminate gap
-/// - If gap not found: stale (warning)
+/// - If ref found and has gap: add target, clear gap
+/// - If ref not found or ref.gap is null: stale (warning)
 /// - If target not found: broken (error)
 pub fn applyResolutions(
     g: *graph.SymbolGraph,
     resolutions: []const Resolution,
     result: *ResolutionResult,
 ) !void {
+    // Ensure site_index is built for O(1) ref lookups
+    try g.buildSiteIndex();
+
+    // Track which refs we've already started resolving (for multi-row dispatch).
+    // First row for a ref clears provisional targets + gap. Subsequent rows append.
+    var seen_refs: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer seen_refs.deinit(result.allocator);
+
     for (resolutions) |res| {
-        const gap = g.lookupGap(res.gap_id);
-        if (gap == null) {
+        const ref = g.lookupRefMut(res.ref_id) orelse {
             result.stale += 1;
-            try result.warnings.append(result.allocator, "stale resolution: gap not found");
+            try result.warnings.append(result.allocator, res.target_name);
+            continue;
+        };
+
+        const first_time = !seen_refs.contains(res.ref_id);
+
+        // First row must target a ref with a gap annotation.
+        // Subsequent rows for the same ref are additional dispatch targets.
+        if (first_time and ref.gap == null) {
+            result.stale += 1;
+            try result.warnings.append(result.allocator, res.target_name);
             continue;
         }
 
         // Compute target node ID using the same hash as §2.5
         const target_id = graph.nodeId(res.target_name, res.target_file, res.target_line);
-        const target_node = g.lookupNode(target_id);
-
-        if (target_node == null) {
+        if (g.lookupNode(target_id) == null) {
             result.broken += 1;
-            try result.errors.append(result.allocator, "broken resolution: target node not found");
+            try result.errors.append(result.allocator, res.target_name);
             continue;
         }
 
-        // Merge: create concrete edge, eliminate gap
-        try g.addEdge(.{
-            .from = gap.?.from,
-            .to = target_id,
-            .kind = res.edge_kind,
-            .attrs = .{
-                .call_site_byte = if (gap.?.call_site) |cs| cs.start_byte else null,
-                .call_site_line = if (gap.?.call_site) |cs| cs.line else null,
-            },
-        });
+        // First resolution for this ref: clear any provisional targets from static
+        // analysis. The agent's answer replaces the default.
+        if (first_time) {
+            ref.targets.clearRetainingCapacity();
+            ref.gap = null;
+            try seen_refs.put(result.allocator, res.ref_id, {});
+        }
 
-        _ = g.removeGap(res.gap_id);
+        // Add target (first or additional dispatch target)
+        try ref.addTarget(g.allocator, target_id);
         result.resolved += 1;
     }
 }
@@ -149,27 +143,29 @@ pub fn applyResolutions(
 
 test "parse CSV resolution file" {
     const csv =
-        \\gap_id,edge_kind,target_file,target_line,target_name
-        \\a4f2e81b,calls,src/Ownable.sol,15,onlyOwner
-        \\b7c3d012,inherits,src/Ownable.sol,3,Ownable
+        \\ref_id,target_file,target_line,target_name
+        \\a4f2e81b,src/Ownable.sol,15,onlyOwner
+        \\b7c3d012,src/Ownable.sol,3,Ownable
     ;
 
     const resolutions = try parseResolutionFile(csv, std.testing.allocator);
     defer std.testing.allocator.free(resolutions);
 
     try std.testing.expectEqual(@as(usize, 2), resolutions.len);
-    try std.testing.expectEqual(graph.EdgeKind.calls, resolutions[0].edge_kind);
+    try std.testing.expectEqual(@as(u64, 0xa4f2e81b), resolutions[0].ref_id);
     try std.testing.expectEqualStrings("onlyOwner", resolutions[0].target_name);
     try std.testing.expectEqual(@as(u32, 15), resolutions[0].target_line);
-    try std.testing.expectEqual(graph.EdgeKind.inherits, resolutions[1].edge_kind);
+    try std.testing.expectEqualStrings("src/Ownable.sol", resolutions[0].target_file);
+    try std.testing.expectEqual(@as(u64, 0xb7c3d012), resolutions[1].ref_id);
+    try std.testing.expectEqualStrings("Ownable", resolutions[1].target_name);
 }
 
 test "parse empty and malformed CSV lines" {
     const csv =
-        \\gap_id,edge_kind,target_file,target_line,target_name
+        \\ref_id,target_file,target_line,target_name
         \\
         \\not,enough,fields
-        \\a4f2e81b,calls,src/Ownable.sol,15,onlyOwner
+        \\a4f2e81b,src/Ownable.sol,15,onlyOwner
     ;
 
     const resolutions = try parseResolutionFile(csv, std.testing.allocator);
@@ -178,13 +174,12 @@ test "parse empty and malformed CSV lines" {
     try std.testing.expectEqual(@as(usize, 1), resolutions.len);
 }
 
-test "apply resolutions: stale gap" {
+test "apply resolutions: stale ref (not found)" {
     var g = graph.SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
     const resolutions = [_]Resolution{.{
-        .gap_id = 0xdeadbeef,
-        .edge_kind = .calls,
+        .ref_id = 0xdeadbeef,
         .target_file = "src/Foo.sol",
         .target_line = 10,
         .target_name = "foo",
@@ -196,4 +191,132 @@ test "apply resolutions: stale gap" {
     try applyResolutions(&g, &resolutions, &result);
     try std.testing.expectEqual(@as(u32, 1), result.stale);
     try std.testing.expectEqual(@as(u32, 0), result.resolved);
+}
+
+test "apply resolutions: provisional ref gets targets replaced" {
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Create a target node the resolution will point to
+    const new_target_id = graph.nodeId("withdraw", "src/VaultImpl.sol", 42);
+    _ = try g.addNode(.{
+        .id = new_target_id,
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "withdraw",
+        .qualified_name = "VaultImpl.withdraw",
+        .language = .solidity,
+    });
+
+    // Create a provisional ref (has a default target + gap)
+    const rid = graph.refId("src/Vault.sol", 100);
+    var provisional_targets: std.ArrayListUnmanaged(u64) = .empty;
+    try provisional_targets.append(std.testing.allocator, 999); // provisional default
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "call",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
+        .targets = provisional_targets,
+        .target_kind = .external,
+        .gap = .low,
+        .resolved = true,
+    });
+
+    var csv_buf: [256]u8 = undefined;
+    const csv = try std.fmt.bufPrint(&csv_buf, "ref_id,target_file,target_line,target_name\n{x},src/VaultImpl.sol,42,withdraw\n", .{rid});
+
+    const resolutions = try parseResolutionFile(csv, std.testing.allocator);
+    defer std.testing.allocator.free(resolutions);
+
+    var result = ResolutionResult.init(std.testing.allocator);
+    defer result.deinit();
+    try applyResolutions(&g, resolutions, &result);
+
+    try std.testing.expectEqual(@as(u32, 1), result.resolved);
+
+    // The old provisional target (999) should be replaced, not appended to
+    try g.buildSiteIndex();
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expectEqual(@as(usize, 1), ref.targets.items.len);
+    try std.testing.expectEqual(new_target_id, ref.firstTarget().?);
+    try std.testing.expect(ref.gap == null);
+}
+
+test "apply resolutions: multi-row dispatch (two targets for same ref)" {
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const target_a = graph.nodeId("withdrawA", "src/A.sol", 10);
+    const target_b = graph.nodeId("withdrawB", "src/B.sol", 20);
+    _ = try g.addNode(.{ .id = target_a, .kind = .callable, .language_kind = "function_definition", .name = "withdrawA", .qualified_name = "A.withdrawA", .language = .solidity });
+    _ = try g.addNode(.{ .id = target_b, .kind = .callable, .language_kind = "function_definition", .name = "withdrawB", .qualified_name = "B.withdrawB", .language = .solidity });
+
+    // Unresolved ref (gap, no targets)
+    const rid = graph.refId("src/Vault.sol", 100);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "withdraw",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    // Two CSV rows for the same ref_id → multi-dispatch
+    var csv_buf: [512]u8 = undefined;
+    const csv = try std.fmt.bufPrint(&csv_buf, "ref_id,target_file,target_line,target_name\n{x},src/A.sol,10,withdrawA\n{x},src/B.sol,20,withdrawB\n", .{ rid, rid });
+
+    const resolutions = try parseResolutionFile(csv, std.testing.allocator);
+    defer std.testing.allocator.free(resolutions);
+
+    var result = ResolutionResult.init(std.testing.allocator);
+    defer result.deinit();
+    try applyResolutions(&g, resolutions, &result);
+
+    try std.testing.expectEqual(@as(u32, 2), result.resolved);
+
+    try g.buildSiteIndex();
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expectEqual(@as(usize, 2), ref.targets.items.len);
+    try std.testing.expect(ref.gap == null);
+}
+
+test "apply resolutions: broken target (node not found)" {
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const rid = graph.refId("src/Vault.sol", 100);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "missing",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    });
+
+    var csv_buf: [256]u8 = undefined;
+    const csv = try std.fmt.bufPrint(&csv_buf, "ref_id,target_file,target_line,target_name\n{x},src/Missing.sol,99,doesNotExist\n", .{rid});
+
+    const resolutions = try parseResolutionFile(csv, std.testing.allocator);
+    defer std.testing.allocator.free(resolutions);
+
+    var result = ResolutionResult.init(std.testing.allocator);
+    defer result.deinit();
+    try applyResolutions(&g, resolutions, &result);
+
+    try std.testing.expectEqual(@as(u32, 0), result.resolved);
+    try std.testing.expectEqual(@as(u32, 1), result.broken);
+
+    // Gap should still be set (resolution failed)
+    try g.buildSiteIndex();
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expect(ref.gap != null);
+    try std.testing.expect(!ref.hasTargets());
 }

@@ -82,7 +82,7 @@ pub fn walkDeep(
     max_depth: u32,
     call_expression_type: []const u8,
     allocator: std.mem.Allocator,
-) void {
+) !void {
     var it = g.nodes.iterator();
     while (it.next()) |entry| {
         const node = entry.value_ptr.*;
@@ -93,9 +93,9 @@ pub fn walkDeep(
         var visited: std.AutoHashMapUnmanaged(u64, void) = .empty;
         defer visited.deinit(allocator);
 
-        var call_stack: std.ArrayList(u64) = .empty;
+        var call_stack: std.ArrayListUnmanaged(u64) = .empty;
         defer call_stack.deinit(allocator);
-        call_stack.append(allocator, node.id) catch continue;
+        try call_stack.append(allocator, node.id);
 
         const ctx = WalkContext{
             .current_file = file,
@@ -104,13 +104,13 @@ pub fn walkDeep(
             .current_node = node.id,
         };
 
-        walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, &visited, &call_stack, allocator);
+        try walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, &visited, &call_stack, allocator);
     }
 
     if (callback.finalize_fn) |finalize| finalize();
 }
 
-/// Deep walk: full AST traversal with call-edge following.
+/// Deep walk: full AST traversal with call-reference following.
 fn walkAstNodeDeep(
     g: *const graph.SymbolGraph,
     node: ts.Node,
@@ -120,9 +120,9 @@ fn walkAstNodeDeep(
     depth: u32,
     call_expression_type: []const u8,
     visited: *std.AutoHashMapUnmanaged(u64, void),
-    call_stack: *std.ArrayList(u64),
+    call_stack: *std.ArrayListUnmanaged(u64),
     allocator: std.mem.Allocator,
-) void {
+) !void {
     const updated_ctx = updateContext(g, node, ctx);
 
     callback.enter_fn(node, updated_ctx);
@@ -132,16 +132,16 @@ fn walkAstNodeDeep(
         const child = node.child(i) orelse continue;
         const child_kind = child.kind();
 
-        // Follow resolved call edges when encountering a call expression
+        // Follow resolved call references when encountering a call expression
         if (depth < max_depth and std.mem.eql(u8, child_kind, call_expression_type)) {
-            for (g.edges.items) |edge| {
-                if (edge.from == updated_ctx.current_node and edge.kind == .calls) {
-                    if (edge.from == edge.to) continue; // skip self-edges (external calls)
-                    if (visited.contains(edge.to)) continue;
-                    if (g.lookupNode(edge.to)) |callee| {
+            const rid = graph.refId(updated_ctx.current_file, child.startByte());
+            if (g.lookupRef(rid)) |ref| {
+                for (ref.targets.items) |target| {
+                    if (visited.contains(target)) continue;
+                    if (g.lookupNode(target)) |callee| {
                         if (callee.ast_node) |callee_ast| {
-                            visited.put(allocator, callee.id, {}) catch continue;
-                            call_stack.append(allocator, callee.id) catch continue;
+                            try visited.put(allocator, callee.id, {});
+                            try call_stack.append(allocator, callee.id);
 
                             const deep_ctx = WalkContext{
                                 .current_file = if (callee.locator) |loc| loc.file else updated_ctx.current_file,
@@ -150,7 +150,7 @@ fn walkAstNodeDeep(
                                 .current_node = callee.id,
                             };
 
-                            walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, visited, call_stack, allocator);
+                            try walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, visited, call_stack, allocator);
 
                             _ = call_stack.pop();
                         }
@@ -159,7 +159,7 @@ fn walkAstNodeDeep(
             }
         }
 
-        walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, visited, call_stack, allocator);
+        try walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, visited, call_stack, allocator);
     }
 
     callback.exit_fn(node, updated_ctx);
@@ -170,10 +170,7 @@ fn walkAstNodeDeep(
 /// If this AST node corresponds to a graph node (callable, container, modifier),
 /// return a context with current_node updated. Otherwise return ctx unchanged.
 fn updateContext(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext) WalkContext {
-    const line = node.startPoint().row + 1;
     const start_byte = node.startByte();
-
-    // Look for a graph node at this position
     var it = g.nodes.iterator();
     while (it.next()) |entry| {
         const gn = entry.value_ptr.*;
@@ -181,7 +178,6 @@ fn updateContext(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext) W
             .callable, .container, .modifier => {
                 if (gn.ast_node) |gn_ast| {
                     if (gn_ast.startByte() == start_byte) {
-                        _ = line;
                         return .{
                             .current_file = ctx.current_file,
                             .depth = ctx.depth,

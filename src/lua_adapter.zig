@@ -150,7 +150,7 @@ pub fn executeVisitorRule(
     g_lua = lua;
 
     if (std.mem.eql(u8, metadata.rule_type, "deep")) {
-        walker.walkDeep(g, cb, metadata.max_depth, lang_config.call_expression.ts_type, allocator);
+        try walker.walkDeep(g, cb, metadata.max_depth, lang_config.call_expression.ts_type, allocator);
     } else {
         walker.walkScope(g, cb);
     }
@@ -346,37 +346,43 @@ fn luaGraphGetProperty(lua: *Lua) i32 {
     return 1;
 }
 
-fn pushEdgeAttrs(lua: *Lua, edge: graph.GraphEdge) void {
-    if (edge.attrs) |attrs| {
-        if (attrs.call_site_line) |line| {
-            lua.pushInteger(@intCast(line));
-            lua.setField(-2, "call_site_line");
-        }
-        if (attrs.target_kind) |tk| {
-            _ = lua.pushString(@tagName(tk));
-            lua.setField(-2, "target_kind");
-        }
+fn pushRefAttrs(lua: *Lua, ref: graph.Reference) void {
+    // target_name always available
+    _ = lua.pushString(ref.target_name);
+    lua.setField(-2, "target_name");
+
+    // call_site_line from site
+    lua.pushInteger(@intCast(ref.site.line));
+    lua.setField(-2, "call_site_line");
+
+    if (ref.target_kind) |tk| {
+        _ = lua.pushString(@tagName(tk));
+        lua.setField(-2, "target_kind");
     }
 }
 
 fn luaGraphGetOutgoingEdges(lua: *Lua) i32 {
     const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
-    const kind_filter: ?graph.EdgeKind = if (lua.isString(2))
-        std.meta.stringToEnum(graph.EdgeKind, lua.toString(2) catch "")
+    const kind_filter: ?graph.RefKind = if (lua.isString(2))
+        std.meta.stringToEnum(graph.RefKind, lua.toString(2) catch "")
     else
         null;
 
-    const edges = g_graph.getOutgoingEdges(id, kind_filter, g_allocator) catch return 0;
-    defer g_allocator.free(edges);
+    const refs = g_graph.getOutgoingRefs(id, kind_filter, g_allocator) catch return 0;
+    defer g_allocator.free(refs);
 
-    lua.createTable(@intCast(edges.len), 0);
-    for (edges, 0..) |edge, i| {
-        lua.createTable(0, 5);
-        lua.pushInteger(@bitCast(edge.to));
+    lua.createTable(@intCast(refs.len), 0);
+    for (refs, 0..) |ref, i| {
+        lua.createTable(0, 6);
+        if (ref.firstTarget()) |target_id| {
+            lua.pushInteger(@bitCast(target_id));
+        } else {
+            lua.pushNil();
+        }
         lua.setField(-2, "to");
-        _ = lua.pushString(@tagName(edge.kind));
+        _ = lua.pushString(@tagName(ref.kind));
         lua.setField(-2, "kind");
-        pushEdgeAttrs(lua, edge);
+        pushRefAttrs(lua, ref);
         lua.rawSetIndex(-2, @intCast(i + 1));
     }
     return 1;
@@ -384,22 +390,22 @@ fn luaGraphGetOutgoingEdges(lua: *Lua) i32 {
 
 fn luaGraphGetIncomingEdges(lua: *Lua) i32 {
     const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
-    const kind_filter: ?graph.EdgeKind = if (lua.isString(2))
-        std.meta.stringToEnum(graph.EdgeKind, lua.toString(2) catch "")
+    const kind_filter: ?graph.RefKind = if (lua.isString(2))
+        std.meta.stringToEnum(graph.RefKind, lua.toString(2) catch "")
     else
         null;
 
-    const edges = g_graph.getIncomingEdges(id, kind_filter, g_allocator) catch return 0;
-    defer g_allocator.free(edges);
+    const refs = g_graph.getIncomingRefs(id, kind_filter, g_allocator) catch return 0;
+    defer g_allocator.free(refs);
 
-    lua.createTable(@intCast(edges.len), 0);
-    for (edges, 0..) |edge, i| {
-        lua.createTable(0, 5);
-        lua.pushInteger(@bitCast(edge.from));
+    lua.createTable(@intCast(refs.len), 0);
+    for (refs, 0..) |ref, i| {
+        lua.createTable(0, 6);
+        lua.pushInteger(@bitCast(ref.from));
         lua.setField(-2, "from");
-        _ = lua.pushString(@tagName(edge.kind));
+        _ = lua.pushString(@tagName(ref.kind));
         lua.setField(-2, "kind");
-        pushEdgeAttrs(lua, edge);
+        pushRefAttrs(lua, ref);
         lua.rawSetIndex(-2, @intCast(i + 1));
     }
     return 1;
@@ -437,12 +443,12 @@ fn luaGraphGetParent(lua: *Lua) i32 {
 
 fn luaGraphGetCallers(lua: *Lua) i32 {
     const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
-    const edges = g_graph.getIncomingEdges(id, .calls, g_allocator) catch return 0;
-    defer g_allocator.free(edges);
+    const refs = g_graph.getIncomingRefs(id, .call, g_allocator) catch return 0;
+    defer g_allocator.free(refs);
 
-    lua.createTable(@intCast(edges.len), 0);
-    for (edges, 0..) |edge, i| {
-        if (g_graph.lookupNode(edge.from)) |caller| {
+    lua.createTable(@intCast(refs.len), 0);
+    for (refs, 0..) |ref, i| {
+        if (g_graph.lookupNode(ref.from)) |caller| {
             pushGraphNodeTable(lua, caller);
             lua.rawSetIndex(-2, @intCast(i + 1));
         }
@@ -452,14 +458,16 @@ fn luaGraphGetCallers(lua: *Lua) i32 {
 
 fn luaGraphGetCallees(lua: *Lua) i32 {
     const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
-    const edges = g_graph.getOutgoingEdges(id, .calls, g_allocator) catch return 0;
-    defer g_allocator.free(edges);
+    const refs = g_graph.getOutgoingRefs(id, .call, g_allocator) catch return 0;
+    defer g_allocator.free(refs);
 
-    lua.createTable(@intCast(edges.len), 0);
-    for (edges, 0..) |edge, i| {
-        if (g_graph.lookupNode(edge.to)) |callee| {
-            pushGraphNodeTable(lua, callee);
-            lua.rawSetIndex(-2, @intCast(i + 1));
+    lua.createTable(@intCast(refs.len), 0);
+    for (refs, 0..) |ref, i| {
+        if (ref.firstTarget()) |target_id| {
+            if (g_graph.lookupNode(target_id)) |callee| {
+                pushGraphNodeTable(lua, callee);
+                lua.rawSetIndex(-2, @intCast(i + 1));
+            }
         }
     }
     return 1;

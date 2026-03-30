@@ -180,17 +180,7 @@ pub const MetricsConfig = struct {
 
 pub const CustomHandlerFn = *const fn (*graph.SymbolGraph, ts.Node, []const u8) void;
 
-/// Result of a language-specific resolve hook.
-pub const ResolveAction = union(enum) {
-    /// Hook didn't handle this ref — run default resolution.
-    unhandled,
-    /// Hook emitted edge(s) and/or gap(s) itself. Skip default resolution.
-    resolved,
-    /// Discard this ref entirely. No edge, no gap.
-    drop,
-};
-
-pub const ResolveHookFn = *const fn (ref: graph.PendingRef, g: *graph.SymbolGraph) ResolveAction;
+pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph) void;
 
 pub const LanguageConfig = struct {
     language: Language,

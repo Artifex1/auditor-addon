@@ -82,7 +82,7 @@ pub const Pipeline = struct {
             try queue.append(self.allocator, path);
         }
 
-        // Walk phase: parse and walk files, collecting PendingRefs
+        // Walk phase: parse and walk files, collecting References
         var queue_idx: usize = 0;
         while (queue_idx < queue.items.len) {
             const path = queue.items[queue_idx];
@@ -93,7 +93,7 @@ pub const Pipeline = struct {
 
             try self.parseAndWalkFile(path);
 
-            // Import expansion (§3.4): process import PendingRefs, queue new files
+            // Import expansion (§3.4): process import refs, queue new files
             if (!no_expand) {
                 try self.expandImports(&queue);
             }
@@ -111,6 +111,7 @@ pub const Pipeline = struct {
 
         // Parse with tree-sitter
         const tree = self.parser.parseString(source, null) orelse return error.ParseFailed;
+        errdefer tree.destroy();
         try self.trees.put(self.allocator, file_path, tree);
 
         // Create file node (§2.2: every file parsed becomes a file node)
@@ -149,6 +150,7 @@ pub const Pipeline = struct {
 
         const stat = try file.stat();
         const source = try self.allocator.alloc(u8, stat.size);
+        errdefer self.allocator.free(source);
         const bytes_read = try file.readAll(source);
         const result = source[0..bytes_read];
 
@@ -313,7 +315,7 @@ pub const Pipeline = struct {
 
         // Emit contains edge from parent container
         if (container_id) |cid| {
-            try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+            try self.graph.addContains(cid, id);
         }
 
         // Push container onto scope stack (§4.1)
@@ -354,7 +356,7 @@ pub const Pipeline = struct {
 
         // Emit contains edge
         if (container_id) |cid| {
-            try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+            try self.graph.addContains(cid, id);
         }
 
         // Push callable onto scope stack (§4.1)
@@ -391,7 +393,7 @@ pub const Pipeline = struct {
         }
 
         if (container_id) |cid| {
-            try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+            try self.graph.addContains(cid, id);
         }
     }
 
@@ -417,7 +419,7 @@ pub const Pipeline = struct {
         try self.extractProperties(node, source, mapping.properties, gn);
 
         if (container_id) |cid| {
-            try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+            try self.graph.addContains(cid, id);
         }
 
         // Push modifier onto scope stack (§4.1)
@@ -450,7 +452,7 @@ pub const Pipeline = struct {
         try self.extractProperties(node, source, mapping.properties, gn);
 
         if (container_id) |cid| {
-            try self.graph.addEdge(.{ .from = cid, .to = id, .kind = .contains });
+            try self.graph.addContains(cid, id);
         }
     }
 
@@ -470,27 +472,27 @@ pub const Pipeline = struct {
         if (self.isWriteCallMethod(target_name)) {
             // Record as state_write
             const receiver_name = self.extractReceiverName(callee_node, source) orelse return;
-            try self.addPendingRef(receiver_name, .state_write, node, file_path);
+            try self.addReference(receiver_name, .state_write, node, file_path);
             return;
         }
 
-        try self.addPendingRef(target_name, .call, node, file_path);
+        try self.addReference(target_name, .call, node, file_path);
     }
 
     fn processInheritance(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.InheritanceMapping) !void {
         const name_node = node.childByFieldName(mapping.name_field) orelse return;
         const target = self.extractIdentifierText(name_node, source) orelse return;
-        try self.addPendingRef(target, .inheritance, node, file_path);
+        try self.addReference(target, .inheritance, node, file_path);
     }
 
     fn processModifierInvocation(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ModifierInvocationMapping) !void {
         const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        try self.addPendingRef(name, .modifier_use, node, file_path);
+        try self.addReference(name, .modifier_use, node, file_path);
     }
 
     fn processEmit(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.EmitMapping) !void {
         const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        try self.addPendingRef(name, .event_emit, node, file_path);
+        try self.addReference(name, .event_emit, node, file_path);
     }
 
     fn processWrite(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, wp: cfg.WritePattern) !void {
@@ -498,7 +500,7 @@ pub const Pipeline = struct {
 
         // Unwrap to root identifier (§4.2)
         const root_name = unwrapToRoot(target_node, source, self.lang_config) orelse return;
-        try self.addPendingRef(root_name, .state_write, node, file_path);
+        try self.addReference(root_name, .state_write, node, file_path);
 
         // Also record the read side for augmented assignments
         // (e.g., `totalSupply += amount` reads both `totalSupply` and `amount`)
@@ -512,12 +514,14 @@ pub const Pipeline = struct {
         const import_path = std.mem.trim(u8, raw_path, "\"'");
 
         const from = self.currentContainer() orelse return;
-        try self.graph.addPendingRef(.{
+        try self.graph.addRef(.{
+            .id = graph.refId(file_path, node.startByte()),
             .from = from,
-            .container = from,
             .target_name = import_path,
-            .call_site = self.makeLocator(node, file_path),
+            .site = self.makeLocator(node, file_path),
             .kind = .import,
+            .targets = .empty,
+            .resolved = false,
         });
     }
 
@@ -549,31 +553,22 @@ pub const Pipeline = struct {
     // ── Import Expansion (§3.4) ──────────────────────────────────────
 
     fn expandImports(self: *Pipeline, queue: *std.ArrayList([]const u8)) !void {
-        // Process import PendingRefs: resolve paths, queue new files
-        var i: usize = 0;
-        while (i < self.graph.pending_refs.items.len) {
-            const ref = self.graph.pending_refs.items[i];
-            if (ref.kind == .import) {
-                // Try to resolve import path to file on disk
-                if (self.resolveImportPath(ref.target_name)) |resolved_path| {
-                    // Emit imports edge
-                    try self.graph.addEdge(.{
-                        .from = ref.from,
-                        .to = graph.nodeId(resolved_path, resolved_path, 1),
-                        .kind = .imports,
-                    });
+        // Process import refs: resolve paths, queue new files
+        for (self.graph.refs.items) |*ref| {
+            if (ref.kind != .import or ref.resolved) continue;
 
-                    // Queue file for walking
-                    if (!self.walked_files.contains(resolved_path)) {
-                        try queue.append(self.allocator, resolved_path);
-                    }
+            // Try to resolve import path to file on disk
+            if (self.resolveImportPath(ref.target_name)) |resolved_path| {
+                // Add target to the ref
+                const target_id = graph.nodeId(resolved_path, resolved_path, 1);
+                try ref.addTarget(self.allocator, target_id);
+                ref.resolved = true;
 
-                    // Remove from pending (it's resolved)
-                    _ = self.graph.pending_refs.swapRemove(i);
-                    continue;
+                // Queue file for walking
+                if (!self.walked_files.contains(resolved_path)) {
+                    try queue.append(self.allocator, resolved_path);
                 }
             }
-            i += 1;
         }
     }
 
@@ -587,174 +582,174 @@ pub const Pipeline = struct {
     // ── Resolution Phase (§4.1) ──────────────────────────────────────
 
     fn resolve(self: *Pipeline) !void {
-        // Step 1: Create import gaps, then resolve inheritance
-        var i: usize = 0;
-        while (i < self.graph.pending_refs.items.len) {
-            const ref = self.graph.pending_refs.items[i];
+        // Step 1: Resolve imports and inheritance refs
+        for (self.graph.refs.items) |*ref| {
+            if (ref.resolved) continue;
             switch (ref.kind) {
                 .import => {
-                    // Unresolved import → EdgeGap
-                    const gap_id = graph.gapId(ref.from, ref.target_name, .imports);
-                    _ = try self.graph.addGap(.{
-                        .id = gap_id,
-                        .from = ref.from,
-                        .expected_target = ref.target_name,
-                        .edge_kind = .imports,
-                        .call_site = ref.call_site,
-                        .priority = .high,
-                    });
-                    _ = self.graph.pending_refs.swapRemove(i);
-                    continue;
+                    // Unresolved import → gap
+                    ref.gap = .high;
+                    ref.resolved = true;
                 },
                 .inheritance => {
                     // Try to resolve inheritance
                     if (self.graph.lookupContainerByName(ref.target_name)) |parent_node| {
-                        try self.graph.addEdge(.{
-                            .from = ref.container,
-                            .to = parent_node.id,
-                            .kind = .inherits,
-                        });
+                        try ref.addTarget(self.allocator, parent_node.id);
                     } else {
-                        const gap_id = graph.gapId(ref.from, ref.target_name, .inherits);
-                        _ = try self.graph.addGap(.{
-                            .id = gap_id,
-                            .from = ref.from,
-                            .expected_target = ref.target_name,
-                            .edge_kind = .inherits,
-                            .call_site = ref.call_site,
-                            .priority = .high,
-                        });
+                        ref.gap = .high;
                     }
-                    _ = self.graph.pending_refs.swapRemove(i);
-                    continue;
+                    ref.resolved = true;
                 },
                 else => {},
             }
-            i += 1;
         }
 
         // Step 2: Resolve all other references
-        while (self.graph.pending_refs.items.len > 0) {
-            const ref = self.graph.pending_refs.pop().?;
+        for (self.graph.refs.items) |*ref| {
+            if (ref.resolved) continue;
 
             // Language-specific resolve hook runs first
             if (self.lang_config.resolve_hook) |hook| {
-                switch (hook(ref, &self.graph)) {
-                    .resolved => continue,
-                    .drop => continue,
-                    .unhandled => {},
-                }
+                hook(ref, &self.graph);
+                if (ref.resolved) continue;
             }
+
+            // Derive container from the scope node
+            const container_id = self.graph.containerOf(ref.from) orelse {
+                ref.resolved = true;
+                continue;
+            };
 
             switch (ref.kind) {
                 .call => {
-                    if (self.resolveInScope(ref.container, ref.target_name, .callable)) |target| {
-                        try self.graph.addEdge(.{
-                            .from = ref.from,
-                            .to = target.id,
-                            .kind = .calls,
-                            .attrs = .{
-                                .call_site_byte = ref.call_site.start_byte,
-                                .call_site_line = ref.call_site.line,
-                            },
-                        });
+                    if (self.resolveInScope(container_id, ref.target_name, .callable)) |target| {
+                        try ref.addTarget(self.allocator, target.id);
+                        ref.target_kind = .internal;
                     } else {
-                        const gap_id = graph.gapId(ref.from, ref.target_name, .calls);
-                        _ = try self.graph.addGap(.{
-                            .id = gap_id,
-                            .from = ref.from,
-                            .expected_target = ref.target_name,
-                            .edge_kind = .calls,
-                            .call_site = ref.call_site,
-                            .priority = .medium,
-                        });
+                        ref.gap = .medium;
                     }
+                    ref.resolved = true;
                 },
                 .state_read => {
-                    // §4.1: state_read → edge or drop
-                    if (self.resolveInScope(ref.container, ref.target_name, .variable)) |target| {
-                        try self.graph.addEdge(.{
-                            .from = ref.from,
-                            .to = target.id,
-                            .kind = .reads,
-                        });
+                    // §4.1: state_read → target or drop (no gap)
+                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |target| {
+                        try ref.addTarget(self.allocator, target.id);
                     }
                     // else: drop — likely a local or parameter
+                    ref.resolved = true;
                 },
                 .state_write => {
-                    // §4.1: state_write → edge or drop
-                    if (self.resolveInScope(ref.container, ref.target_name, .variable)) |target| {
-                        try self.graph.addEdge(.{
-                            .from = ref.from,
-                            .to = target.id,
-                            .kind = .writes,
-                        });
+                    // §4.1: state_write → target or drop (no gap)
+                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |target| {
+                        try ref.addTarget(self.allocator, target.id);
                     }
+                    ref.resolved = true;
                 },
                 .modifier_use => {
-                    if (self.resolveInScope(ref.container, ref.target_name, .modifier)) |target| {
-                        try self.graph.addEdge(.{
-                            .from = ref.from,
-                            .to = target.id,
-                            .kind = .has_modifier,
-                        });
+                    if (self.resolveInScope(container_id, ref.target_name, .modifier)) |target| {
+                        try ref.addTarget(self.allocator, target.id);
                     } else {
-                        const gap_id = graph.gapId(ref.from, ref.target_name, .has_modifier);
-                        _ = try self.graph.addGap(.{
-                            .id = gap_id,
-                            .from = ref.from,
-                            .expected_target = ref.target_name,
-                            .edge_kind = .has_modifier,
-                            .call_site = ref.call_site,
-                            .priority = .high,
-                        });
+                        ref.gap = .high;
                     }
+                    ref.resolved = true;
                 },
                 .event_emit => {
-                    // §4.1: event_emit → edge or drop
-                    if (self.resolveInScope(ref.container, ref.target_name, .event)) |target| {
-                        try self.graph.addEdge(.{
-                            .from = ref.from,
-                            .to = target.id,
-                            .kind = .emits,
-                        });
+                    // §4.1: event_emit → target or drop (no gap)
+                    if (self.resolveInScope(container_id, ref.target_name, .event)) |target| {
+                        try ref.addTarget(self.allocator, target.id);
                     }
+                    ref.resolved = true;
                 },
                 else => {}, // import/inheritance handled in step 1
             }
         }
+
+        // Build site index for O(1) ref lookups
+        try self.graph.buildSiteIndex();
     }
 
-    /// Scoped resolution: check own container, then walk inheritance chain (§4.1).
+    /// Scoped resolution: check own container, then walk inheritance chain (§4.1, §4.3).
     fn resolveInScope(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
         // Check own container first
         if (self.graph.lookupChildByName(container_id, name, expected_kind)) |found| {
             return found;
         }
 
-        // Walk parents in language-defined order (§4.3)
-        const parents = self.getInheritanceChain(container_id);
-        for (parents) |parent_id| {
+        // Walk parents per inheritance strategy (§4.3)
+        switch (self.lang_config.inheritance_strategy) {
+            .c3_linearization => return self.resolveC3(container_id, name, expected_kind),
+            .single_chain => return self.resolveSingleChain(container_id, name, expected_kind),
+            .flat => return null, // no inheritance chain
+            .embedded_promotion => return self.resolveEmbedded(container_id, name, expected_kind),
+        }
+    }
+
+    /// C3 linearization (Solidity, Python): right-to-left depth-first, deduplicated.
+    /// `contract C is A, B` → check B first, then A (right-to-left).
+    /// Recurses into each parent's chain depth-first.
+    fn resolveC3(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+        // Collect resolved inheritance targets — order matches source declaration (left-to-right)
+        // C3: search right-to-left, so iterate in reverse
+        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
+        defer self.allocator.free(parents);
+
+        var i = parents.len;
+        while (i > 0) {
+            i -= 1;
+            const parent_id = parents[i];
+            // Check parent's own children
             if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| {
                 return found;
             }
+            // Recurse into parent's inheritance chain
+            if (self.resolveC3(parent_id, name, expected_kind)) |found| {
+                return found;
+            }
         }
-
         return null;
     }
 
-    /// Get the inheritance chain for a container per §4.3.
-    fn getInheritanceChain(self: *Pipeline, container_id: u64) []const u64 {
-        // For now, walk inherits edges directly.
-        // TODO: implement strategy-specific ordering (C3, embedded_promotion, etc.)
-        const edges = self.graph.getOutgoingEdges(container_id, .inherits, self.allocator) catch return &.{};
-        defer self.allocator.free(edges);
+    /// Single chain (Java): one parent class + interfaces.
+    /// Walk the single parent chain upward; interface methods are not inherited.
+    fn resolveSingleChain(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
+        defer self.allocator.free(parents);
 
-        var chain: std.ArrayList(u64) = .empty;
-        for (edges) |edge| {
-            chain.append(self.allocator, edge.to) catch {};
+        // First inheritance target is the parent class
+        if (parents.len > 0) {
+            const parent_id = parents[0];
+            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| {
+                return found;
+            }
+            return self.resolveSingleChain(parent_id, name, expected_kind);
         }
-        return chain.toOwnedSlice(self.allocator) catch &.{};
+        return null;
+    }
+
+    /// Embedded promotion (Go): shallowest embedding wins.
+    /// Check all immediate parents; if exactly one matches, return it.
+    /// If multiple match at same depth, it's ambiguous — skip.
+    fn resolveEmbedded(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
+        defer self.allocator.free(parents);
+
+        var found: ?*graph.GraphNode = null;
+        for (parents) |parent_id| {
+            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |match| {
+                if (found != null) return null; // ambiguous
+                found = match;
+            }
+        }
+        if (found != null) return found;
+
+        // Recurse deeper
+        for (parents) |parent_id| {
+            if (self.resolveEmbedded(parent_id, name, expected_kind)) |match| {
+                if (found != null) return null; // ambiguous
+                found = match;
+            }
+        }
+        return found;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -873,15 +868,16 @@ pub const Pipeline = struct {
         };
     }
 
-    fn addPendingRef(self: *Pipeline, target_name: []const u8, kind: graph.RefKind, node: ts.Node, file_path: []const u8) !void {
+    fn addReference(self: *Pipeline, target_name: []const u8, kind: graph.RefKind, node: ts.Node, file_path: []const u8) !void {
         const from = self.currentScope() orelse return;
-        const container = self.currentContainer() orelse return;
-        try self.graph.addPendingRef(.{
+        try self.graph.addRef(.{
+            .id = graph.refId(file_path, node.startByte()),
             .from = from,
-            .container = container,
             .target_name = target_name,
-            .call_site = self.makeLocator(node, file_path),
+            .site = self.makeLocator(node, file_path),
             .kind = kind,
+            .targets = .empty,
+            .resolved = false,
         });
     }
 

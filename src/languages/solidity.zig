@@ -102,40 +102,18 @@ fn solidityCustomHandler(_: *graph.SymbolGraph, node: ts.Node, _: []const u8) vo
 const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delegatecall", "staticcall" };
 
 /// Solidity resolve hook: external low-level calls (.call, .send, .transfer,
-/// .delegatecall, .staticcall) emit a calls edge with target_kind=external
-/// AND a gap so the agent can optionally resolve the target contract.
-fn solidityResolveHook(ref: graph.PendingRef, g: *graph.SymbolGraph) cfg.ResolveAction {
-    if (ref.kind != .call) return .unhandled;
+/// .delegatecall, .staticcall) mark the reference as external with a low-priority gap.
+fn solidityResolveHook(ref: *graph.Reference, _: *const graph.SymbolGraph) void {
+    if (ref.kind != .call) return;
 
     for (&external_call_methods) |ecm| {
         if (std.mem.eql(u8, ref.target_name, ecm)) {
-            // Emit edge: from callable, self-referencing (no resolved target)
-            g.addEdge(.{
-                .from = ref.from,
-                .to = ref.from,
-                .kind = .calls,
-                .attrs = .{
-                    .call_site_byte = ref.call_site.start_byte,
-                    .call_site_line = ref.call_site.line,
-                    .target_kind = .external,
-                },
-            }) catch {};
-
-            // Also emit gap for optional agent resolution
-            const gap_id = graph.gapId(ref.from, ref.target_name, .calls);
-            _ = g.addGap(.{
-                .id = gap_id,
-                .from = ref.from,
-                .expected_target = ref.target_name,
-                .edge_kind = .calls,
-                .call_site = ref.call_site,
-                .priority = .low,
-            }) catch {};
-
-            return .resolved;
+            ref.target_kind = .external;
+            ref.gap = .low;
+            ref.resolved = true;
+            return;
         }
     }
-    return .unhandled;
 }
 
 const std = @import("std");

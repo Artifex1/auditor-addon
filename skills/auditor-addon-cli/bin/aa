@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Platform dispatcher for the aa CLI.
-# Detects OS/arch and runs the correct pre-built binary from zig-out/bin/.
+# Detects OS/arch and runs the correct pre-built binary.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-BIN_DIR="$ROOT/zig-out/bin"
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"

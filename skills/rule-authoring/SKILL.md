@@ -184,6 +184,17 @@ Naming convention:
 
 Only list languages whose grammar you have verified against the vendor grammars in `vendor/grammars/`.
 
+## Grammar Reference
+
+Compact per-language node-type references live in `skills/rule-authoring/grammars/<lang>.md`. Each lists every named tree-sitter node type with its field names — the same strings used in `ast.type()` and `ast.child_by_field()`. Regenerate after adding a grammar:
+
+```bash
+python3 scripts/gen-grammar-refs.py          # all languages
+python3 scripts/gen-grammar-refs.py solidity  # one language
+```
+
+**When writing a rule**, read the target language's grammar file first to find the correct node type names and field names before writing any `ast.*` calls. Hidden/inline grammar rules (prefixed `_` in tree-sitter) do not appear — their fields surface on the parent node.
+
 ## Finding Kinds
 
 | Kind | When to use |

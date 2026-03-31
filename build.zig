@@ -66,7 +66,7 @@ pub fn build(b: *std.Build) void {
     const unit_tests = b.addTest(.{ .root_module = aa_module });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 
-    // Integration tests
+    // Integration tests — language suites (fixed list)
     const integration_configs = .{
         .{ .name = "solidity", .root = "tests/solidity/integration_test.zig" },
         .{ .name = "rust", .root = "tests/rust/integration_test.zig" },
@@ -92,6 +92,45 @@ pub fn build(b: *std.Build) void {
 
         const integration_tests = b.addTest(.{ .root_module = integration_module });
         test_step.dependOn(&b.addRunArtifact(integration_tests).step);
+    }
+
+    // Per-rule tests — auto-discovered from tests/solidity/rules/*.zig
+    // Adding a new rule test file is enough; no build.zig edit required.
+    addRuleTests(b, test_step, aa_module, tree_sitter, target, optimize, "tests/solidity/rules");
+}
+
+fn addRuleTests(
+    b: *std.Build,
+    test_step: *std.Build.Step,
+    aa_module: *std.Build.Module,
+    tree_sitter: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    rules_dir_path: []const u8,
+) void {
+    var rules_dir = b.build_root.handle.openDir(rules_dir_path, .{ .iterate = true }) catch return;
+    defer rules_dir.close();
+
+    var it = rules_dir.iterate();
+    while (it.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        if (std.mem.eql(u8, entry.name, "helpers.zig")) continue;
+
+        const root = b.fmt("{s}/{s}", .{ rules_dir_path, entry.name });
+        const name = entry.name[0 .. entry.name.len - 4]; // strip .zig
+
+        const module = b.createModule(.{
+            .root_source_file = b.path(root),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        module.addImport("aa", aa_module);
+        module.addImport("tree-sitter", tree_sitter.module("tree_sitter"));
+
+        const tests = b.addTest(.{ .name = name, .root_module = module });
+        test_step.dependOn(&b.addRunArtifact(tests).step);
     }
 }
 

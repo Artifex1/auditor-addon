@@ -522,7 +522,7 @@ pub const Pipeline = struct {
         // Strip quotes from import path
         const import_path = std.mem.trim(u8, raw_path, "\"'");
 
-        const from = self.currentContainer() orelse return;
+        const from = self.currentFile() orelse return;
         try self.graph.addRef(.{
             .id = graph.refId(file_path, node.startByte()),
             .from = from,
@@ -828,6 +828,13 @@ pub const Pipeline = struct {
             i -= 1;
             const frame = self.scope_stack.items[i];
             if (frame.kind == .container or frame.kind == .file) return frame.id;
+        }
+        return null;
+    }
+
+    fn currentFile(self: *const Pipeline) ?u64 {
+        for (self.scope_stack.items) |frame| {
+            if (frame.kind == .file) return frame.id;
         }
         return null;
     }

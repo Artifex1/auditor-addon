@@ -180,7 +180,55 @@ pub fn executeMapRule(
         lua.pop(1);
         return &.{};
     }
-    lua.protectedCall(.{ .args = 0, .results = 0 }) catch {};
+    lua.protectedCall(.{ .args = 0, .results = 1 }) catch {};
+
+    // Collect findings from return table (check() may return a table OR call report.hit())
+    if (lua.isTable(-1)) {
+        var i: i32 = 1;
+        while (true) {
+            _ = lua.rawGetIndex(-1, i);
+            if (lua.isNil(-1)) {
+                lua.pop(1);
+                break;
+            }
+            if (lua.isTable(-1)) {
+                _ = lua.getField(-1, "file");
+                const file_raw = lua.toString(-1) catch "";
+                lua.pop(1);
+
+                _ = lua.getField(-1, "line");
+                const line: u32 = if (lua.isInteger(-1))
+                    @intCast(lua.toInteger(-1) catch 0)
+                else
+                    0;
+                lua.pop(1);
+
+                _ = lua.getField(-1, "node_text");
+                const text_raw = lua.toString(-1) catch "";
+                lua.pop(1);
+
+                const file = allocator.dupe(u8, file_raw) catch {
+                    lua.pop(1);
+                    i += 1;
+                    continue;
+                };
+                const node_text = allocator.dupe(u8, text_raw) catch {
+                    allocator.free(file);
+                    lua.pop(1);
+                    i += 1;
+                    continue;
+                };
+                g_hits.append(allocator, .{
+                    .file = file,
+                    .line = line,
+                    .node_text = node_text,
+                }) catch {};
+            }
+            lua.pop(1); // pop finding entry
+            i += 1;
+        }
+    }
+    lua.pop(1); // pop return value (table or nil)
 
     bridge.clear();
 
@@ -304,6 +352,9 @@ fn registerGraphApi(lua: *Lua) void {
     lua.pushFunction(zlua.wrap(luaGraphGetCallees));
     lua.setField(-2, "get_callees");
 
+    lua.pushFunction(zlua.wrap(luaGraphGetRefs));
+    lua.setField(-2, "get_refs");
+
     lua.setGlobal("graph");
 }
 
@@ -381,6 +432,29 @@ fn luaGraphGetOutgoingEdges(lua: *Lua) i32 {
             lua.pushNil();
         }
         lua.setField(-2, "to");
+        _ = lua.pushString(@tagName(ref.kind));
+        lua.setField(-2, "kind");
+        pushRefAttrs(lua, ref);
+        lua.rawSetIndex(-2, @intCast(i + 1));
+    }
+    return 1;
+}
+
+/// graph.get_refs(id, ?kind) — all refs from a node, resolved or not.
+/// Returns {target_name, call_site_line, kind, target_kind?} per ref.
+fn luaGraphGetRefs(lua: *Lua) i32 {
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
+    const kind_filter: ?graph.RefKind = if (lua.isString(2))
+        std.meta.stringToEnum(graph.RefKind, lua.toString(2) catch "")
+    else
+        null;
+
+    const refs = g_graph.getAllRefsFrom(id, kind_filter, g_allocator) catch return 0;
+    defer g_allocator.free(refs);
+
+    lua.createTable(@intCast(refs.len), 0);
+    for (refs, 0..) |ref, i| {
+        lua.createTable(0, 5);
         _ = lua.pushString(@tagName(ref.kind));
         lua.setField(-2, "kind");
         pushRefAttrs(lua, ref);

@@ -11,10 +11,10 @@ pub const resolution = @import("resolution.zig");
 pub const metrics = @import("metrics.zig");
 pub const peek = @import("peek.zig");
 pub const call_chains = @import("call_chains.zig");
+pub const lua_adapter = @import("lua_adapter.zig");
+pub const ast_bridge = @import("ast_bridge.zig");
 
 const glob = @import("glob.zig");
-const lua_adapter = @import("lua_adapter.zig");
-const ast_bridge = @import("ast_bridge.zig");
 const shipped_rules = @import("rules/shipped.zig");
 
 // ── Subcommands (SPEC.md §10) ─────────────────────────────────────────
@@ -164,7 +164,7 @@ const graph_params = clap.parseParamsComptime(
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
-    \\    --format <str>        Output format: toon, json, dot (default: toon).
+    \\    --format <str>        Output format: toon, json (default: toon).
     \\<str>...
     \\
 );
@@ -463,12 +463,13 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     }
 
     // Output findings
+    const findings_slice = all_findings.items;
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
     if (use_json) {
-        try output.writeJsonFindings(all_findings.items, &w.interface);
+        try output.writeJsonFindings(findings_slice, &w.interface);
     } else {
-        try output.writeToonFindings(all_findings.items, &w.interface);
+        try output.writeToonFindings(findings_slice, &w.interface);
     }
     try w.interface.flush();
 }

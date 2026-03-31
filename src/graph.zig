@@ -297,6 +297,21 @@ pub const SymbolGraph = struct {
         return try result.toOwnedSlice(allocator);
     }
 
+    /// Get all references from a node (resolved or not), optionally filtered by kind.
+    /// Unlike getOutgoingRefs, does not require ref.resolved — use for import dedup etc.
+    pub fn getAllRefsFrom(self: *const SymbolGraph, from_id: u64, kind_filter: ?RefKind, allocator: std.mem.Allocator) ![]const Reference {
+        var result: std.ArrayListUnmanaged(Reference) = .empty;
+        errdefer result.deinit(allocator);
+        for (self.refs.items) |ref| {
+            if (ref.from != from_id) continue;
+            if (kind_filter) |k| {
+                if (ref.kind != k) continue;
+            }
+            try result.append(allocator, ref);
+        }
+        return try result.toOwnedSlice(allocator);
+    }
+
     /// Get all incoming references to a node, optionally filtered by kind.
     pub fn getIncomingRefs(self: *const SymbolGraph, target_id: u64, kind_filter: ?RefKind, allocator: std.mem.Allocator) ![]const Reference {
         var result: std.ArrayListUnmanaged(Reference) = .empty;

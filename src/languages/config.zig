@@ -205,7 +205,6 @@ pub const LanguageConfig = struct {
     variables: []const VariableMapping,
     modifiers: []const ModifierMapping,
     events: []const EventMapping,
-
     // Reference detection
     call_expression: CallExpressionMapping,
     inheritance: ?InheritanceMapping = null,

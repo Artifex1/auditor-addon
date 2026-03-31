@@ -1,0 +1,107 @@
+const std = @import("std");
+const aa = @import("aa");
+
+const graph = aa.graph;
+const pipeline = aa.pipeline;
+const cfg = aa.cfg;
+const metrics_mod = aa.metrics;
+const ts = @import("tree-sitter");
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+const fixture_dir = "tests/cpp/fixtures/";
+
+fn runPipeline(allocator: std.mem.Allocator, files: []const []const u8) !*pipeline.Pipeline {
+    const pipe = try allocator.create(pipeline.Pipeline);
+    pipe.* = try pipeline.Pipeline.init(allocator, cfg.getConfig(.cpp));
+    try pipe.run(files, false);
+    return pipe;
+}
+
+fn parseCpp(source: []const u8) !struct { tree: *ts.Tree, parser: *ts.Parser } {
+    const parser = ts.Parser.create();
+    try parser.setLanguage(cfg.Language.cpp.grammarFn()());
+    const tree = parser.parseString(source, null) orelse return error.ParseFailed;
+    return .{ .tree = tree, .parser = parser };
+}
+
+fn hasNodeNamed(g: *const graph.SymbolGraph, name: []const u8, kind: graph.NodeKind) bool {
+    var it = g.nodes.iterator();
+    while (it.next()) |entry| {
+        const node = entry.value_ptr.*;
+        if (node.kind == kind and std.mem.eql(u8, node.name, name)) return true;
+    }
+    return false;
+}
+
+fn hasRefFrom(g: *const graph.SymbolGraph, from_name: []const u8, target_name: []const u8) bool {
+    for (g.refs.items) |ref| {
+        if (!std.mem.eql(u8, ref.target_name, target_name)) continue;
+        if (g.lookupNode(ref.from)) |from_node| {
+            if (std.mem.eql(u8, from_node.name, from_name)) return true;
+        }
+    }
+    return false;
+}
+
+// ── Pipeline: Graph Construction ──────────────────────────────────────
+
+test "pipeline: simple_funcs — free function nodes detected" {
+    const allocator = std.testing.allocator;
+    const files = [_][]const u8{fixture_dir ++ "simple_funcs.cpp"};
+    const pipe = try runPipeline(allocator, &files);
+    defer {
+        pipe.deinit();
+        allocator.destroy(pipe);
+    }
+    const g = &pipe.graph;
+
+    try std.testing.expect(hasNodeNamed(g, "a", .callable));
+    try std.testing.expect(hasNodeNamed(g, "b", .callable));
+    try std.testing.expect(hasNodeNamed(g, "c", .callable));
+}
+
+test "pipeline: simple_funcs — call refs emitted for a→b, b→c" {
+    const allocator = std.testing.allocator;
+    const files = [_][]const u8{fixture_dir ++ "simple_funcs.cpp"};
+    const pipe = try runPipeline(allocator, &files);
+    defer {
+        pipe.deinit();
+        allocator.destroy(pipe);
+    }
+    const g = &pipe.graph;
+
+    try std.testing.expect(hasRefFrom(g, "a", "b"));
+    try std.testing.expect(hasRefFrom(g, "b", "c"));
+}
+
+test "pipeline: simple_class — class container detection" {
+    const allocator = std.testing.allocator;
+    const files = [_][]const u8{fixture_dir ++ "simple_class.cpp"};
+    const pipe = try runPipeline(allocator, &files);
+    defer {
+        pipe.deinit();
+        allocator.destroy(pipe);
+    }
+    const g = &pipe.graph;
+
+    try std.testing.expect(hasNodeNamed(g, "Counter", .container));
+    try std.testing.expect(hasNodeNamed(g, "increment", .callable));
+    try std.testing.expect(hasNodeNamed(g, "get", .callable));
+    try std.testing.expect(g.containsCount() > 0);
+}
+
+// ── Metrics ──────────────────────────────────────────────────────────
+
+test "metrics: deep_nesting — cognitive complexity = 6" {
+    const source = @embedFile("fixtures/deep_nesting.cpp");
+    const result = try parseCpp(source);
+    defer result.tree.destroy();
+    defer result.parser.destroy();
+
+    const lang_config = cfg.getConfig(.cpp);
+    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics);
+
+    // 3 nested ifs: depth 0=1, depth 1=2, depth 2=3 → total=6
+    try std.testing.expectEqual(@as(u32, 6), m.cognitive_complexity);
+}

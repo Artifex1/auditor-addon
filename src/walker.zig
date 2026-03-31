@@ -81,6 +81,7 @@ pub fn walkDeep(
     callback: WalkCallback,
     max_depth: u32,
     call_expression_type: []const u8,
+    modifier_invocation_type: ?[]const u8,
     allocator: std.mem.Allocator,
 ) !void {
     var it = g.nodes.iterator();
@@ -104,7 +105,7 @@ pub fn walkDeep(
             .current_node = node.id,
         };
 
-        try walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, &visited, &call_stack, allocator);
+        try walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, modifier_invocation_type, &visited, &call_stack, allocator);
     }
 
     if (callback.finalize_fn) |finalize| finalize();
@@ -119,6 +120,7 @@ fn walkAstNodeDeep(
     max_depth: u32,
     depth: u32,
     call_expression_type: []const u8,
+    modifier_invocation_type: ?[]const u8,
     visited: *std.AutoHashMapUnmanaged(u64, void),
     call_stack: *std.ArrayListUnmanaged(u64),
     allocator: std.mem.Allocator,
@@ -132,34 +134,40 @@ fn walkAstNodeDeep(
         const child = node.child(i) orelse continue;
         const child_kind = child.kind();
 
-        // Follow resolved call references when encountering a call expression
-        if (depth < max_depth and std.mem.eql(u8, child_kind, call_expression_type)) {
-            const rid = graph.refId(updated_ctx.current_file, child.startByte());
-            if (g.lookupRef(rid)) |ref| {
-                for (ref.targets.items) |target| {
-                    if (visited.contains(target)) continue;
-                    if (g.lookupNode(target)) |callee| {
-                        if (callee.ast_node) |callee_ast| {
-                            try visited.put(allocator, callee.id, {});
-                            try call_stack.append(allocator, callee.id);
+        if (depth < max_depth) {
+            // Follow resolved call references when encountering a call expression
+            // or a modifier invocation — both use site-based ref lookup.
+            const is_followable = std.mem.eql(u8, child_kind, call_expression_type) or
+                (modifier_invocation_type != null and std.mem.eql(u8, child_kind, modifier_invocation_type.?));
 
-                            const deep_ctx = WalkContext{
-                                .current_file = if (callee.locator) |loc| loc.file else updated_ctx.current_file,
-                                .depth = depth + 1,
-                                .call_stack = call_stack.items,
-                                .current_node = callee.id,
-                            };
+            if (is_followable) {
+                const rid = graph.refId(updated_ctx.current_file, child.startByte());
+                if (g.lookupRef(rid)) |ref| {
+                    for (ref.targets.items) |target| {
+                        if (visited.contains(target)) continue;
+                        if (g.lookupNode(target)) |callee| {
+                            if (callee.ast_node) |callee_ast| {
+                                try visited.put(allocator, callee.id, {});
+                                try call_stack.append(allocator, callee.id);
 
-                            try walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, visited, call_stack, allocator);
+                                const deep_ctx = WalkContext{
+                                    .current_file = if (callee.locator) |loc| loc.file else updated_ctx.current_file,
+                                    .depth = depth + 1,
+                                    .call_stack = call_stack.items,
+                                    .current_node = callee.id,
+                                };
 
-                            _ = call_stack.pop();
+                                try walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, modifier_invocation_type, visited, call_stack, allocator);
+
+                                _ = call_stack.pop();
+                            }
                         }
                     }
                 }
             }
         }
 
-        try walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, visited, call_stack, allocator);
+        try walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, modifier_invocation_type, visited, call_stack, allocator);
     }
 
     callback.exit_fn(node, updated_ctx);

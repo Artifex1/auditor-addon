@@ -292,7 +292,13 @@ pub const Pipeline = struct {
     // ── Node Processors ──────────────────────────────────────────────
 
     fn processContainer(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ContainerMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
+        const name = blk: {
+            if (nodeForField(node, mapping.name_field)) |raw| {
+                const unwrapped = self.unwrapNode(raw, .name);
+                if (nodeSlice(unwrapped, source)) |s| break :blk s;
+            }
+            break :blk self.findFirstIdentifier(node, source) orelse return;
+        };
         const line = node.startPoint().row + 1;
         const id = graph.nodeId(name, file_path, line);
         const container_id = self.currentContainer();
@@ -319,16 +325,19 @@ pub const Pipeline = struct {
         }
 
         // Push container onto scope stack (§4.1)
-        if (node.childByFieldName(mapping.body_field)) |_| {
+        // If body_field is null (e.g. Move module with no named body), push unconditionally.
+        const has_body = if (mapping.body_field) |bf| node.childByFieldName(bf) != null else true;
+        if (has_body) {
             try self.scope_stack.append(self.allocator, .{ .id = id, .name = name, .kind = .container });
         }
     }
 
     fn processCallable(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.CallableMapping) !void {
-        const name = if (mapping.name_field) |nf|
-            self.nodeText(node, source, nf) orelse node.kind()
-        else
-            node.kind();
+        const name = if (mapping.name_field) |nf| blk: {
+            const raw = nodeForField(node, nf) orelse break :blk node.kind();
+            const unwrapped = self.unwrapNode(raw, .name);
+            break :blk nodeSlice(unwrapped, source) orelse node.kind();
+        } else node.kind();
 
         const line = node.startPoint().row + 1;
         const id = graph.nodeId(name, file_path, line);
@@ -534,9 +543,9 @@ pub const Pipeline = struct {
             if (std.mem.eql(u8, node_type, lang_config.identifier_type)) {
                 return source[current.startByte()..current.endByte()];
             }
-            // Try each unwrap rule
             var matched = false;
-            for (lang_config.unwrap_rules) |rule| {
+            for (lang_config.unwrap_table) |rule| {
+                if (rule.context != .receiver) continue;
                 if (std.mem.eql(u8, node_type, rule.ts_type)) {
                     current = if (rule.child_field) |f|
                         current.childByFieldName(f) orelse return null
@@ -688,25 +697,77 @@ pub const Pipeline = struct {
     /// `contract C is A, B` → check B first, then A (right-to-left).
     /// Recurses into each parent's chain depth-first.
     fn resolveC3(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
-        // Collect resolved inheritance targets — order matches source declaration (left-to-right)
-        // C3: search right-to-left, so iterate in reverse
-        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
-        defer self.allocator.free(parents);
-
-        var i = parents.len;
-        while (i > 0) {
-            i -= 1;
-            const parent_id = parents[i];
-            // Check parent's own children
-            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| {
-                return found;
-            }
-            // Recurse into parent's inheritance chain
-            if (self.resolveC3(parent_id, name, expected_kind)) |found| {
-                return found;
-            }
+        var mro = self.computeC3Mro(container_id) catch return null;
+        defer mro.deinit(self.allocator);
+        // Skip index 0 — that's the container itself, already checked by the caller
+        for (mro.items[1..]) |parent_id| {
+            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| return found;
         }
         return null;
+    }
+
+    /// Computes the C3 linearization MRO for container_id.
+    /// Returns a list starting with container_id itself, followed by parents in MRO order.
+    fn computeC3Mro(self: *Pipeline, container_id: u64) !std.ArrayList(u64) {
+        const ally = self.allocator;
+        var result: std.ArrayList(u64) = .empty;
+        try result.append(ally, container_id);
+
+        const parents = try self.graph.getResolvedInheritanceTargets(container_id, ally);
+        defer ally.free(parents);
+        if (parents.len == 0) return result;
+
+        // Build linearization lists for each parent, plus the parents list itself
+        var lists: std.ArrayList(std.ArrayList(u64)) = .empty;
+        defer {
+            for (lists.items) |*l| l.deinit(ally);
+            lists.deinit(ally);
+        }
+        for (parents) |pid| {
+            const parent_mro = try self.computeC3Mro(pid);
+            try lists.append(ally, parent_mro);
+        }
+        // Append the parents list itself as the final merge input
+        var parents_list: std.ArrayList(u64) = .empty;
+        try parents_list.appendSlice(ally, parents);
+        try lists.append(ally, parents_list);
+
+        // C3 merge
+        while (true) {
+            // Check if all lists are empty
+            var all_empty = true;
+            for (lists.items) |l| {
+                if (l.items.len > 0) { all_empty = false; break; }
+            }
+            if (all_empty) break;
+
+            // Find a good head: head of some list that does not appear in the tail of any other
+            var good_head: ?u64 = null;
+            for (lists.items) |candidate_list| {
+                if (candidate_list.items.len == 0) continue;
+                const head = candidate_list.items[0];
+                var in_tail = false;
+                for (lists.items) |other| {
+                    if (other.items.len <= 1) continue;
+                    for (other.items[1..]) |tail_id| {
+                        if (tail_id == head) { in_tail = true; break; }
+                    }
+                    if (in_tail) break;
+                }
+                if (!in_tail) { good_head = head; break; }
+            }
+            // Inconsistent hierarchy — bail out with what we have
+            const head = good_head orelse break;
+            try result.append(ally, head);
+            // Remove head from the front of every list that starts with it
+            for (lists.items) |*l| {
+                if (l.items.len > 0 and l.items[0] == head) {
+                    _ = l.orderedRemove(0);
+                }
+            }
+        }
+
+        return result;
     }
 
     /// Single chain (Java): one parent class + interfaces.
@@ -790,9 +851,66 @@ pub const Pipeline = struct {
         return try std.mem.join(self.graph.arena.allocator(), ".", parts.items);
     }
 
+    /// Returns the child node reached by field_name, with one level of indirect lookup
+    /// (e.g. Cairo: function_item → function → name).  Does NOT follow chains — callers
+    /// that need further unwrapping should call unwrapNode() on the result.
+    fn nodeForField(node: ts.Node, field_name: []const u8) ?ts.Node {
+        if (node.childByFieldName(field_name)) |child| return child;
+        // Indirect: search named children one level down
+        var i: u32 = 0;
+        while (i < node.namedChildCount()) : (i += 1) {
+            if (node.namedChild(i)) |mid| {
+                if (mid.childByFieldName(field_name)) |child| return child;
+            }
+        }
+        return null;
+    }
+
     fn nodeText(self: *const Pipeline, node: ts.Node, source: []const u8, field_name: []const u8) ?[]const u8 {
         _ = self;
-        const child = node.childByFieldName(field_name) orelse return null;
+        return nodeSlice(nodeForField(node, field_name) orelse return null, source);
+    }
+
+    /// Applies unwrap_table rules for the given context, following the chain until
+    /// no matching rule is found.  Returns the terminal node (never null).
+    fn unwrapNode(self: *const Pipeline, node: ts.Node, context: cfg.UnwrapContext) ts.Node {
+        var current = node;
+        while (true) {
+            const kind = current.kind();
+            var matched = false;
+            for (self.lang_config.unwrap_table) |rule| {
+                if (rule.context != context) continue;
+                if (!std.mem.eql(u8, kind, rule.ts_type)) continue;
+                if (rule.search_types.len > 0) {
+                    // Search all children (including anonymous tokens) for first type match
+                    var ci: u32 = 0;
+                    var found = false;
+                    outer: while (ci < current.childCount()) : (ci += 1) {
+                        if (current.child(ci)) |sub| {
+                            for (rule.search_types) |st| {
+                                if (std.mem.eql(u8, sub.kind(), st)) {
+                                    current = sub;
+                                    found = true;
+                                    break :outer;
+                                }
+                            }
+                        }
+                    }
+                    if (!found) return current;
+                } else {
+                    current = if (rule.child_field) |f|
+                        current.childByFieldName(f) orelse return current
+                    else
+                        current.namedChild(0) orelse return current;
+                }
+                matched = true;
+                break;
+            }
+            if (!matched) return current;
+        }
+    }
+
+    fn nodeSlice(child: ts.Node, source: []const u8) ?[]const u8 {
         const start = child.startByte();
         const end = child.endByte();
         if (start >= end or start >= source.len) return null;
@@ -806,8 +924,13 @@ pub const Pipeline = struct {
             if (std.mem.eql(u8, node_type, self.lang_config.identifier_type)) {
                 return source[current.startByte()..current.endByte()];
             }
+            // Leaf named node (e.g. field_identifier) — treat as terminal
+            if (current.namedChildCount() == 0 and current.startByte() < current.endByte()) {
+                return source[current.startByte()..current.endByte()];
+            }
             var matched = false;
-            for (self.lang_config.callee_unwrap_rules) |rule| {
+            for (self.lang_config.unwrap_table) |rule| {
+                if (rule.context != .callee) continue;
                 if (std.mem.eql(u8, node_type, rule.ts_type)) {
                     current = if (rule.child_field) |f|
                         current.childByFieldName(f) orelse return null
@@ -819,6 +942,20 @@ pub const Pipeline = struct {
             }
             if (!matched) return null;
         }
+    }
+
+    /// Fallback name extraction: find the first direct child matching identifier_type.
+    /// Used when the name_field lookup fails (e.g. Cairo impl_item has an unnamed identifier child).
+    fn findFirstIdentifier(self: *const Pipeline, node: ts.Node, source: []const u8) ?[]const u8 {
+        var i: u32 = 0;
+        while (i < node.namedChildCount()) : (i += 1) {
+            if (node.namedChild(i)) |child| {
+                if (std.mem.eql(u8, child.kind(), self.lang_config.identifier_type)) {
+                    return nodeSlice(child, source);
+                }
+            }
+        }
+        return null;
     }
 
     fn extractReceiverName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
@@ -892,8 +1029,15 @@ pub const Pipeline = struct {
         // Check containers
         for (self.lang_config.containers) |mapping| {
             if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                if (ast.childByFieldName(mapping.body_field)) |body| {
-                    if (node.endByte() >= body.endByte()) {
+                if (mapping.body_field) |bf| {
+                    if (ast.childByFieldName(bf)) |body| {
+                        if (node.endByte() >= body.endByte()) {
+                            _ = self.scope_stack.pop();
+                        }
+                    }
+                } else {
+                    // No named body field — pop when we've passed the end of the container node
+                    if (node.endByte() >= ast.endByte()) {
                         _ = self.scope_stack.pop();
                     }
                 }
@@ -932,17 +1076,18 @@ pub const Pipeline = struct {
 
     fn extractProperties(self: *Pipeline, node: ts.Node, source: []const u8, properties: []const cfg.PropertyExtractor, gn: *graph.GraphNode) !void {
         for (properties) |prop| {
-            // Walk children looking for the child_type
+            // Walk children looking for child_type
             var child_idx: u32 = 0;
             while (child_idx < node.childCount()) : (child_idx += 1) {
                 if (node.child(child_idx)) |child| {
-                    if (std.mem.eql(u8, child.kind(), prop.child_type)) {
-                        const val = source[child.startByte()..child.endByte()];
-                        const key = try self.graph.dupeString(prop.key);
-                        const value = try self.graph.dupeString(val);
-                        try gn.properties.put(self.graph.arena.allocator(), key, value);
-                        break;
-                    }
+                    if (!std.mem.eql(u8, child.kind(), prop.child_type)) continue;
+                    // Apply .property unwrap rules to reach the actual value node
+                    const value_node = self.unwrapNode(child, .property);
+                    const val = source[value_node.startByte()..value_node.endByte()];
+                    const key = try self.graph.dupeString(prop.key);
+                    const value = try self.graph.dupeString(val);
+                    try gn.properties.put(self.graph.arena.allocator(), key, value);
+                    break;
                 }
             }
         }

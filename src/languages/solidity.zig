@@ -50,18 +50,16 @@ pub const config = cfg.LanguageConfig{
     .builtin_functions = &.{ "require", "assert", "revert", "keccak256", "abi.encode", "abi.encodePacked", "abi.encodeWithSelector", "abi.encodeWithSignature", "abi.decode" },
     .builtin_receivers = &.{ "abi", "block", "msg", "tx", "type" },
 
-    .unwrap_rules = &.{
-        .{ .ts_type = "member_expression", .child_field = "object" },
-        .{ .ts_type = "array_access", .child_field = "base" },
-        .{ .ts_type = "slice_access", .child_field = "base" },
-        .{ .ts_type = "parenthesized_expression", .child_field = "expression" },
-        .{ .ts_type = "type_cast_expression", .child_field = "expression" },
-        .{ .ts_type = "expression", .child_field = null }, // transparent wrapper
-    },
-    .callee_unwrap_rules = &.{
-        .{ .ts_type = "member_expression", .child_field = "property" },
-        .{ .ts_type = "struct_expression", .child_field = "type" }, // addr.call{value: x} → addr.call
-        .{ .ts_type = "expression", .child_field = null }, // transparent wrapper
+    .unwrap_table = &.{
+        .{ .context = .receiver, .ts_type = "member_expression", .child_field = "object" },
+        .{ .context = .receiver, .ts_type = "array_access", .child_field = "base" },
+        .{ .context = .receiver, .ts_type = "slice_access", .child_field = "base" },
+        .{ .context = .receiver, .ts_type = "parenthesized_expression", .child_field = "expression" },
+        .{ .context = .receiver, .ts_type = "type_cast_expression", .child_field = "expression" },
+        .{ .context = .receiver, .ts_type = "expression" }, // transparent wrapper
+        .{ .context = .callee, .ts_type = "member_expression", .child_field = "property" },
+        .{ .context = .callee, .ts_type = "struct_expression", .child_field = "type" }, // addr.call{value: x} → addr.call
+        .{ .context = .callee, .ts_type = "expression" }, // transparent wrapper
     },
     .identifier_type = "identifier",
 

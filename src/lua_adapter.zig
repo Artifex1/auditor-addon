@@ -150,7 +150,8 @@ pub fn executeVisitorRule(
     g_lua = lua;
 
     if (std.mem.eql(u8, metadata.rule_type, "deep")) {
-        try walker.walkDeep(g, cb, metadata.max_depth, lang_config.call_expression.ts_type, allocator);
+        const mod_type = if (lang_config.modifier_invocation) |mi| mi.ts_type else null;
+        try walker.walkDeep(g, cb, metadata.max_depth, lang_config.call_expression.ts_type, mod_type, allocator);
     } else {
         walker.walkScope(g, cb);
     }

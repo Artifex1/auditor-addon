@@ -93,7 +93,7 @@ const graph = @import("../graph.zig");
 pub const ContainerMapping = struct {
     ts_type: []const u8,
     name_field: []const u8,
-    body_field: []const u8,
+    body_field: ?[]const u8, // null = no named body field; push unconditionally, pop when past node end
     properties: []const PropertyExtractor = &.{},
 };
 
@@ -159,9 +159,23 @@ pub const WritePattern = struct {
     target_field: []const u8,
 };
 
+/// Which extraction site this rule applies to.
+pub const UnwrapContext = enum {
+    receiver, // strip wrapper node to reach the root identifier (write targets, receiver detection)
+    callee,   // extract the callee name from a call expression node
+    name,     // extract the callable/container name from a definition node
+    property, // extract a property value from a property-container node
+};
+
 pub const UnwrapRule = struct {
+    context: UnwrapContext,
     ts_type: []const u8,
-    child_field: ?[]const u8, // null = transparent wrapper, take first named child
+    /// Follow this named field to reach the inner node. null = first named child.
+    child_field: ?[]const u8 = null,
+    /// Alternative to child_field: search all children (including anonymous tokens)
+    /// for the first whose kind() matches any entry. Used for keyword tokens inside
+    /// container nodes (e.g. "public"/"private"/"protected" inside Java `modifiers`).
+    search_types: []const []const u8 = &.{},
 };
 
 pub const InheritanceStrategy = enum {
@@ -210,10 +224,9 @@ pub const LanguageConfig = struct {
     builtin_functions: []const []const u8 = &.{},
     builtin_receivers: []const []const u8 = &.{},
 
-    // Expression unwrapping (walks toward root identifier, e.g. balances[x] → balances)
-    unwrap_rules: []const UnwrapRule,
-    // Callee unwrapping (walks toward callee name, e.g. vault.withdraw() → withdraw)
-    callee_unwrap_rules: []const UnwrapRule = &.{},
+    // Unified unwrap table keyed by context (receiver, callee, name, property).
+    // Replaces the former unwrap_rules + callee_unwrap_rules pair.
+    unwrap_table: []const UnwrapRule = &.{},
     identifier_type: []const u8,
 
     // Custom handler for edge cases during walk
@@ -229,12 +242,38 @@ pub const LanguageConfig = struct {
 // ── Config Lookup ──────────────────────────────────────────────────────
 
 const solidity = @import("solidity.zig");
+const rust = @import("rust.zig");
+const go = @import("go.zig");
+const python = @import("python.zig");
+const javascript = @import("javascript.zig");
+const typescript = @import("typescript.zig");
+const tsx_lang = @import("tsx.zig");
+const cairo = @import("cairo.zig");
+const move_lang = @import("move.zig");
+const noir = @import("noir.zig");
+const cpp = @import("cpp.zig");
+const java = @import("java.zig");
+const tolk = @import("tolk.zig");
+const masm = @import("masm.zig");
+const compact = @import("compact.zig");
 
 pub fn getConfig(lang: Language) *const LanguageConfig {
     return switch (lang) {
         .solidity => &solidity.config,
-        // Phase 4: remaining languages
-        else => &solidity.config, // TODO: placeholder
+        .rust => &rust.config,
+        .go => &go.config,
+        .python => &python.config,
+        .javascript => &javascript.config,
+        .typescript => &typescript.config,
+        .tsx => &tsx_lang.config,
+        .cairo => &cairo.config,
+        .move => &move_lang.config,
+        .noir => &noir.config,
+        .cpp => &cpp.config,
+        .java => &java.config,
+        .tolk => &tolk.config,
+        .masm => &masm.config,
+        .compact => &compact.config,
     };
 }
 

@@ -117,6 +117,11 @@ fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const 
 
 /// Count normalization: for each matching node, count(\n in text).
 /// A 4-line function sig contributes 3 (4 lines → 1 normalized, subtract 3).
+/// For nodes with a "body" field (function definitions), only count the header
+/// portion (start of node to start of body) to avoid subtracting the entire
+/// function body. For other nodes (call_expression, array, etc.), count the
+/// whole node text.
+/// Skips children of matched nodes to avoid double-counting nested structures.
 fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8) u32 {
     var total: u32 = 0;
     var cursor = tree.walk();
@@ -127,8 +132,16 @@ fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []co
         if (descend) {
             const node = cursor.node();
             if (matchesAnyType(node.kind(), node_types)) {
-                const text = source[node.startByte()..node.endByte()];
-                total += countNewlines(text);
+                const start = node.startByte();
+                // If the node has a body field, only count the header (up to body start)
+                const end = if (node.childByFieldName("body")) |body|
+                    body.startByte()
+                else
+                    node.endByte();
+                if (end > start) {
+                    total += countNewlines(source[start..end]);
+                }
+                descend = false; // skip children of matched node
             }
         }
 

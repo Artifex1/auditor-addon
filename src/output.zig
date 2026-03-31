@@ -296,6 +296,30 @@ pub fn writeJsonGraph(g: *const graph.SymbolGraph, writer: Writer) !void {
     try writer.writeAll("]}\n");
 }
 
+pub fn writeJsonFindings(findings: []const Finding, writer: Writer) !void {
+    try writer.writeAll("{\"findings\":[");
+    for (findings, 0..) |f, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.writeAll("{\"rule_id\":");
+        try writeJsonString(writer, f.rule_id);
+        try writer.writeAll(",\"severity\":");
+        try writeJsonString(writer, f.severity);
+        try writer.writeAll(",\"name\":");
+        try writeJsonString(writer, f.name);
+        try writer.writeAll(",\"hits\":[");
+        for (f.hits, 0..) |hit, j| {
+            if (j > 0) try writer.writeAll(",");
+            try writer.writeAll("{\"file\":");
+            try writeJsonString(writer, hit.file);
+            try writer.print(",\"line\":{d},\"node_text\":", .{hit.line});
+            try writeJsonString(writer, hit.node_text);
+            try writer.writeByte('}');
+        }
+        try writer.writeAll("]}");
+    }
+    try writer.writeAll("]}\n");
+}
+
 pub fn writeJsonMetrics(files: []const FileMetricsOutput, writer: Writer) !void {
     try writer.writeAll("{\"files\":[");
     for (files, 0..) |f, i| {

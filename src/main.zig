@@ -2,14 +2,16 @@ const std = @import("std");
 const ts = @import("tree-sitter");
 const clap = @import("clap");
 
-const cfg = @import("languages/config.zig");
-const graph = @import("graph.zig");
-const pipeline = @import("pipeline.zig");
-const output = @import("output.zig");
-const resolution = @import("resolution.zig");
-const metrics_mod = @import("metrics.zig");
-const peek_mod = @import("peek.zig");
-const call_chains = @import("call_chains.zig");
+// Public re-exports for integration tests (imported via "aa" module)
+pub const cfg = @import("languages/config.zig");
+pub const graph = @import("graph.zig");
+pub const pipeline = @import("pipeline.zig");
+pub const output = @import("output.zig");
+pub const resolution = @import("resolution.zig");
+pub const metrics = @import("metrics.zig");
+pub const peek = @import("peek.zig");
+pub const call_chains = @import("call_chains.zig");
+
 const glob = @import("glob.zig");
 const lua_adapter = @import("lua_adapter.zig");
 const ast_bridge = @import("ast_bridge.zig");
@@ -230,7 +232,7 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
         const tree = parser.parseString(source, null) orelse continue;
         defer tree.destroy();
 
-        const sigs = try peek_mod.extractSignatures(tree, source, lang_config, file_path, aa);
+        const sigs = try peek.extractSignatures(tree, source, lang_config, file_path, aa);
         var sig_texts: std.ArrayList([]const u8) = .empty;
         for (sigs) |s| {
             try sig_texts.append(aa, s.text);
@@ -295,7 +297,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
         const tree = parser.parseString(source, null) orelse continue;
         defer tree.destroy();
 
-        const m = metrics_mod.computeMetrics(tree, source, lang_config.metrics);
+        const m = metrics.computeMetrics(tree, source, lang_config.metrics);
 
         try all_metrics.append(allocator, .{
             .file = file_path,
@@ -464,8 +466,7 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
     if (use_json) {
-        // TODO: JSON findings output
-        try w.interface.writeAll("{\"findings\":[]}\n");
+        try output.writeJsonFindings(all_findings.items, &w.interface);
     } else {
         try output.writeToonFindings(all_findings.items, &w.interface);
     }
@@ -662,7 +663,7 @@ fn cmdInfo(iter: anytype) !void {
 
     try wr.print("containers[{d}]:\n", .{lc.containers.len});
     for (lc.containers) |c| {
-        try wr.print("  {s} (name: {s}, body: {s})\n", .{ c.ts_type, c.name_field, c.body_field });
+        try wr.print("  {s} (name: {s}, body: {s})\n", .{ c.ts_type, c.name_field, c.body_field orelse "(none)" });
     }
 
     try wr.print("callables[{d}]:\n", .{lc.callables.len});
@@ -768,5 +769,4 @@ comptime {
     _ = @import("ast_bridge.zig");
     _ = @import("languages/config.zig");
     _ = @import("languages/solidity.zig");
-    _ = @import("integration_test.zig");
 }

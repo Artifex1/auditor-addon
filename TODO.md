@@ -36,13 +36,16 @@ Shipped rules — second tier (implement after batch above):
 28. [x] SOL-013 state-update-no-event: state write with no corresponding event emit (20 reported)
 29. [x] SOL-018 tx-origin: tx.origin used inside require/if/assert condition (auth pattern)
 
+Shipped rules — implemented (previously deferred):
+
+30. [x] SOL-020 unchecked-transfer: .transfer()/.transferFrom() return value discarded
+31. [x] SOL-019 variable-could-be-constant-or-immutable: no writes = constant, constructor-only writes = immutable
+32. [x] SOL-021 double-state-read: same state var read twice in a function (gas optimization)
+33. [x] GEN-003 unused-import: named import symbol never referenced in file
+
 Shipped rules — skip/defer (reasons noted):
 
-- SOL-005 unchecked-transfer: transfer()/transferFrom() by name = agent territory (name-matching)
-- SOL-017/018 variable-could-be-constant/immutable: require full constructor-path analysis
-- double-state-read: gas optimization, deferred
 - missing-zero-address-check: needs type inference
-- unused-imports: needs import resolution
 
 Language config issues (found via real-repo testing):
 

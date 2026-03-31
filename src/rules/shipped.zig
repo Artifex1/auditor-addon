@@ -105,6 +105,26 @@ pub const all = [_]ShippedRule{
         .source = @embedFile("SOL-018-tx-origin.lua"),
     },
     .{
+        .id = "SOL-019",
+        .filename = "SOL-019-variable-could-be-constant-or-immutable.lua",
+        .source = @embedFile("SOL-019-variable-could-be-constant-or-immutable.lua"),
+    },
+    .{
+        .id = "SOL-020",
+        .filename = "SOL-020-unchecked-transfer.lua",
+        .source = @embedFile("SOL-020-unchecked-transfer.lua"),
+    },
+    .{
+        .id = "SOL-021",
+        .filename = "SOL-021-double-state-read.lua",
+        .source = @embedFile("SOL-021-double-state-read.lua"),
+    },
+    .{
+        .id = "GEN-003",
+        .filename = "GEN-003-unused-import.lua",
+        .source = @embedFile("GEN-003-unused-import.lua"),
+    },
+    .{
         .id = "MAP-002",
         .filename = "MAP-002-unused-function.lua",
         .source = @embedFile("MAP-002-unused-function.lua"),

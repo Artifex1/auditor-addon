@@ -1,16 +1,12 @@
 ---
 name: estimator
 description: Conducting project scoping and estimation using logical chunking and metric analysis. Use when the user wants to estimate audit effort, scope a codebase for review, calculate hours for a security engagement, or assess the size of a diff or full repository.
-argument-hint: "<scope file or base..head>"
+argument-hint: "<scope file or glob>"
 allowed-tools:
   - Read
   - Glob
   - Grep
-  - mcp__plugin_auditor-addon_auditor-addon__peek
-  - mcp__plugin_auditor-addon_auditor-addon__metrics
-  - mcp__plugin_auditor-addon_auditor-addon__diff_metrics
-  - mcp__plugin_auditor-addon_auditor-addon__diff
-  - mcp__plugin_auditor-addon_auditor-addon__call_chains
+  - Bash
 ---
 
 # Estimator
@@ -21,6 +17,7 @@ SEQUENCE:
 2. CHECKPOINT: user confirms "full-scope" or "diff-scope"
 3. IF full-scope: EXPLORE (per-chunk) → METRICS → REFLECT → REPORT
    IF diff-scope: DIFF-TRIAGE (per-chunk) → REFLECT → REPORT
+   NOTE: `aa diff` / `aa diff-metrics` are not yet implemented. Diff-scope uses `aa peek` and `aa metrics` on changed files as a substitute (full-file metrics, not diff-only).
 
 CHECKPOINT RULES:
 - Present findings using the phase's specified output format
@@ -175,12 +172,12 @@ For each chunk, note which path patterns are likely in-scope vs out-of-scope:
 
 **Step 1 — Prepare:**
 - Identify files in the chunk
-- **Batch `peek` calls** for ambiguous files
-- **Skip `peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
+- **Batch `aa peek` calls** for ambiguous files
+- **Skip `aa peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
 
 **Step 2 — Categorize:**
 - Assign each file a category (see File Categories reference)
-- If `peek` is insufficient, read up to 200 lines to categorize
+- If `aa peek` is insufficient, read up to 200 lines to categorize
 
 **Step 3 — Determine Scope:**
 - Apply scope defaults (see Scope Defaults reference)
@@ -210,7 +207,7 @@ Include:
 **Goal:** Calculate metrics and estimate audit effort for all confirmed in-scope files.
 
 **Step 1 — Calculate:**
-- Call the `metrics` tool with all confirmed in-scope paths
+- Run `aa metrics` with all confirmed in-scope paths
 
 **Step 2 — Analyze:**
 - Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
@@ -248,21 +245,22 @@ Reason: <justification>
 **Per-Chunk Steps:**
 
 **Step 1 — Calculate Diff Metrics:**
-- Call `diff_metrics` with `base`, `head`, and this chunk's paths
+- Use `git diff <base>..<head> -- <paths>` to identify changed files in the chunk
 - If no changes in chunk → skip to next chunk
+- Run `aa metrics <changed-files>` on changed files (full-file metrics — `aa diff-metrics` not yet implemented)
 - Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
 
 **Step 2 — Analyze Changes:**
-- Use `diff` with `output: 'signatures'` for structural overview
-- Use `diff` with `output: 'full'` when actual code context is needed
-- Use judgment: signatures alone are often insufficient for meaningful understanding
+- Use `git diff <base>..<head> -- <file>` for the actual diff
+- Use `aa peek <changed-files>` for function signature overview of changed files
+- Use judgment: scan the diff for added/removed functions, changed logic, new entry points
 
 **Step 3 — Classify & Adjust:**
 For each changed file, determine scope and adjust estimates. Assume **no prior auditor context**.
 
 **Scope:** Apply categories and scope defaults (see references).
 
-**Context burden:** Use `call_chains` to see where touched functions appear in call chains:
+**Context burden:** Use `aa call-chains` to see where touched functions appear in call chains:
 - *Isolated* (leaf node, minimal callers, self-contained) → no adjustment
 - *Integrated* (multiple paths, shared state, affects invariants) → increase estimate
 - *Escalate*: If paths are insufficient, read unchanged files to understand context surface

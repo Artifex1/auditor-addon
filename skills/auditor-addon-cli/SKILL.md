@@ -1,3 +1,8 @@
+---
+name: auditor-addon-cli
+description: Provides the `aa` CLI binary used by all other auditor-addon skills (estimator, security-auditor, threat-modeling, sast-pipeline, rule-authoring). Load this skill whenever any `aa` command needs to be invoked. The binary is at `<SKILL_DIR>/bin/aa` — use the `bin/aa` dispatcher which auto-selects the correct platform binary.
+---
+
 # auditor-addon-cli
 
 The `aa` CLI is a single-binary tool that parses source code with tree-sitter, builds a symbol graph, and runs analysis. Pre-built binaries for all platforms are shipped in this skill's `bin/` directory.

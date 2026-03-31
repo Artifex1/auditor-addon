@@ -6,8 +6,7 @@ allowed-tools:
   - Read
   - Glob
   - Grep
-  - mcp__auditor-addon__peek
-  - mcp__auditor-addon__call_chains
+  - Bash
 ---
 
 # Security Auditor
@@ -60,7 +59,7 @@ All findings are hypotheses until mechanically verified. Never confirm a finding
 - Later analysis will **discard** any finding that requires a privileged role to be malicious.
 
 **Steps:**
-1. Run `call_chains` on all in-scope files. Batch parallel runs if multiple files.
+1. Run `aa call-chains` on all in-scope files. Batch parallel runs if multiple files.
 2. Read imported files, base classes, and libraries that paths reference. Batch independent reads.
 3. Quick repo scan for relevant documentation (README, docs/, specs/). Only load if directly relevant.
 4. Produce the output below.
@@ -84,7 +83,7 @@ Mark any that depend on out-of-scope assumptions as **uncertain**.
 
 #### 3. Call Chains
 
-From `call_chains` output, list each path:
+From `aa call-chains` output, list each path:
 - `<Path String>`
 - `Context:` One sentence — what this flow does.
 - `Invariants touched:` from section 2.

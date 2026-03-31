@@ -1,70 +1,82 @@
 ---
 name: sast-pipeline
-description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full init → resolve gaps → run rules flow.
+description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full gaps → resolve → run flow using the `aa` CLI.
 argument-hint: "<files or scope>"
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
 ---
 
 # SAiST Pipeline
 
-Three-phase static analysis: **init** → **resolve gaps** → **run rules**.
+Three-phase static analysis: **gaps** → **resolve** → **run rules**.
 
-## Phase 1: Init Scan
+## Phase 1: Gaps Scan
 
-```
-sast_init_scan({
-  files: ["src/**/*.sol"],
-  languages: ["solidity"],
-  context: {
-    domainOverrides: { "rust": "on-chain" },  // e.g. Anchor/CosmWasm
-    framework: "anchor"
-  }
-})
+```bash
+aa gaps "src/**/*.sol"
+aa gaps "src/**/*.sol" --json   # JSON output
 ```
 
-Builds `SymbolMap` (functions, state variables, call edges, modifiers, state reads/writes). Computes **hotspots** (functions in the most call chains). Detects **gaps** — callees the static pass cannot resolve:
+Builds the symbol graph and emits all unresolved references (gaps). Gaps are grouped by priority:
 
-- `unresolved_callee`: target not found in scope
-- `interface_dispatch`: call through interface (concrete impl unknown)
-- `external_library`: target exists but out-of-scope
+- `high` — in call chains from public entry points
+- `medium` — have public callers
+- `low` — internal, unlikely to affect rule accuracy
 
-Returns `scanId`, gaps (prioritized high/medium/low by hotspot proximity), hotspots. Status is `needs_resolution` if gaps exist, `ready` if none.
+Gap output (TOON):
+```
+gaps[3]{ref_id,from_name,target_name,kind,file,line,priority}:
+  a4f2e81b,withdraw,onlyOwner,call,src/Vault.sol,42,high
+  b7c3d012,deposit,Ownable,call,src/Vault.sol,12,medium
+  ...
+```
+
+Status is clean if no gaps; otherwise proceed to Phase 2 before running rules.
 
 ## Phase 2: Resolve Gaps (optional)
 
-Review gaps and resolve what you can. Each gap has `id`, `type`, `qualifiedName`, `callSite`, `codeSnippet`, `priority`.
+Review gaps and resolve what you can. Create a CSV file:
+
+```csv
+ref_id,target_file,target_line,target_name
+a4f2e81b,src/Ownable.sol,15,onlyOwner
+b7c3d012,src/Ownable.sol,3,Ownable
+```
 
 **Triage:**
-- **high** (in hotspots): read code, determine writesState/callsExternal
-- **medium** (public callers): resolve if affecting rule accuracy
-- **low** (internal): often safe to skip
+- **high**: read code, determine the real target, add to CSV
+- **medium**: resolve if it affects rule accuracy
+- **low**: safe to skip
 
-```
-sast_resolve_gaps({
-  scanId: "abc123",
-  resolutions: [{
-    gapId: "deadbeef1234",
-    facts: { writesState: ["balances"], callsExternal: false },
-    resolvedBy: "agent",
-    confidence: "medium"
-  }]
-})
+Verify resolutions are applied correctly:
+```bash
+aa gaps "src/**/*.sol" --resolutions=resolutions.csv
 ```
 
-Skip entirely if gap count is zero or all low priority.
+Stale/broken resolutions are reported as warnings.
 
 ## Phase 3: Run Rules
 
-```
-sast_run_rules({
-  scanId: "abc123",
-  includeSeverity: ["critical", "high", "medium"],
-  includeKind: ["issue", "smell"],
-})
+```bash
+aa run "src/**/*.sol"
+aa run "src/**/*.sol" --resolutions=resolutions.csv   # with resolved gaps
+aa run "src/**/*.sol" --rule=SOL-002                  # specific shipped rule
+aa run "src/**/*.sol" --rule-path=./rules/CUSTOM-001.lua   # adhoc rule file
+aa run "src/**/*.sol" --rule-inline='rule={id="X",name="x",severity="info",type="scope"} function enter(n,c) if n.kind=="assembly_statement" then report.hit({file=c.current_file,line=n.line,node_text=""}) end end'
 ```
 
-**Filters:** `ruleIds` (specific IDs), `includeSeverity`, `includeKind` (`issue`, `smell`, `pointer`).
+Findings are grouped by rule in TOON output:
+```
+findings[SOL-002]{severity=critical,name=reentrancy}:
+  src/Vault.sol:42  withdraw → balances[msg.sender] -= amount
+```
 
 ## Finding Kinds
+
+Shipped rules tag findings with a kind (visible in `--json` output):
 
 | Kind | Confidence | Meaning |
 |---|---|---|
@@ -72,29 +84,27 @@ sast_run_rules({
 | `smell` | medium | Likely problem — investigate |
 | `pointer` | low | Suspicious pattern — verify manually |
 
-**Pointer rules** flag syntactic patterns (rounding in branch conditions, few fields in EIP-712 hashes, inconsistent guard-vs-assignment) that have historically led to vulnerabilities. Expect false positives.
+## Custom Rules (Per-Engagement)
 
-## Custom Rules
+Custom rules are `.lua` files (see `rule-authoring` skill for authoring details). The flywheel:
 
-Besides shipped rules, the pipeline supports per-engagement custom rules. Pass file paths via `customRulePaths`:
+1. **Find an issue** during manual review
+2. **Recognize it's a pattern** — could it appear elsewhere?
+3. **Write a custom rule** (e.g. `./rules/CUSTOM-001-unbounded-loop.lua`)
+4. **Test against the known instance** — the rule should flag the exact location
+5. **Run against the full codebase** — discover other instances
 
+```bash
+aa run "src/**/*.sol" --rule-path=./rules/CUSTOM-001-unbounded-loop.lua
 ```
-sast_run_rules({
-  scanId: "abc123",
-  customRulePaths: ["./rules/CUSTOM-001-unbounded-loop.ts"],
-})
-```
 
-Both `.ts` and `.js` paths are accepted. TypeScript files are compiled on-the-fly by tsx — no build step needed. Custom rule IDs **must** use the `CUSTOM-` prefix. Use the rule-authoring skill to create them.
-
-**Flywheel:** Find an issue → recognize it's a pattern → write a custom rule → test it flags the known instance → run it against the full codebase to find more.
+Multiple adhoc rules: repeat `--rule-path` or use `--rule-inline` for short patterns.
 
 ## Typical Workflow
 
-1. Init scan with all in-scope files
-2. If gaps > 0 and high priority: read relevant code, resolve
-3. Run rules with `includeKind: ["issue", "smell"]`
+1. `aa gaps "src/**/*.sol"` — find gaps
+2. If high-priority gaps: read code, create `resolutions.csv`
+3. `aa run "src/**/*.sol" --resolutions=resolutions.csv`
 4. Validate findings against code at reported locations
-5. Optionally run `includeKind: ["pointer"]` for lower-confidence flags
-6. If a confirmed finding is a repeatable pattern, write a custom rule (rule-authoring skill) and re-scan
-7. Write up confirmed findings with the scribe skill
+5. If a confirmed finding is a repeatable pattern, write a custom rule and re-run
+6. Write up confirmed findings with the `scribe` skill

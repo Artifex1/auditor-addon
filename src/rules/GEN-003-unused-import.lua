@@ -3,6 +3,7 @@ rule = {
     name = "unused-import",
     severity = "info",
     type = "scope",
+    confidence = "smell",
     languages = {"solidity"},
     description = "Named import symbol never referenced in the file. Checks named imports and resolved glob imports.",
 }

@@ -3,6 +3,7 @@ rule = {
     name = "missing-mapping-named-parameters",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     description = "Mapping declaration is missing named key/value parameters. Add names for readability (Solidity 0.8.18+).",
     languages = {"solidity"},
 }

@@ -144,6 +144,7 @@ const run_params = clap.parseParamsComptime(
     \\    --rule <str>...       Run specific shipped rule(s) only.
     \\    --rule-path <str>...  Run adhoc rule(s) from .lua file or glob.
     \\    --rule-inline <str>   Run adhoc rule from inline Lua string.
+    \\    --confidence <str>... Filter by confidence (issue, smell, pointer).
     \\<str>...
     \\
 );
@@ -462,8 +463,21 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
         }
     }
 
-    // Output findings
-    const findings_slice = all_findings.items;
+    // Apply --confidence filter
+    const confidence_filter = res.args.confidence;
+    const findings_slice = if (confidence_filter.len > 0) blk: {
+        var filtered: std.ArrayList(output.Finding) = .empty;
+        for (all_findings.items) |f| {
+            for (confidence_filter) |cf| {
+                if (std.mem.eql(u8, f.confidence, cf)) {
+                    try filtered.append(ra, f);
+                    break;
+                }
+            }
+        }
+        break :blk filtered.items;
+    } else all_findings.items;
+
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
     if (use_json) {
@@ -505,6 +519,7 @@ fn executeRule(
         try all_findings.append(arena_alloc, .{
             .rule_id = metadata.id,
             .severity = metadata.severity,
+            .confidence = metadata.confidence,
             .name = metadata.name,
             .hits = hits,
         });

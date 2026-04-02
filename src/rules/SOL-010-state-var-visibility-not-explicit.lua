@@ -3,6 +3,7 @@ rule = {
     name = "state-var-visibility-not-explicit",
     severity = "info",
     type = "map",
+    confidence = "issue",
     description = "State variable has no explicit visibility specifier. Add `public`, `private`, or `internal` to make intent clear.",
     languages = {"solidity"},
 }

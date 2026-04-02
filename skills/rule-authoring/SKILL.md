@@ -36,6 +36,7 @@ rule = {
     id = "SOL-002",
     name = "reentrancy",
     severity = "critical",   -- critical | high | medium | low | info
+    confidence = "smell",    -- issue | smell | pointer
     type = "deep",           -- "scope" or "deep"
     max_depth = 5,           -- deep only
     description = "Detects state changes after external calls",
@@ -84,6 +85,7 @@ rule = {
     id = "MAP-001",
     name = "broad-visibility",
     severity = "info",
+    confidence = "pointer",
     type = "map",
     description = "Detects functions with broader visibility than needed",
 }
@@ -195,13 +197,19 @@ python3 scripts/gen-grammar-refs.py solidity  # one language
 
 **When writing a rule**, read the target language's grammar file first to find the correct node type names and field names before writing any `ast.*` calls. Hidden/inline grammar rules (prefixed `_` in tree-sitter) do not appear — their fields surface on the parent node.
 
-## Finding Kinds
+## Confidence
 
-| Kind | When to use |
-|---|---|
-| `issue` | High confidence — confirmed defect pattern |
-| `smell` | Medium confidence — likely problem, anti-pattern |
-| `pointer` | Low confidence — structural pattern historically linked to bugs |
+Each rule declares `confidence` to signal detection reliability. This is orthogonal to `severity` (which rates how bad the finding is).
+
+| Value | Meaning | When to use |
+|---|---|---|
+| `issue` | 100% accurate, zero FPs | Syntactically deterministic — the pattern is either present or not (e.g., missing SPDX, floating pragma) |
+| `smell` | Real antipattern, FPs possible | Rule catches a genuine problem but can't see all context (e.g., reentrancy — guards may exist outside AST scope) |
+| `pointer` | Location for investigation | Pattern flags a spot worth examining but isn't inherently a defect (e.g., broad visibility, double state read) |
+
+Default is `"smell"` if omitted. Bias toward lower confidence — prefer surprise true positives over surprise false positives.
+
+CLI filter: `--confidence=issue,smell` runs only rules at those confidence levels.
 
 **Design principle:** All rules must have a **syntactic** anchor — a structural AST pattern. If detection requires understanding what a variable *means* (name-matching heuristics like "fee", "onBehalf"), it belongs to the agent, not a rule.
 

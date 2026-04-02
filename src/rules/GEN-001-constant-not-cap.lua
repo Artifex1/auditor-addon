@@ -3,6 +3,7 @@ rule = {
     name = "constant-not-cap",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     languages = {"solidity", "rust", "cairo", "move"},
     description = "Constants and immutables should use UPPER_CASE (SCREAMING_SNAKE_CASE). Flags any constant whose name contains a lowercase letter.",
 }

@@ -3,6 +3,7 @@ rule = {
     name = "duplicated-import",
     severity = "info",
     type = "map",
+    confidence = "issue",
     description = "Flags import paths that appear more than once in the same file. The symbol graph already normalises import paths for every language, so no language-specific handling is needed.",
 }
 

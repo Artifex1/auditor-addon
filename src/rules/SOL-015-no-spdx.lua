@@ -3,6 +3,7 @@ rule = {
     name = "no-spdx",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     languages = {"solidity"},
     description = "Solidity source files should begin with an SPDX-License-Identifier comment. Flags files where no such comment is present anywhere in the file.",
 }

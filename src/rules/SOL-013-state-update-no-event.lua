@@ -3,6 +3,7 @@ rule = {
     name = "state-update-no-event",
     severity = "medium",
     type = "map",
+    confidence = "smell",
     languages = {"solidity"},
     description = "External/public functions that modify state without emitting an event. Off-chain indexers cannot track these changes.",
 }

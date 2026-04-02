@@ -3,6 +3,7 @@ rule = {
     name = "div-before-mul",
     severity = "medium",
     type = "scope",
+    confidence = "smell",
     description = [[
 Detects integer division whose result feeds into a multiplication, causing
 precision loss due to truncation of the intermediate value.

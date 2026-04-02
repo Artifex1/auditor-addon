@@ -4,6 +4,7 @@ rule = {
     severity = "critical",
     type = "deep",
     max_depth = 5,
+    confidence = "smell",
     description = "Detects state changes after external calls (checks-effects-interactions violation)",
     languages = {"solidity"},
 }

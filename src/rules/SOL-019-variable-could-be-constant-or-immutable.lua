@@ -3,6 +3,7 @@ rule = {
     name = "variable-could-be-constant-or-immutable",
     severity = "info",
     type = "map",
+    confidence = "smell",
     languages = {"solidity"},
     description = "State variable never written could be constant; state variable only written in constructor could be immutable.",
 }

@@ -3,6 +3,7 @@ rule = {
     name = "broad-visibility",
     severity = "info",
     type = "map",
+    confidence = "pointer",
     description = [[
 Flags functions whose declared visibility is broader than their actual usage requires:
   - public with no callers from within the same contract → consider external

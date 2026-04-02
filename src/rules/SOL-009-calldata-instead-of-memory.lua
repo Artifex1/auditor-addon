@@ -3,6 +3,7 @@ rule = {
     name = "calldata-instead-of-memory",
     severity = "info",
     type = "map",
+    confidence = "smell",
     description = "External function input parameter uses `memory` instead of `calldata`. Use calldata to avoid copying and save gas.",
     languages = {"solidity"},
 }

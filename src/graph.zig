@@ -116,6 +116,14 @@ pub fn refId(file: []const u8, start_byte: u32) u64 {
     return hasher.final();
 }
 
+pub fn refIdWithKind(file: []const u8, start_byte: u32, kind: RefKind) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(file);
+    hasher.update(std.mem.asBytes(&start_byte));
+    hasher.update(std.mem.asBytes(&kind));
+    return hasher.final();
+}
+
 // ── §2.6 Symbol Graph ────────────────────────────────────────────────
 
 pub const SymbolGraph = struct {
@@ -222,6 +230,19 @@ pub const SymbolGraph = struct {
             }
         }
         return null;
+    }
+
+    pub fn lookupChildrenByName(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind, allocator: std.mem.Allocator) ![]const *GraphNode {
+        var result: std.ArrayListUnmanaged(*GraphNode) = .empty;
+        errdefer result.deinit(allocator);
+        for (self.getChildren(container_id)) |child_id| {
+            if (self.lookupNode(child_id)) |child| {
+                if (child.kind == expected_kind and std.mem.eql(u8, child.name, name)) {
+                    try result.append(allocator, child);
+                }
+            }
+        }
+        return try result.toOwnedSlice(allocator);
     }
 
     /// Get children node IDs of a container.

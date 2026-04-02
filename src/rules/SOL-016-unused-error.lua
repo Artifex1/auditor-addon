@@ -3,6 +3,7 @@ rule = {
     name = "unused-error",
     severity = "info",
     type = "scope",
+    confidence = "smell",
     languages = {"solidity"},
     description = "Custom error defined but never referenced. Dead code or missing revert.",
 }

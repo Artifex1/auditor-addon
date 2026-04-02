@@ -3,6 +3,7 @@ rule = {
     name = "non-explicit-imports",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     description = "Import does not use explicit named symbols. Use `import {Symbol} from 'file.sol'` to avoid polluting the namespace.",
     languages = {"solidity"},
 }

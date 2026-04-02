@@ -47,6 +47,14 @@ Shipped rules — skip/defer (reasons noted):
 
 - missing-zero-address-check: needs type inference
 
+Bugs found during Uniswap V2 scan:
+
+34. [x] Import resolution: resolveImportPath tries raw path relative to cwd instead of relative to importing file's directory — all relative imports fail
+35. [x] abi.decode builtin filtering: tree-sitter-solidity member_expression precedence bug — patched grammar (prec.dynamic(1) → prec.left(POSTFIX_UNARY))
+36. [x] Resolution backfill: applyResolutions never set ref.resolved = true — CSV-resolved refs were invisible to get_callers/get_incoming_edges/get_outgoing_edges
+37. [x] Solidity builtin_functions missing ecrecover, addmod, mulmod, blockhash
+38. [] `using X for Y` resolution: Solidity library calls via `using SafeMath for uint256` are not resolved — requires tracking using-directives and matching method calls on the target type to library functions
+
 Language config issues (found via real-repo testing):
 
 10. [x] MASM: hangs on real files — fixed by updating tree-sitter-masm grammar submodule (old grammar didn't support `use path` syntax)

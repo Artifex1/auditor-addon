@@ -283,6 +283,12 @@ pub const Pipeline = struct {
             }
         }
 
+        // Check identifiers for state_read candidates
+        if (std.mem.eql(u8, kind, lc.identifier_type)) {
+            try self.processStateRead(node, source, file_path);
+            return;
+        }
+
         // Custom handler
         if (lc.custom_handler) |handler| {
             handler(&self.graph, node, source);
@@ -472,7 +478,7 @@ pub const Pipeline = struct {
         const callee_node = node.childByFieldName(lc.call_expression.function_field) orelse return;
 
         // Extract target name — rightmost identifier for member calls, bare for simple
-        const target_name = self.extractCalleeName(callee_node, source) orelse return;
+        const target_name = unwrap(callee_node, source, self.lang_config, .callee) orelse return;
 
         // Filter builtins
         if (self.isBuiltin(target_name, callee_node, source)) return;
@@ -508,11 +514,30 @@ pub const Pipeline = struct {
         const target_node = node.childByFieldName(wp.target_field) orelse return;
 
         // Unwrap to root identifier (§4.2)
-        const root_name = unwrapToRoot(target_node, source, self.lang_config) orelse return;
+        const root_name = unwrap(target_node, source, self.lang_config, .receiver) orelse return;
         try self.addReference(root_name, .state_write, node, file_path);
 
         // Also record the read side for augmented assignments
         // (e.g., `totalSupply += amount` reads both `totalSupply` and `amount`)
+    }
+
+    fn processStateRead(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8) !void {
+        // Only inside a callable/modifier scope (state_read is callable → variable)
+        if (self.scope_stack.items.len == 0) return;
+        const top = self.scope_stack.items[self.scope_stack.items.len - 1];
+        if (top.kind != .callable and top.kind != .modifier) return;
+
+        const name = source[node.startByte()..node.endByte()];
+
+        // Filter builtins
+        for (self.lang_config.builtin_receivers) |b| {
+            if (std.mem.eql(u8, name, b)) return;
+        }
+        for (self.lang_config.builtin_functions) |b| {
+            if (std.mem.eql(u8, name, b)) return;
+        }
+
+        try self.addReference(name, .state_read, node, file_path);
     }
 
     fn processImport(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ImportMapping) !void {
@@ -524,7 +549,7 @@ pub const Pipeline = struct {
 
         const from = self.currentFile() orelse return;
         try self.graph.addRef(.{
-            .id = graph.refId(file_path, node.startByte()),
+            .id = graph.refIdWithKind(file_path, node.startByte(), .import),
             .from = from,
             .target_name = import_path,
             .site = self.makeLocator(node, file_path),
@@ -536,16 +561,20 @@ pub const Pipeline = struct {
 
     // ── Expression Unwrapping (§4.2) ─────────────────────────────────
 
-    pub fn unwrapToRoot(node: ts.Node, source: []const u8, lang_config: *const cfg.LanguageConfig) ?[]const u8 {
+    pub fn unwrap(node: ts.Node, source: []const u8, lang_config: *const cfg.LanguageConfig, context: cfg.UnwrapContext) ?[]const u8 {
         var current = node;
         while (true) {
             const node_type = current.kind();
             if (std.mem.eql(u8, node_type, lang_config.identifier_type)) {
                 return source[current.startByte()..current.endByte()];
             }
+            // Leaf named node (e.g. field_identifier) — treat as terminal
+            if (current.namedChildCount() == 0 and current.startByte() < current.endByte()) {
+                return source[current.startByte()..current.endByte()];
+            }
             var matched = false;
             for (lang_config.unwrap_table) |rule| {
-                if (rule.context != .receiver) continue;
+                if (rule.context != context) continue;
                 if (std.mem.eql(u8, node_type, rule.ts_type)) {
                     current = if (rule.child_field) |f|
                         current.childByFieldName(f) orelse return null
@@ -567,7 +596,7 @@ pub const Pipeline = struct {
             if (ref.kind != .import or ref.resolved) continue;
 
             // Try to resolve import path to file on disk
-            if (self.resolveImportPath(ref.target_name)) |resolved_path| {
+            if (self.resolveImportPath(ref.target_name, ref.site.file)) |resolved_path| {
                 // Add target to the ref
                 const target_id = graph.nodeId(resolved_path, resolved_path, 1);
                 try ref.addTarget(self.allocator, target_id);
@@ -581,9 +610,17 @@ pub const Pipeline = struct {
         }
     }
 
-    fn resolveImportPath(self: *Pipeline, raw_path: []const u8) ?[]const u8 {
-        _ = self;
-        // Try the path as-is relative to cwd
+    fn resolveImportPath(self: *Pipeline, raw_path: []const u8, importing_file: []const u8) ?[]const u8 {
+        // For relative imports, resolve against the importing file's directory
+        if (std.mem.startsWith(u8, raw_path, "./") or std.mem.startsWith(u8, raw_path, "../")) {
+            const dir = std.fs.path.dirname(importing_file) orelse ".";
+            const resolved = std.fs.path.resolvePosix(self.allocator, &.{ dir, raw_path }) catch return null;
+            defer self.allocator.free(resolved);
+            std.fs.cwd().access(resolved, .{}) catch return null;
+            // Dupe into graph's string pool so it outlives this scope
+            return self.graph.dupeString(resolved) catch return null;
+        }
+        // Non-relative: try as-is relative to cwd
         std.fs.cwd().access(raw_path, .{}) catch return null;
         return raw_path;
     }
@@ -631,9 +668,10 @@ pub const Pipeline = struct {
 
             switch (ref.kind) {
                 .call => {
-                    if (self.resolveInScope(container_id, ref.target_name, .callable)) |target| {
-                        try ref.addTarget(self.allocator, target.id);
+                    if (self.resolveInScope(container_id, ref.target_name, .callable)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
                         ref.target_kind = .internal;
+                        if (result.ambiguous) ref.gap = .low;
                     } else {
                         ref.gap = .medium;
                     }
@@ -641,22 +679,22 @@ pub const Pipeline = struct {
                 },
                 .state_read => {
                     // §4.1: state_read → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |target| {
-                        try ref.addTarget(self.allocator, target.id);
+                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
                     }
                     // else: drop — likely a local or parameter
                     ref.resolved = true;
                 },
                 .state_write => {
                     // §4.1: state_write → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |target| {
-                        try ref.addTarget(self.allocator, target.id);
+                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
                     }
                     ref.resolved = true;
                 },
                 .modifier_use => {
-                    if (self.resolveInScope(container_id, ref.target_name, .modifier)) |target| {
-                        try ref.addTarget(self.allocator, target.id);
+                    if (self.resolveInScope(container_id, ref.target_name, .modifier)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
                     } else {
                         ref.gap = .high;
                     }
@@ -664,8 +702,8 @@ pub const Pipeline = struct {
                 },
                 .event_emit => {
                     // §4.1: event_emit → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .event)) |target| {
-                        try ref.addTarget(self.allocator, target.id);
+                    if (self.resolveInScope(container_id, ref.target_name, .event)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
                     }
                     ref.resolved = true;
                 },
@@ -677,11 +715,18 @@ pub const Pipeline = struct {
         try self.graph.buildSiteIndex();
     }
 
+    const ResolveResult = struct {
+        node: *graph.GraphNode,
+        ambiguous: bool,
+    };
+
     /// Scoped resolution: check own container, then walk inheritance chain (§4.1, §4.3).
-    fn resolveInScope(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+    fn resolveInScope(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
         // Check own container first
-        if (self.graph.lookupChildByName(container_id, name, expected_kind)) |found| {
-            return found;
+        const matches = self.graph.lookupChildrenByName(container_id, name, expected_kind, self.allocator) catch return null;
+        defer self.allocator.free(matches);
+        if (matches.len > 0) {
+            return .{ .node = matches[0], .ambiguous = matches.len > 1 };
         }
 
         // Walk parents per inheritance strategy (§4.3)
@@ -696,12 +741,14 @@ pub const Pipeline = struct {
     /// C3 linearization (Solidity, Python): right-to-left depth-first, deduplicated.
     /// `contract C is A, B` → check B first, then A (right-to-left).
     /// Recurses into each parent's chain depth-first.
-    fn resolveC3(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+    fn resolveC3(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
         var mro = self.computeC3Mro(container_id) catch return null;
         defer mro.deinit(self.allocator);
         // Skip index 0 — that's the container itself, already checked by the caller
         for (mro.items[1..]) |parent_id| {
-            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| return found;
+            const matches = self.graph.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
+            defer self.allocator.free(matches);
+            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
         }
         return null;
     }
@@ -772,16 +819,16 @@ pub const Pipeline = struct {
 
     /// Single chain (Java): one parent class + interfaces.
     /// Walk the single parent chain upward; interface methods are not inherited.
-    fn resolveSingleChain(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+    fn resolveSingleChain(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
         const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
         defer self.allocator.free(parents);
 
         // First inheritance target is the parent class
         if (parents.len > 0) {
             const parent_id = parents[0];
-            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |found| {
-                return found;
-            }
+            const matches = self.graph.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
+            defer self.allocator.free(matches);
+            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
             return self.resolveSingleChain(parent_id, name, expected_kind);
         }
         return null;
@@ -790,27 +837,28 @@ pub const Pipeline = struct {
     /// Embedded promotion (Go): shallowest embedding wins.
     /// Check all immediate parents; if exactly one matches, return it.
     /// If multiple match at same depth, it's ambiguous — skip.
-    fn resolveEmbedded(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?*graph.GraphNode {
+    fn resolveEmbedded(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
         const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
         defer self.allocator.free(parents);
 
         var found: ?*graph.GraphNode = null;
         for (parents) |parent_id| {
             if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |match| {
-                if (found != null) return null; // ambiguous
+                if (found != null) return null; // ambiguous across parents
                 found = match;
             }
         }
-        if (found != null) return found;
+        if (found) |f| return .{ .node = f, .ambiguous = false };
 
         // Recurse deeper
+        var deep_result: ?ResolveResult = null;
         for (parents) |parent_id| {
             if (self.resolveEmbedded(parent_id, name, expected_kind)) |match| {
-                if (found != null) return null; // ambiguous
-                found = match;
+                if (deep_result != null) return null; // ambiguous across parents
+                deep_result = match;
             }
         }
-        return found;
+        return deep_result;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -924,32 +972,7 @@ pub const Pipeline = struct {
         return source[start..@min(end, @as(u32, @intCast(source.len)))];
     }
 
-    fn extractCalleeName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        var current = callee_node;
-        while (true) {
-            const node_type = current.kind();
-            if (std.mem.eql(u8, node_type, self.lang_config.identifier_type)) {
-                return source[current.startByte()..current.endByte()];
-            }
-            // Leaf named node (e.g. field_identifier) — treat as terminal
-            if (current.namedChildCount() == 0 and current.startByte() < current.endByte()) {
-                return source[current.startByte()..current.endByte()];
-            }
-            var matched = false;
-            for (self.lang_config.unwrap_table) |rule| {
-                if (rule.context != .callee) continue;
-                if (std.mem.eql(u8, node_type, rule.ts_type)) {
-                    current = if (rule.child_field) |f|
-                        current.childByFieldName(f) orelse return null
-                    else
-                        current.namedChild(0) orelse return null;
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) return null;
-        }
-    }
+
 
     /// Fallback name extraction: find the first direct child matching identifier_type.
     /// Used when the name_field lookup fails (e.g. Cairo impl_item has an unnamed identifier child).
@@ -966,7 +989,7 @@ pub const Pipeline = struct {
     }
 
     fn extractReceiverName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        return unwrapToRoot(callee_node, source, self.lang_config);
+        return unwrap(callee_node, source, self.lang_config, .receiver);
     }
 
     fn extractIdentifierText(self: *const Pipeline, node: ts.Node, source: []const u8) ?[]const u8 {
@@ -986,7 +1009,7 @@ pub const Pipeline = struct {
             if (std.mem.eql(u8, callee_name, builtin)) return true;
         }
         // Check builtin receivers (e.g., msg.sender → "msg" is builtin)
-        if (unwrapToRoot(callee_node, source, self.lang_config)) |receiver| {
+        if (unwrap(callee_node, source, self.lang_config, .receiver)) |receiver| {
             for (self.lang_config.builtin_receivers) |builtin| {
                 if (std.mem.eql(u8, receiver, builtin)) return true;
             }
@@ -1015,7 +1038,7 @@ pub const Pipeline = struct {
     fn addReference(self: *Pipeline, target_name: []const u8, kind: graph.RefKind, node: ts.Node, file_path: []const u8) !void {
         const from = self.currentScope() orelse return;
         try self.graph.addRef(.{
-            .id = graph.refId(file_path, node.startByte()),
+            .id = graph.refIdWithKind(file_path, node.startByte(), kind),
             .from = from,
             .target_name = target_name,
             .site = self.makeLocator(node, file_path),

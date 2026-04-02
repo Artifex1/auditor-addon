@@ -26,6 +26,7 @@ pub const RuleMetadata = struct {
     id: []const u8,
     name: []const u8,
     severity: []const u8,
+    confidence: []const u8, // "issue", "smell", or "pointer"
     rule_type: []const u8, // "scope", "deep", or "map"
     max_depth: u32,
     description: []const u8,
@@ -92,6 +93,7 @@ fn readRuleMetadata(lua: *Lua) !RuleMetadata {
     const id = g_allocator.dupe(u8, getStringField(lua, "id") orelse "unknown") catch return error.OutOfMemory;
     const name = g_allocator.dupe(u8, getStringField(lua, "name") orelse "unnamed") catch return error.OutOfMemory;
     const severity = g_allocator.dupe(u8, getStringField(lua, "severity") orelse "info") catch return error.OutOfMemory;
+    const confidence = g_allocator.dupe(u8, getStringField(lua, "confidence") orelse "smell") catch return error.OutOfMemory;
     const rule_type = g_allocator.dupe(u8, getStringField(lua, "type") orelse "scope") catch return error.OutOfMemory;
     const description = g_allocator.dupe(u8, getStringField(lua, "description") orelse "") catch return error.OutOfMemory;
 
@@ -111,6 +113,7 @@ fn readRuleMetadata(lua: *Lua) !RuleMetadata {
         .id = id,
         .name = name,
         .severity = severity,
+        .confidence = confidence,
         .rule_type = rule_type,
         .max_depth = max_depth,
         .description = description,

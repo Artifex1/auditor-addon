@@ -3,6 +3,7 @@ rule = {
     name = "floating-pragma",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     description = "Pragma directive uses a floating version constraint (^, >=). Pin to a specific version to ensure deterministic builds.",
     languages = {"solidity"},
 }

@@ -3,6 +3,7 @@ rule = {
     name = "unused-function",
     severity = "smell",
     type = "map",
+    confidence = "pointer",
     description = [[
 Flags internal or private callables that have zero callers.
 These are dead code candidates — they cost gas to deploy but are never invoked.

@@ -3,6 +3,7 @@ rule = {
     name = "natspec-missing",
     severity = "info",
     type = "map",
+    confidence = "issue",
     description = "Public/external function is missing NatSpec documentation, or its NatSpec is missing @param/@return tags.",
     languages = {"solidity"},
 }

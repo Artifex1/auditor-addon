@@ -135,6 +135,7 @@ pub fn applyResolutions(
 
         // Add target (first or additional dispatch target)
         try ref.addTarget(g.allocator, target_id);
+        ref.resolved = true;
         result.resolved += 1;
     }
 }

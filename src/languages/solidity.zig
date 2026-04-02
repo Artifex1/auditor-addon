@@ -47,7 +47,7 @@ pub const config = cfg.LanguageConfig{
     .imports = .{ .ts_type = "import_directive", .path_field = "source" },
     .inheritance_strategy = .c3_linearization,
 
-    .builtin_functions = &.{ "require", "assert", "revert", "keccak256", "abi.encode", "abi.encodePacked", "abi.encodeWithSelector", "abi.encodeWithSignature", "abi.decode" },
+    .builtin_functions = &.{ "require", "assert", "revert", "keccak256", "ecrecover", "addmod", "mulmod", "blockhash" },
     .builtin_receivers = &.{ "abi", "block", "msg", "tx", "type" },
 
     .unwrap_table = &.{

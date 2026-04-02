@@ -3,6 +3,7 @@ rule = {
     name = "lack-of-security-contact",
     severity = "info",
     type = "map",
+    confidence = "issue",
     description = "Contract is missing a @custom:security-contact NatSpec tag. Add one so vulnerability reporters know who to contact.",
     languages = {"solidity"},
 }

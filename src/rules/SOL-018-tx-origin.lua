@@ -3,6 +3,7 @@ rule = {
     name = "tx-origin",
     severity = "medium",
     type = "scope",
+    confidence = "smell",
     description = "tx.origin used for authorization is vulnerable to phishing attacks. Use msg.sender instead.",
     languages = {"solidity"},
 }

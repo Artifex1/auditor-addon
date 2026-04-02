@@ -3,6 +3,7 @@ rule = {
     name = "unchecked-transfer",
     severity = "high",
     type = "scope",
+    confidence = "smell",
     languages = {"solidity"},
     description = "ERC-20 .transfer() and .transferFrom() return a bool. Discarding the return value means failed transfers go unnoticed.",
 }

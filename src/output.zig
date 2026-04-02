@@ -107,6 +107,7 @@ pub fn writeToonGraph(g: *const graph.SymbolGraph, writer: Writer) !void {
 pub const Finding = struct {
     rule_id: []const u8,
     severity: []const u8,
+    confidence: []const u8,
     name: []const u8,
     hits: []const Hit,
 };
@@ -120,9 +121,10 @@ pub const Hit = struct {
 pub fn writeToonFindings(findings: []const Finding, writer: Writer) !void {
     try writer.print("findings[{d}]:\n", .{findings.len});
     for (findings) |f| {
-        try writer.print("  {s}{{severity:{s},name:{s},hits[{d}]{{file,line,node_text}}}}:\n", .{
+        try writer.print("  {s}{{severity:{s},confidence:{s},name:{s},hits[{d}]{{file,line,node_text}}}}:\n", .{
             f.rule_id,
             f.severity,
+            f.confidence,
             f.name,
             f.hits.len,
         });
@@ -304,6 +306,8 @@ pub fn writeJsonFindings(findings: []const Finding, writer: Writer) !void {
         try writeJsonString(writer, f.rule_id);
         try writer.writeAll(",\"severity\":");
         try writeJsonString(writer, f.severity);
+        try writer.writeAll(",\"confidence\":");
+        try writeJsonString(writer, f.confidence);
         try writer.writeAll(",\"name\":");
         try writeJsonString(writer, f.name);
         try writer.writeAll(",\"hits\":[");
@@ -424,6 +428,7 @@ test "writeToonFindings formats grouped by rule" {
         .{
             .rule_id = "SOL-002",
             .severity = "critical",
+            .confidence = "smell",
             .name = "reentrancy",
             .hits = &.{
                 .{ .file = "src/Vault.sol", .line = 42, .node_text = "balances[msg.sender]" },

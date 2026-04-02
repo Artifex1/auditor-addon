@@ -3,6 +3,7 @@ rule = {
     name = "unused-event",
     severity = "info",
     type = "scope",
+    confidence = "smell",
     languages = {"solidity"},
     description = "Event defined but never emitted. Dead code or missing emit statement.",
 }

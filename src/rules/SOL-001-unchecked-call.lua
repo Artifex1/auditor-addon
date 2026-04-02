@@ -3,6 +3,7 @@ rule = {
     name = "unchecked-call",
     severity = "high",
     type = "scope",
+    confidence = "smell",
     languages = {"solidity"},
     description = "Low-level .call(), .send(), and .delegatecall() return a bool success flag. Discarding it silently swallows reverts.",
 }

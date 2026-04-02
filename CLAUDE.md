@@ -28,6 +28,7 @@ aa <command> [options] <glob...>
 | `--no-expand` | Skip import-driven file expansion (gaps only). |
 | `--rule=<ID>` | Run specific shipped rule (run only, repeatable). |
 | `--rule-path=<path>` | Run adhoc rule from .lua file (run only). |
+| `--confidence=<level>` | Filter by confidence: issue, smell, pointer (run only, repeatable). |
 | `--root=<name>` | Start from specific function (call-chains only, repeatable). |
 | `--max-depth=<n>` | Limit chain depth, default 10 (call-chains only). |
 

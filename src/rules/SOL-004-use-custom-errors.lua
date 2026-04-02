@@ -3,6 +3,7 @@ rule = {
     name = "use-custom-errors",
     severity = "info",
     type = "scope",
+    confidence = "issue",
     description = "require/revert uses a string message or no error at all. Use custom errors for better gas efficiency and clearer reverts.",
     languages = {"solidity"},
 }

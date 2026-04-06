@@ -2,7 +2,7 @@ const std = @import("std");
 const ts = @import("tree-sitter");
 const clap = @import("clap");
 
-// Public re-exports for integration tests (imported via "aa" module)
+// Public re-exports for integration tests (imported via "aud" module)
 pub const cfg = @import("languages/config.zig");
 pub const graph = @import("graph.zig");
 pub const pipeline = @import("pipeline.zig");
@@ -88,7 +88,7 @@ fn printMainHelp() !void {
     var buf: [4096]u8 = undefined;
     var w = std.fs.File.stderr().writer(&buf);
     try w.interface.writeAll(
-        \\Usage: aa <command> [options] <glob...>
+        \\Usage: aud <command> [options] <glob...>
         \\
         \\Commands:
         \\  peek          Extract function signatures
@@ -209,7 +209,7 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa peek: no files specified\n");
+        try stderrPrint("aud peek: no files specified\n");
         return;
     }
 
@@ -278,7 +278,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa metrics: no files specified\n");
+        try stderrPrint("aud metrics: no files specified\n");
         return;
     }
 
@@ -344,12 +344,12 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa gaps: no files specified\n");
+        try stderrPrint("aud gaps: no files specified\n");
         return;
     }
 
     const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aa gaps: cannot detect language\n");
+        try stderrPrint("aud gaps: cannot detect language\n");
         return;
     };
 
@@ -358,9 +358,10 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     defer pipe.deinit();
 
     try pipe.run(files, no_expand);
+    pipe.graph.scoped_files = &pipe.scoped_files;
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe.graph, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator);
     }
 
     var buf: [8192]u8 = undefined;
@@ -396,12 +397,12 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa run: no files specified\n");
+        try stderrPrint("aud run: no files specified\n");
         return;
     }
 
     const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aa run: cannot detect language\n");
+        try stderrPrint("aud run: cannot detect language\n");
         return;
     };
 
@@ -410,10 +411,11 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
     var pipe = try pipeline.Pipeline.init(allocator, lang_config);
     defer pipe.deinit();
     try pipe.run(files, false);
+    pipe.graph.scoped_files = &pipe.scoped_files;
 
     // Apply resolutions if provided
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe.graph, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator);
     }
 
     // Arena for all rule execution allocations (Lua string dups, hits, metadata)
@@ -555,12 +557,12 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa call-chains: no files specified\n");
+        try stderrPrint("aud call-chains: no files specified\n");
         return;
     }
 
     const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aa call-chains: cannot detect language\n");
+        try stderrPrint("aud call-chains: cannot detect language\n");
         return;
     };
 
@@ -569,9 +571,10 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
     defer pipe.deinit();
 
     try pipe.run(files, false);
+    pipe.graph.scoped_files = &pipe.scoped_files;
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe.graph, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator);
     }
 
     const chain_results = try call_chains.computeCallChains(&pipe.graph, root_filter, max_depth, allocator);
@@ -628,12 +631,12 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
     defer freeExpandedFiles(files, allocator);
 
     if (files.len == 0) {
-        try stderrPrint("aa graph: no files specified\n");
+        try stderrPrint("aud graph: no files specified\n");
         return;
     }
 
     const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aa graph: cannot detect language\n");
+        try stderrPrint("aud graph: cannot detect language\n");
         return;
     };
 
@@ -644,7 +647,7 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
     try pipe.run(files, false);
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe.graph, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator);
     }
 
     var buf: [8192]u8 = undefined;
@@ -659,12 +662,12 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
 
 fn cmdInfo(iter: anytype) !void {
     const lang_name = iter.next() orelse {
-        try stderrPrint("aa info: specify a language\nLanguages: solidity, rust, go, python, javascript, typescript, tsx, java, cpp, cairo, move, masm, compact, noir, tolk\n");
+        try stderrPrint("aud info: specify a language\nLanguages: solidity, rust, go, python, javascript, typescript, tsx, java, cpp, cairo, move, masm, compact, noir, tolk\n");
         return;
     };
 
     const lang = std.meta.stringToEnum(cfg.Language, lang_name) orelse {
-        try stderrPrint("aa info: unknown language\n");
+        try stderrPrint("aud info: unknown language\n");
         return;
     };
 
@@ -727,7 +730,7 @@ fn stderrPrint(msg: []const u8) !void {
 }
 
 fn applyResolutionFile(
-    g: *graph.SymbolGraph,
+    pipe: *pipeline.Pipeline,
     res_path: []const u8,
     allocator: std.mem.Allocator,
 ) !void {
@@ -737,10 +740,25 @@ fn applyResolutionFile(
     const resolutions = try resolution.parseResolutionFile(res_contents, allocator);
     defer allocator.free(resolutions);
 
+    // Pre-parse resolution target files not yet in graph
+    var parsed_new = false;
+    for (resolutions) |res| {
+        if (!pipe.walked_files.contains(res.target_file)) {
+            std.fs.cwd().access(res.target_file, .{}) catch continue;
+            try pipe.parseAndWalkFile(res.target_file);
+            parsed_new = true;
+        }
+    }
+
+    // Re-resolve refs from newly parsed files (safe: skips already-resolved)
+    if (parsed_new) {
+        try pipe.resolve();
+    }
+
     var result = resolution.ResolutionResult.init(allocator);
     defer result.deinit();
 
-    try resolution.applyResolutions(g, resolutions, &result);
+    try resolution.applyResolutions(&pipe.graph, resolutions, &result);
 
     var buf: [1024]u8 = undefined;
     var w = std.fs.File.stderr().writer(&buf);

@@ -1,11 +1,11 @@
 /// Shared helpers for per-rule Solidity integration tests.
 const std = @import("std");
-const aa = @import("aa");
+const aud = @import("aud");
 
-const pipeline = aa.pipeline;
-const cfg = aa.cfg;
-const lua_adapter = aa.lua_adapter;
-const ast_bridge_mod = aa.ast_bridge;
+const pipeline = aud.pipeline;
+const cfg = aud.cfg;
+const lua_adapter = aud.lua_adapter;
+const ast_bridge_mod = aud.ast_bridge;
 
 /// Run a Lua rule file against the given fixture files.
 /// `rule_path` is relative to the project root (CWD when tests run).

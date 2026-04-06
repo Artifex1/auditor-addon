@@ -48,13 +48,13 @@ Skills provide complete workflows that the AI follows autonomously. When invoked
 
 ## 🧰 CLI Tools
 
-The `aa` CLI provides structured code analysis through tree-sitter AST parsing. All commands support glob patterns for analyzing multiple files at once (e.g., `"src/**/*.sol"`). Skills invoke these commands automatically as part of their workflows. Output uses TOON by default; pass `--json` for JSON.
+The `aud` CLI provides structured code analysis through tree-sitter AST parsing. All commands support glob patterns for analyzing multiple files at once (e.g., `"src/**/*.sol"`). Skills invoke these commands automatically as part of their workflows. Output uses TOON by default; pass `--json` for JSON.
 
-### 👀 `aa peek`
+### 👀 `aud peek`
 
 Extracts function and method signatures from source files without reading full implementations. The **estimator** skill uses peek to quickly understand a codebase's API surface, what functions exist, their parameters, visibility, and modifiers. This is ideal for initial exploration and building a mental map of unfamiliar code, without the need to read full files.
 
-### 📏 `aa metrics`
+### 📏 `aud metrics`
 
 Calculates code metrics:
 
@@ -65,23 +65,23 @@ Calculates code metrics:
 
 The **estimator** skill uses this command to calculate how long it takes to perform a security audit.
 
-### 🔗 `aa gaps`
+### 🔗 `aud gaps`
 
 Builds a symbol graph (containers, callables, variables, events, modifiers, edges) from source files and outputs unresolved **edge gaps** — references the static pass cannot resolve (unresolved callees, interface dispatch, external libraries). Gaps are prioritized by edge kind (high/medium/low) for agent triage.
 
 Supports `--resolutions=<file>` to apply a CSV of manually resolved gaps, promoting them to concrete edges.
 
-### ⛓️ `aa call-chains`
+### ⛓️ `aud call-chains`
 
 Traces call chains from root functions (callables with no incoming call edges) through the full call graph, grouped by root and sorted longest-first. The **security-auditor** skill uses this to understand how execution flows through a system and to identify attack surfaces.
 
 Supports `--root=<name>` to start from specific functions, and `--max-depth=<n>` to limit traversal depth.
 
-### 📊 `aa graph`
+### 📊 `aud graph`
 
 Builds and dumps the full symbol graph — all nodes (files, containers, callables, variables, modifiers, events) and edges (contains, calls, reads, writes, has_modifier, inherits, emits, imports). Useful for inspecting the graph structure directly.
 
-### 🔬 `aa run` — Rules Engine
+### 🔬 `aud run` — Rules Engine
 
 Builds the symbol graph and runs Lua-based detection rules against it. Rules are either shipped (built-in) or custom (`.lua` files).
 
@@ -91,7 +91,7 @@ Builds the symbol graph and runs Lua-based detection rules against it. Rules are
 
 Findings include rule metadata, severity, location, and optional execution paths for deep rules. Supports filtering by severity and kind.
 
-### ℹ️ `aa info`
+### ℹ️ `aud info`
 
 Lists language config details (container types, callable types, variable types, visibility extraction, builtin filters, metrics config). Useful for understanding what the parser sees for a given language.
 
@@ -128,13 +128,13 @@ gemini extensions install https://github.com/Artifex1/auditor-addon
 
 ### Other AI Coding Environments (Cursor, Codex, Windsurf, etc.)
 
-Skills can be installed using the [skills CLI](https://skills.sh/). This includes the `aa` CLI — pre-built binaries for all platforms are shipped with the `auditor-addon-cli` skill:
+Skills can be installed using the [skills CLI](https://skills.sh/). This includes the `aud` CLI — pre-built binaries for all platforms are shipped with the `auditor-addon-cli` skill:
 
 ```bash
 npx skills add Artifex1/auditor-addon
 ```
 
-The AI can invoke `aa` directly via the skill path. For manual use, see the `auditor-addon-cli` skill's SKILL.md for instructions on adding `aa` to your PATH.
+The AI can invoke `aud` directly via the skill path. For manual use, see the `auditor-addon-cli` skill's SKILL.md for instructions on adding `aud` to your PATH.
 
 ### Building from Source
 

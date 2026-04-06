@@ -25,6 +25,9 @@ pub const Pipeline = struct {
     // Files already walked (dedup)
     walked_files: std.StringHashMapUnmanaged(void),
 
+    // User-scoped files (the original glob, before import expansion)
+    scoped_files: std.StringHashMapUnmanaged(void),
+
     // Scope stack for nesting context (§4.1)
     scope_stack: std.ArrayList(ScopeFrame),
 
@@ -46,6 +49,7 @@ pub const Pipeline = struct {
             .trees = .empty,
             .sources = .empty,
             .walked_files = .empty,
+            .scoped_files = .empty,
             .scope_stack = .empty,
         };
     }
@@ -66,6 +70,7 @@ pub const Pipeline = struct {
         self.sources.deinit(self.allocator);
 
         self.walked_files.deinit(self.allocator);
+        self.scoped_files.deinit(self.allocator);
         self.scope_stack.deinit(self.allocator);
         self.parser.destroy();
         self.graph.deinit();
@@ -75,6 +80,11 @@ pub const Pipeline = struct {
 
     /// Run the full pipeline: parse → walk → expand imports → resolve.
     pub fn run(self: *Pipeline, file_paths: []const []const u8, no_expand: bool) !void {
+        // Record user-scoped files (before import expansion)
+        for (file_paths) |path| {
+            try self.scoped_files.put(self.allocator, path, {});
+        }
+
         // Seed the work queue
         var queue: std.ArrayList([]const u8) = .empty;
         defer queue.deinit(self.allocator);
@@ -87,9 +97,6 @@ pub const Pipeline = struct {
         while (queue_idx < queue.items.len) {
             const path = queue.items[queue_idx];
             queue_idx += 1;
-
-            if (self.walked_files.contains(path)) continue;
-            try self.walked_files.put(self.allocator, path, {});
 
             try self.parseAndWalkFile(path);
 
@@ -105,7 +112,10 @@ pub const Pipeline = struct {
 
     // ── File Parsing & Walking ────────────────────────────────────────
 
-    fn parseAndWalkFile(self: *Pipeline, file_path: []const u8) !void {
+    pub fn parseAndWalkFile(self: *Pipeline, file_path: []const u8) !void {
+        if (self.walked_files.contains(file_path)) return;
+        try self.walked_files.put(self.allocator, file_path, {});
+
         // Read file
         const source = try self.readFile(file_path);
 
@@ -627,7 +637,7 @@ pub const Pipeline = struct {
 
     // ── Resolution Phase (§4.1) ──────────────────────────────────────
 
-    fn resolve(self: *Pipeline) !void {
+    pub fn resolve(self: *Pipeline) !void {
         // Step 1: Resolve imports and inheritance refs
         for (self.graph.refs.items) |*ref| {
             if (ref.resolved) continue;

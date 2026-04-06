@@ -1,7 +1,7 @@
 High — Core functionality:
 
 1. [x] Only Solidity config exists — 14 other languages fall back to Solidity config (wrong node types)
-2. [x] No shipped rules — no rules/ directory, aa run requires explicit --rule-path
+2. [x] No shipped rules — no rules/ directory, aud run requires explicit --rule-path
 3. [x] --rule=<ID> filter not implemented — TODO in main.zig
 4. [x] JSON findings output stubbed — hardcoded {"findings":[]}
 
@@ -12,7 +12,7 @@ Medium — Spec divergence:
 
 Low — Deferred by design:
 
-7. [] aa diff / aa diff-metrics — spec explicitly defers these
+7. [] aud diff / aud diff-metrics — spec explicitly defers these
 
 Spec needs updating (implementation intentionally diverged):
 

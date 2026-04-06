@@ -80,6 +80,11 @@ pub fn findRoots(
         const node = entry.value_ptr.*;
         if (node.kind != .callable) continue;
 
+        if (g.scoped_files) |scope| {
+            const file = if (node.locator) |loc| loc.file else "";
+            if (file.len > 0 and !scope.contains(file)) continue;
+        }
+
         if (root_filter) |filter| {
             // Only include named roots
             var matched = false;

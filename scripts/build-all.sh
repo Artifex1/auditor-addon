@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-compile aa for all supported platforms.
+# Cross-compile aud for all supported platforms.
 # Outputs to skills/auditor-addon-cli/bin/ alongside the dispatcher.
 # Usage: ./scripts/build-all.sh [--release]
 set -euo pipefail
@@ -23,7 +23,7 @@ TARGETS=(
 
 OUT_DIR="$ROOT/skills/auditor-addon-cli/bin"
 
-echo "Building aa ($MODE) for ${#TARGETS[@]} targets..."
+echo "Building aud ($MODE) for ${#TARGETS[@]} targets..."
 
 mkdir -p "$OUT_DIR"
 
@@ -34,14 +34,14 @@ for target in "${TARGETS[@]}"; do
     zig build -Dtarget="$target" -Doptimize="$MODE" --prefix "zig-out/stage" 2>&1
 
     # Determine source binary name and destination name
-    src="zig-out/stage/bin/aa"
+    src="zig-out/stage/bin/aud"
     suffix=""
     if [[ "$target" == *-windows ]]; then
         src="${src}.exe"
         suffix=".exe"
     fi
 
-    dest="$OUT_DIR/aa-${target}${suffix}"
+    dest="$OUT_DIR/aud-${target}${suffix}"
     mv "$src" "$dest"
 
     echo "    -> $(basename "$dest") ($(wc -c < "$dest" | tr -d ' ') bytes)"

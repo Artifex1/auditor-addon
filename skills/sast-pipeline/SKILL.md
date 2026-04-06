@@ -1,6 +1,6 @@
 ---
 name: sast-pipeline
-description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full gaps → resolve → run flow using the `aa` CLI.
+description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full gaps → resolve → run flow using the `aud` CLI.
 argument-hint: "<files or scope>"
 allowed-tools:
   - Read
@@ -13,11 +13,28 @@ allowed-tools:
 
 Three-phase static analysis: **gaps** → **resolve** → **run rules**.
 
+## CLI Binary
+
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
+
+## Scope
+
+When the user provides specific files or a file list as input to this skill, use those exact files as the scope for all commands. Do NOT broaden to glob patterns — the user's scope is intentional, and broad globs pull in out-of-scope files that create irrelevant gaps and noisy findings.
+
+```bash
+# User provides: contracts/src/Vault.sol contracts/src/Token.sol
+aud gaps contracts/src/Vault.sol contracts/src/Token.sol
+
+# NOT: aud gaps "contracts/src/**/*.sol"
+```
+
+Only use glob patterns when the user explicitly asks for a broad scan (e.g., "scan all Solidity files").
+
 ## Phase 1: Gaps Scan
 
 ```bash
-aa gaps "src/**/*.sol"
-aa gaps "src/**/*.sol" --json   # JSON output
+aud gaps <files...>
+aud gaps <files...> --json   # JSON output
 ```
 
 Builds the symbol graph and emits all unresolved references (gaps). Gaps are grouped by priority:
@@ -51,9 +68,11 @@ b7c3d012,src/Ownable.sol,3,Ownable
 - **medium**: resolve if it affects rule accuracy
 - **low**: safe to skip
 
+Resolution target files do NOT need to be in the original scope — `aud` automatically parses them into the graph when applying the CSV. Findings and gaps still only report on scoped files.
+
 Verify resolutions are applied correctly:
 ```bash
-aa gaps "src/**/*.sol" --resolutions=resolutions.csv
+aud gaps <files...> --resolutions=resolutions.csv
 ```
 
 Stale/broken resolutions are reported as warnings.
@@ -61,11 +80,11 @@ Stale/broken resolutions are reported as warnings.
 ## Phase 3: Run Rules
 
 ```bash
-aa run "src/**/*.sol"
-aa run "src/**/*.sol" --resolutions=resolutions.csv   # with resolved gaps
-aa run "src/**/*.sol" --rule=SOL-002                  # specific shipped rule
-aa run "src/**/*.sol" --rule-path=./rules/CUSTOM-001.lua   # adhoc rule file
-aa run "src/**/*.sol" --rule-inline='rule={id="X",name="x",severity="info",type="scope"} function enter(n,c) if n.kind=="assembly_statement" then report.hit({file=c.current_file,line=n.line,node_text=""}) end end'
+aud run <files...>
+aud run <files...> --resolutions=resolutions.csv   # with resolved gaps
+aud run <files...> --rule=SOL-002                  # specific shipped rule
+aud run <files...> --rule-path=./rules/CUSTOM-001.lua   # adhoc rule file
+aud run <files...> --rule-inline='rule={id="X",name="x",severity="info",type="scope"} function enter(n,c) if n.kind=="assembly_statement" then report.hit({file=c.current_file,line=n.line,node_text=""}) end end'
 ```
 
 Findings are grouped by rule in TOON output:
@@ -95,16 +114,16 @@ Custom rules are `.lua` files (see `rule-authoring` skill for authoring details)
 5. **Run against the full codebase** — discover other instances
 
 ```bash
-aa run "src/**/*.sol" --rule-path=./rules/CUSTOM-001-unbounded-loop.lua
+aud run <files...> --rule-path=./rules/CUSTOM-001-unbounded-loop.lua
 ```
 
 Multiple adhoc rules: repeat `--rule-path` or use `--rule-inline` for short patterns.
 
 ## Typical Workflow
 
-1. `aa gaps "src/**/*.sol"` — find gaps
-2. If high-priority gaps: read code, create `resolutions.csv`
-3. `aa run "src/**/*.sol" --resolutions=resolutions.csv`
+1. `aud gaps <files...>` — find gaps
+2. If high-priority gaps: read code, determine real targets, create `resolutions.csv`
+3. `aud run <files...> --resolutions=resolutions.csv`
 4. Validate findings against code at reported locations
 5. If a confirmed finding is a repeatable pattern, write a custom rule and re-run
 6. Write up confirmed findings with the `scribe` skill

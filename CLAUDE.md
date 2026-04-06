@@ -1,22 +1,22 @@
 # Auditor Addon Context
 
-**Auditor Addon** is a CLI tool (`aa`) for code estimation, security auditing, and reporting. It supports Solidity, Cairo, Compact, Move, Noir, Tolk, Masm, C++, Java, Go, Rust, JavaScript, TypeScript, TSX, Flow, and Python.
+**Auditor Addon** is a CLI tool (`aud`) for code estimation, security auditing, and reporting. It supports Solidity, Cairo, Compact, Move, Noir, Tolk, Masm, C++, Java, Go, Rust, JavaScript, TypeScript, TSX, Flow, and Python.
 
 ## CLI Reference
 
 ```
-aa <command> [options] <glob...>
+aud <command> [options] <glob...>
 ```
 
 | Command | Purpose |
 | :--- | :--- |
-| `aa peek <glob...>` | Extract function signatures for quick overview. |
-| `aa metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
-| `aa gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
-| `aa run <glob...>` | Build symbol graph, run rules, output findings. |
-| `aa call-chains <glob...>` | Map caller->callee chains from entry points. |
-| `aa graph <glob...>` | Build symbol graph, dump nodes and edges. |
-| `aa info <language>` | List language config (node types, properties). |
+| `aud peek <glob...>` | Extract function signatures for quick overview. |
+| `aud metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
+| `aud gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
+| `aud run <glob...>` | Build symbol graph, run rules, output findings. |
+| `aud call-chains <glob...>` | Map caller->callee chains from entry points. |
+| `aud graph <glob...>` | Build symbol graph, dump nodes and edges. |
+| `aud info <language>` | List language config (node types, properties). |
 
 ### Common Options
 

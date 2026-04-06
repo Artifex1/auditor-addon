@@ -1,4 +1,4 @@
-# aa (auditor-addon) Zig+Lua — Architecture Specification
+# aud (auditor-addon) Zig+Lua — Architecture Specification
 
 Port of the auditor-addon static analysis engine from TypeScript to a Zig CLI with Lua rule engine.
 
@@ -248,18 +248,18 @@ invocations. It is portable, versionable, and human-readable.
 ### 3.2 Workflow
 
 ```
-Step 1:  aa gaps "src/**/*.sol"
+Step 1:  aud gaps "src/**/*.sol"
   → full pipeline (parse, walk, expand, resolve)
   → output references with gap annotations in TOON format
 
 Step 2:  agent creates resolutions.csv from gap output
 
-Step 3:  aa gaps "src/**/*.sol" --resolutions=resolutions.csv
+Step 3:  aud gaps "src/**/*.sol" --resolutions=resolutions.csv
   → full pipeline again
   → apply resolutions: validate each entry, add targets, clear gaps
   → output remaining gaps + flag stale/broken resolutions
 
-Step 4:  aa run "src/**/*.sol" --resolutions=resolutions.csv
+Step 4:  aud run "src/**/*.sol" --resolutions=resolutions.csv
   → full pipeline + apply resolutions
   → run rules (rules see all references: static + agent-resolved)
   → output findings in TOON format
@@ -285,7 +285,7 @@ file not yet in the file set is parsed and walked, which may discover further
 imports. This repeats until no new files are found.
 
 ```
-aa scan "src/Vault.sol"
+aud scan "src/Vault.sol"
   Round 1: parse + walk src/Vault.sol
     → nodes created, pending references recorded
     → import "src/Ownable.sol" discovered
@@ -814,7 +814,7 @@ as the walker descends. Rules use it to query the symbol graph (e.g.,
 ### 6.0 Shipped vs Adhoc Rules
 
 **Shipped rules** are bundled with the tool in the `rules/` directory. They
-run by default on `aa run` (all applicable rules for the detected language).
+run by default on `aud run` (all applicable rules for the detected language).
 Use `--rule=<ID>` to filter to specific shipped rules.
 
 **Adhoc rules** are provided at runtime by the agent or user:
@@ -1027,7 +1027,7 @@ CLI output uses TOON (Token-Oriented Object Notation) — a compact format
 designed for low token consumption in LLM agent contexts. Schema is declared
 once, data follows as compact rows.
 
-**`aa gaps` output** — gaps after initial scan:
+**`aud gaps` output** — gaps after initial scan:
 
 ```
 gaps[3]{ref_id,from_name,target_name,kind,file,line,priority}:
@@ -1036,7 +1036,7 @@ gaps[3]{ref_id,from_name,target_name,kind,file,line,priority}:
   c9e4f123,src/Vault.sol,@openzeppelin/contracts/access/Ownable.sol,import,src/Vault.sol,1,high
 ```
 
-**`aa run` output** — findings grouped by rule:
+**`aud run` output** — findings grouped by rule:
 
 ```
 findings[2]:
@@ -1050,7 +1050,7 @@ findings[2]:
 Each rule's metadata (severity, name) is declared once in the group header.
 Hits are compact rows — no repeated fields per instance.
 
-**`aa graph` output** — full graph dump:
+**`aud graph` output** — full graph dump:
 
 ```
 nodes[3]{id,kind,name,qualified_name,visibility,language,file,line}:
@@ -1122,7 +1122,7 @@ are persisted and never recomputed.
 ## 10. CLI Interface
 
 ```
-aa gaps <glob...>                            -- build graph, output gaps
+aud gaps <glob...>                            -- build graph, output gaps
     --resolutions=<file>                        -- validate resolutions, output remaining gaps
     --kind=<edge_kind>                          -- filter gaps (calls, inherits, imports, ...)
     --priority=<high|medium|low>                -- filter gaps
@@ -1130,27 +1130,27 @@ aa gaps <glob...>                            -- build graph, output gaps
     --no-expand                                 -- skip import expansion (argument files only)
     --json                                      -- JSON output instead of TOON
 
-aa run <glob...>                             -- build graph, run rules, output findings
+aud run <glob...>                             -- build graph, run rules, output findings
     --resolutions=<file>                        -- apply resolutions before running rules
     --rule=<ID>                                 -- run specific shipped rule(s) only (repeatable)
     --rule-path=<path>                          -- run adhoc rule from .lua file
     --rule-inline=<lua_code>                    -- run adhoc rule from inline Lua string
     --json                                      -- JSON output instead of TOON
 
-aa call-chains <glob...>                     -- map caller→callee chains (see §11)
+aud call-chains <glob...>                     -- map caller→callee chains (see §11)
     --resolutions=<file>                        -- include agent-resolved edges
     --root=<node_name>                          -- start from specific function(s)
     --max-depth=<n>                             -- limit chain depth (default: 10)
     --json                                      -- JSON output instead of TOON
 
-aa graph <glob...>                           -- build graph, dump it
+aud graph <glob...>                           -- build graph, dump it
     --resolutions=<file>                        -- include resolved edges in dump
     --format=<toon|json|dot>                    -- output format (default: toon)
 
-aa peek <file...>                            -- see SPEC-CLI.md
-aa metrics <glob...>                         -- see SPEC-CLI.md
+aud peek <file...>                            -- see SPEC-CLI.md
+aud metrics <glob...>                         -- see SPEC-CLI.md
 
-aa info <language>                           -- list taxonomy kinds, properties, edges
+aud info <language>                           -- list taxonomy kinds, properties, edges
                                                 -- (no scanning, prints language config)
 ```
 
@@ -1167,12 +1167,12 @@ For MCP integration: the CLI is invoked by MCP tools as a subprocess.
 
 ## 11. Call Chains
 
-The `aa call-chains` command maps caller→callee relationships through the
+The `aud call-chains` command maps caller→callee relationships through the
 graph. Call chains show **who calls what** — static dependency paths, not
 runtime execution order or control flow.
 
 ```
-aa call-chains <glob>                        -- map call chains from entry points
+aud call-chains <glob>                        -- map call chains from entry points
     --resolutions=<file>                        -- include agent-resolved edges
     --root=<node_name>                          -- start from specific function(s)
     --max-depth=<n>                             -- limit chain depth (default: 10)

@@ -40,6 +40,7 @@ pub fn writeToonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
 
     for (g.refs.items) |ref| {
         if (ref.gap) |priority| {
+            if (!g.isRefInScope(ref)) continue;
             const from_name = if (g.lookupNode(ref.from)) |node| node.name else "";
             try writer.print("  {x},{s},{s},{s},{s},{d},{s}\n", .{
                 ref.id,
@@ -212,6 +213,7 @@ pub fn writeJsonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
     var first = true;
     for (g.refs.items) |ref| {
         if (ref.gap) |priority| {
+            if (!g.isRefInScope(ref)) continue;
             if (!first) try writer.writeAll(",");
             first = false;
             const from_name = if (g.lookupNode(ref.from)) |node| node.name else "";

@@ -1,14 +1,14 @@
 const std = @import("std");
-const aa = @import("aa");
+const aud = @import("aud");
 
-const graph = aa.graph;
-const pipeline = aa.pipeline;
-const cfg = aa.cfg;
-const metrics_mod = aa.metrics;
-const peek_mod = aa.peek;
-const call_chains = aa.call_chains;
-const output = aa.output;
-const resolution = aa.resolution;
+const graph = aud.graph;
+const pipeline = aud.pipeline;
+const cfg = aud.cfg;
+const metrics_mod = aud.metrics;
+const peek_mod = aud.peek;
+const call_chains = aud.call_chains;
+const output = aud.output;
+const resolution = aud.resolution;
 const ts = @import("tree-sitter");
 
 // ── Helpers ───────────────────────────────────────────────────────────

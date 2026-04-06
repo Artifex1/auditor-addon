@@ -1,18 +1,18 @@
 ---
 name: auditor-addon-cli
-description: Provides the `aa` CLI binary used by all other auditor-addon skills (estimator, security-auditor, threat-modeling, sast-pipeline, rule-authoring). Load this skill whenever any `aa` command needs to be invoked. The binary is at `<SKILL_DIR>/bin/aa` — use the `bin/aa` dispatcher which auto-selects the correct platform binary.
+description: Provides the `aud` CLI binary used by all other auditor-addon skills (estimator, security-auditor, threat-modeling, sast-pipeline, rule-authoring). Load this skill whenever any `aud` command needs to be invoked. The binary is at `<SKILL_DIR>/bin/aud` — use the `bin/aud` dispatcher which auto-selects the correct platform binary.
 ---
 
 # auditor-addon-cli
 
-The `aa` CLI is a single-binary tool that parses source code with tree-sitter, builds a symbol graph, and runs analysis. Pre-built binaries for all platforms are shipped in this skill's `bin/` directory.
+The `aud` CLI is a single-binary tool that parses source code with tree-sitter, builds a symbol graph, and runs analysis. Pre-built binaries for all platforms are shipped in this skill's `bin/` directory.
 
-## Invoking aa
+## Invoking aud
 
-The `bin/aa` dispatcher auto-detects the current platform and runs the correct binary. Invoke it using its absolute path:
+The `bin/aud` dispatcher auto-detects the current platform and runs the correct binary. Invoke it using its absolute path:
 
 ```bash
-<SKILL_DIR>/bin/aa <command> [options] <glob...>
+<SKILL_DIR>/bin/aud <command> [options] <glob...>
 ```
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
@@ -21,13 +21,13 @@ Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
 
 | Command | Purpose |
 |:--------|:--------|
-| `aa peek <glob...>` | Extract function signatures for quick overview. |
-| `aa metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
-| `aa gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
-| `aa run <glob...>` | Build symbol graph, run rules, output findings. |
-| `aa call-chains <glob...>` | Map caller->callee chains from entry points. |
-| `aa graph <glob...>` | Build symbol graph, dump nodes and edges. |
-| `aa info <language>` | List language config (node types, properties). |
+| `aud peek <glob...>` | Extract function signatures for quick overview. |
+| `aud metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
+| `aud gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
+| `aud run <glob...>` | Build symbol graph, run rules, output findings. |
+| `aud call-chains <glob...>` | Map caller->callee chains from entry points. |
+| `aud graph <glob...>` | Build symbol graph, dump nodes and edges. |
+| `aud info <language>` | List language config (node types, properties). |
 
 ### Common Options
 
@@ -53,16 +53,16 @@ Output uses Token-Oriented Object Notation (TOON) by default. Pass `--json` for 
 
 Solidity, Rust, Go, Python, Cairo, Compact, Move, Noir, Tolk, Masm, C++, Java, JavaScript, TypeScript, TSX, Flow.
 
-## Adding aa to PATH (optional, for manual use)
+## Adding aud to PATH (optional, for manual use)
 
 ### macOS / Linux
 
 ```bash
-ln -s "$(pwd)/bin/aa" /usr/local/bin/aa
+ln -s "$(pwd)/bin/aud" /usr/local/bin/aud
 ```
 
 ### Windows (PowerShell, admin)
 
 ```powershell
-New-Item -ItemType SymbolicLink -Path "C:\Windows\aa.exe" -Target "$PWD\bin\aa-x86_64-windows.exe"
+New-Item -ItemType SymbolicLink -Path "C:\Windows\aud.exe" -Target "$PWD\bin\aud-x86_64-windows.exe"
 ```

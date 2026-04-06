@@ -39,6 +39,10 @@ pub fn walkScope(
         const ast_root = node.ast_node orelse continue;
         const file = if (node.locator) |loc| loc.file else "";
 
+        if (g.scoped_files) |scope| {
+            if (!scope.contains(file)) continue;
+        }
+
         const ctx = WalkContext{
             .current_file = file,
             .depth = 0,
@@ -90,6 +94,10 @@ pub fn walkDeep(
         if (node.kind != .file) continue;
         const ast_root = node.ast_node orelse continue;
         const file = if (node.locator) |loc| loc.file else "";
+
+        if (g.scoped_files) |scope| {
+            if (!scope.contains(file)) continue;
+        }
 
         var visited: std.AutoHashMapUnmanaged(u64, void) = .empty;
         defer visited.deinit(allocator);
@@ -320,4 +328,123 @@ test "walkScope skips nodes without ast_node" {
     });
 
     try std.testing.expectEqual(@as(u32, 0), S.enter_count);
+}
+
+test "walkScope skips files outside scoped_files" {
+    const allocator = std.testing.allocator;
+
+    const source = "contract Foo { function bar() public {} }";
+    const parser = ts.Parser.create();
+    defer parser.destroy();
+    try parser.setLanguage(cfg.Language.solidity.grammarFn()());
+    const tree = parser.parseString(source, null) orelse return error.ParseFailed;
+    defer tree.destroy();
+
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+
+    // Scoped file with AST
+    _ = try g.addNode(.{
+        .id = graph.nodeId("scoped.sol", "scoped.sol", 1),
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "scoped.sol",
+        .qualified_name = "scoped.sol",
+        .language = .solidity,
+        .ast_node = tree.rootNode(),
+        .locator = .{ .file = "scoped.sol", .start_byte = 0, .end_byte = @intCast(source.len), .line = 1, .column = 0 },
+    });
+
+    // Out-of-scope file with same AST (would be walked if not filtered)
+    _ = try g.addNode(.{
+        .id = graph.nodeId("dep.sol", "dep.sol", 1),
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "dep.sol",
+        .qualified_name = "dep.sol",
+        .language = .solidity,
+        .ast_node = tree.rootNode(),
+        .locator = .{ .file = "dep.sol", .start_byte = 0, .end_byte = @intCast(source.len), .line = 1, .column = 0 },
+    });
+
+    // Set scope to only scoped.sol
+    var scope: std.StringHashMapUnmanaged(void) = .empty;
+    defer scope.deinit(allocator);
+    try scope.put(allocator, "scoped.sol", {});
+    g.scoped_files = &scope;
+
+    const S = struct {
+        var files_seen: [2]bool = .{ false, false };
+        fn enter(_: ts.Node, ctx: WalkContext) void {
+            if (std.mem.eql(u8, ctx.current_file, "scoped.sol")) files_seen[0] = true;
+            if (std.mem.eql(u8, ctx.current_file, "dep.sol")) files_seen[1] = true;
+        }
+        fn exit(_: ts.Node, _: WalkContext) void {}
+    };
+    S.files_seen = .{ false, false };
+
+    walkScope(&g, .{ .enter_fn = &S.enter, .exit_fn = &S.exit });
+
+    try std.testing.expect(S.files_seen[0]); // scoped.sol walked
+    try std.testing.expect(!S.files_seen[1]); // dep.sol skipped
+}
+
+test "walkScope walks all files when scoped_files is null" {
+    const allocator = std.testing.allocator;
+
+    const source = "contract Foo {}";
+    const parser = ts.Parser.create();
+    defer parser.destroy();
+    try parser.setLanguage(cfg.Language.solidity.grammarFn()());
+    const tree = parser.parseString(source, null) orelse return error.ParseFailed;
+    defer tree.destroy();
+
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+
+    _ = try g.addNode(.{
+        .id = graph.nodeId("a.sol", "a.sol", 1),
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "a.sol",
+        .qualified_name = "a.sol",
+        .language = .solidity,
+        .ast_node = tree.rootNode(),
+        .locator = .{ .file = "a.sol", .start_byte = 0, .end_byte = @intCast(source.len), .line = 1, .column = 0 },
+    });
+    _ = try g.addNode(.{
+        .id = graph.nodeId("b.sol", "b.sol", 1),
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = "b.sol",
+        .qualified_name = "b.sol",
+        .language = .solidity,
+        .ast_node = tree.rootNode(),
+        .locator = .{ .file = "b.sol", .start_byte = 0, .end_byte = @intCast(source.len), .line = 1, .column = 0 },
+    });
+
+    // scoped_files is null (default) — both files should be walked
+    const S = struct {
+        var file_count: u32 = 0;
+        fn enter(_: ts.Node, _: WalkContext) void {}
+        fn exit(_: ts.Node, _: WalkContext) void {}
+        fn finalize() void {
+            file_count += 1;
+        }
+    };
+    S.file_count = 0;
+
+    // Count unique files via enter on source_file nodes
+    const S2 = struct {
+        var count: u32 = 0;
+        fn enter(node: ts.Node, _: WalkContext) void {
+            if (std.mem.eql(u8, node.kind(), "source_file")) count += 1;
+        }
+        fn exit(_: ts.Node, _: WalkContext) void {}
+    };
+    S2.count = 0;
+
+    walkScope(&g, .{ .enter_fn = &S2.enter, .exit_fn = &S2.exit });
+
+    try std.testing.expectEqual(@as(u32, 2), S2.count);
 }

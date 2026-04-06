@@ -30,27 +30,27 @@ pub fn build(b: *std.Build) void {
         .{ .name = "tsx", .root = "vendor/grammars/tree-sitter-typescript/tsx/src", .scanner = true },
     };
 
-    // --- Shared aa module (used by exe, unit tests, and integration tests) ---
+    // --- Shared aud module (used by exe, unit tests, and integration tests) ---
 
-    const aa_module = b.createModule(.{
+    const aud_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    aa_module.addImport("tree-sitter", tree_sitter.module("tree_sitter"));
-    aa_module.addImport("zlua", zlua.module("zlua"));
-    aa_module.addImport("clap", clap.module("clap"));
-    addGrammarSources(b, aa_module, grammars);
+    aud_module.addImport("tree-sitter", tree_sitter.module("tree_sitter"));
+    aud_module.addImport("zlua", zlua.module("zlua"));
+    aud_module.addImport("clap", clap.module("clap"));
+    addGrammarSources(b, aud_module, grammars);
 
     // --- Executable ---
 
-    const exe = b.addExecutable(.{ .name = "aa", .root_module = aa_module });
+    const exe = b.addExecutable(.{ .name = "aud", .root_module = aud_module });
     b.installArtifact(exe);
 
     // --- Run step ---
 
-    const run_step = b.step("run", "Run the aa CLI");
+    const run_step = b.step("run", "Run the aud CLI");
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -63,7 +63,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
 
     // Unit tests (inline tests in src/)
-    const unit_tests = b.addTest(.{ .root_module = aa_module });
+    const unit_tests = b.addTest(.{ .root_module = aud_module });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 
     // Integration tests — language suites (fixed list)
@@ -87,7 +87,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
         });
-        integration_module.addImport("aa", aa_module);
+        integration_module.addImport("aud", aud_module);
         integration_module.addImport("tree-sitter", tree_sitter.module("tree_sitter"));
 
         const integration_tests = b.addTest(.{ .root_module = integration_module });
@@ -96,13 +96,13 @@ pub fn build(b: *std.Build) void {
 
     // Per-rule tests — auto-discovered from tests/solidity/rules/*.zig
     // Adding a new rule test file is enough; no build.zig edit required.
-    addRuleTests(b, test_step, aa_module, tree_sitter, target, optimize, "tests/solidity/rules");
+    addRuleTests(b, test_step, aud_module, tree_sitter, target, optimize, "tests/solidity/rules");
 }
 
 fn addRuleTests(
     b: *std.Build,
     test_step: *std.Build.Step,
-    aa_module: *std.Build.Module,
+    aud_module: *std.Build.Module,
     tree_sitter: *std.Build.Dependency,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -126,7 +126,7 @@ fn addRuleTests(
             .optimize = optimize,
             .link_libc = true,
         });
-        module.addImport("aa", aa_module);
+        module.addImport("aud", aud_module);
         module.addImport("tree-sitter", tree_sitter.module("tree_sitter"));
 
         const tests = b.addTest(.{ .name = name, .root_module = module });

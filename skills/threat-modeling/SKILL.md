@@ -34,8 +34,8 @@ SEQUENCE (no checkpoints — runs to completion):
 
 **Goal:** Build a thorough understanding of the codebase before threat modeling begins.
 
-- Use `aa peek` to survey function signatures and understand the full API surface
-- Use `aa call-chains` to trace how components interact and how external inputs flow through the system
+- Use `aud peek` to survey function signatures and understand the full API surface
+- Use `aud call-chains` to trace how components interact and how external inputs flow through the system
 - Read key files: entry points, access control, value-handling logic, external integrations
 - Scan for documentation (README, docs/, specs/) and load anything relevant to the scope
 - Identify:
@@ -103,7 +103,7 @@ Document each asset with a description and the trust level required to access or
 
 **Goal:** For each asset, enumerate how a threat agent could compromise it using the STRIDE framework as a systematic lens. Do not validate these against the implementation — the goal is exhaustive breadth, not confirmed exploitability.
 
-Use `aa call-chains` to trace actual call chains and ground the enumeration in real execution flows rather than speculation alone.
+Use `aud call-chains` to trace actual call chains and ground the enumeration in real execution flows rather than speculation alone.
 
 For each major component, work through each STRIDE category:
 

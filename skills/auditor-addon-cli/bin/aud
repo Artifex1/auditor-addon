@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Platform dispatcher for the aud CLI.
+# Detects OS/arch and runs the correct pre-built binary.
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+case "$OS" in
+    Darwin) os="macos" ;;
+    Linux)  os="linux" ;;
+    MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+    *) echo "aud: unsupported OS: $OS" >&2; exit 1 ;;
+esac
+
+case "$ARCH" in
+    arm64|aarch64) arch="aarch64" ;;
+    x86_64|amd64)  arch="x86_64" ;;
+    *) echo "aud: unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+suffix=""
+if [[ "$os" == "windows" ]]; then
+    suffix=".exe"
+fi
+
+BIN="$BIN_DIR/aud-${arch}-${os}${suffix}"
+
+if [[ ! -x "$BIN" ]]; then
+    echo "aud: binary not found: $BIN" >&2
+    echo "    Run ./scripts/build-all.sh to build." >&2
+    exit 1
+fi
+
+exec "$BIN" "$@"

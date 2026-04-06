@@ -321,3 +321,100 @@ test "apply resolutions: broken target (node not found)" {
     try std.testing.expect(ref.gap != null);
     try std.testing.expect(!ref.hasTargets());
 }
+
+test "apply resolutions: succeeds after pre-parsing target file into graph" {
+    // Simulates the fix: resolution target file is parsed into the graph
+    // before applyResolutions runs, so the target node lookup succeeds.
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // 1. Ref with gap in scoped file (the user's contract)
+    const rid = graph.refId("src/Vault.sol", 100);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .call,
+        .target_name = "onlyOwner",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    // 2. Target node from dependency file (simulates pre-parse of resolution target)
+    const target_id = graph.nodeId("onlyOwner", "deps/Ownable.sol", 15);
+    _ = try g.addNode(.{
+        .id = target_id,
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "onlyOwner",
+        .qualified_name = "Ownable.onlyOwner",
+        .language = .solidity,
+        .locator = .{ .file = "deps/Ownable.sol", .start_byte = 0, .end_byte = 50, .line = 15, .column = 0 },
+    });
+
+    // 3. Apply resolution — should succeed now that target exists
+    var csv_buf: [256]u8 = undefined;
+    const csv = try std.fmt.bufPrint(&csv_buf, "ref_id,target_file,target_line,target_name\n{x},deps/Ownable.sol,15,onlyOwner\n", .{rid});
+
+    const resolutions = try parseResolutionFile(csv, std.testing.allocator);
+    defer std.testing.allocator.free(resolutions);
+
+    var result = ResolutionResult.init(std.testing.allocator);
+    defer result.deinit();
+    try applyResolutions(&g, resolutions, &result);
+
+    try std.testing.expectEqual(@as(u32, 1), result.resolved);
+    try std.testing.expectEqual(@as(u32, 0), result.broken);
+    try std.testing.expectEqual(@as(u32, 0), result.stale);
+
+    // Ref should now have the target and no gap
+    try g.buildSiteIndex();
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expect(ref.gap == null);
+    try std.testing.expect(ref.hasTargets());
+    try std.testing.expectEqual(target_id, ref.firstTarget().?);
+}
+
+test "apply resolutions: scoped_files excludes dependency gaps from count" {
+    // After resolution, dependency file nodes are in the graph but out of scope.
+    // gapCount should only count gaps from scoped files.
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Gap in scoped file
+    try g.addRef(.{
+        .id = graph.refId("src/Vault.sol", 50),
+        .from = 1,
+        .kind = .call,
+        .target_name = "transfer",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    // Gap in dependency file (from pre-parsed resolution target)
+    try g.addRef(.{
+        .id = graph.refId("deps/Ownable.sol", 30),
+        .from = 2,
+        .kind = .call,
+        .target_name = "context",
+        .site = .{ .file = "deps/Ownable.sol", .start_byte = 30, .end_byte = 40, .line = 8, .column = 0 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    });
+
+    // Without scope: 2 gaps
+    try std.testing.expectEqual(@as(u32, 2), g.gapCount());
+
+    // Set scope to user's file only
+    var scope: std.StringHashMapUnmanaged(void) = .empty;
+    defer scope.deinit(std.testing.allocator);
+    try scope.put(std.testing.allocator, "src/Vault.sol", {});
+    g.scoped_files = &scope;
+
+    // With scope: only 1 gap (the one in src/Vault.sol)
+    try std.testing.expectEqual(@as(u32, 1), g.gapCount());
+}

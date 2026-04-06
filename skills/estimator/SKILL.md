@@ -17,7 +17,7 @@ SEQUENCE:
 2. CHECKPOINT: user confirms "full-scope" or "diff-scope"
 3. IF full-scope: EXPLORE (per-chunk) → METRICS → REFLECT → REPORT
    IF diff-scope: DIFF-TRIAGE (per-chunk) → REFLECT → REPORT
-   NOTE: `aa diff` / `aa diff-metrics` are not yet implemented. Diff-scope uses `aa peek` and `aa metrics` on changed files as a substitute (full-file metrics, not diff-only).
+   NOTE: `aud diff` / `aud diff-metrics` are not yet implemented. Diff-scope uses `aud peek` and `aud metrics` on changed files as a substitute (full-file metrics, not diff-only).
 
 CHECKPOINT RULES:
 - Present findings using the phase's specified output format
@@ -172,12 +172,12 @@ For each chunk, note which path patterns are likely in-scope vs out-of-scope:
 
 **Step 1 — Prepare:**
 - Identify files in the chunk
-- **Batch `aa peek` calls** for ambiguous files
-- **Skip `aa peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
+- **Batch `aud peek` calls** for ambiguous files
+- **Skip `aud peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
 
 **Step 2 — Categorize:**
 - Assign each file a category (see File Categories reference)
-- If `aa peek` is insufficient, read up to 200 lines to categorize
+- If `aud peek` is insufficient, read up to 200 lines to categorize
 
 **Step 3 — Determine Scope:**
 - Apply scope defaults (see Scope Defaults reference)
@@ -207,7 +207,7 @@ Include:
 **Goal:** Calculate metrics and estimate audit effort for all confirmed in-scope files.
 
 **Step 1 — Calculate:**
-- Run `aa metrics` with all confirmed in-scope paths
+- Run `aud metrics` with all confirmed in-scope paths
 
 **Step 2 — Analyze:**
 - Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
@@ -247,12 +247,12 @@ Reason: <justification>
 **Step 1 — Calculate Diff Metrics:**
 - Use `git diff <base>..<head> -- <paths>` to identify changed files in the chunk
 - If no changes in chunk → skip to next chunk
-- Run `aa metrics <changed-files>` on changed files (full-file metrics — `aa diff-metrics` not yet implemented)
+- Run `aud metrics <changed-files>` on changed files (full-file metrics — `aud diff-metrics` not yet implemented)
 - Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
 
 **Step 2 — Analyze Changes:**
 - Use `git diff <base>..<head> -- <file>` for the actual diff
-- Use `aa peek <changed-files>` for function signature overview of changed files
+- Use `aud peek <changed-files>` for function signature overview of changed files
 - Use judgment: scan the diff for added/removed functions, changed logic, new entry points
 
 **Step 3 — Classify & Adjust:**
@@ -260,7 +260,7 @@ For each changed file, determine scope and adjust estimates. Assume **no prior a
 
 **Scope:** Apply categories and scope defaults (see references).
 
-**Context burden:** Use `aa call-chains` to see where touched functions appear in call chains:
+**Context burden:** Use `aud call-chains` to see where touched functions appear in call chains:
 - *Isolated* (leaf node, minimal callers, self-contained) → no adjustment
 - *Integrated* (multiple paths, shared state, affects invariants) → increase estimate
 - *Escalate*: If paths are insufficient, read unchanged files to understand context surface

@@ -138,6 +138,10 @@ pub const SymbolGraph = struct {
     children_index: std.AutoHashMapUnmanaged(u64, std.ArrayListUnmanaged(u64)),
     site_index: std.AutoHashMapUnmanaged(u64, u32), // ref.id → index in refs
 
+    // Scope filter: when set, getNodesByKind/gapCount/walker only see scoped files.
+    // Non-owning pointer — set by the command after pipeline.run().
+    scoped_files: ?*const std.StringHashMapUnmanaged(void) = null,
+
     pub fn init(backing_allocator: std.mem.Allocator) SymbolGraph {
         return .{
             .allocator = backing_allocator,
@@ -259,9 +263,13 @@ pub const SymbolGraph = struct {
         errdefer result.deinit(allocator);
         var it = self.nodes.iterator();
         while (it.next()) |entry| {
-            if (entry.value_ptr.*.kind == kind) {
-                try result.append(allocator, entry.value_ptr.*);
+            const node = entry.value_ptr.*;
+            if (node.kind != kind) continue;
+            if (self.scoped_files) |scope| {
+                const file = if (node.locator) |loc| loc.file else "";
+                if (file.len > 0 and !scope.contains(file)) continue;
             }
+            try result.append(allocator, node);
         }
         return try result.toOwnedSlice(allocator);
     }
@@ -396,9 +404,19 @@ pub const SymbolGraph = struct {
     pub fn gapCount(self: *const SymbolGraph) u32 {
         var count: u32 = 0;
         for (self.refs.items) |ref| {
-            if (ref.gap != null) count += 1;
+            if (ref.gap == null) continue;
+            if (self.scoped_files) |scope| {
+                if (!scope.contains(ref.site.file)) continue;
+            }
+            count += 1;
         }
         return count;
+    }
+
+    /// Check whether a ref's site file is within scope (or scope is unset).
+    pub fn isRefInScope(self: *const SymbolGraph, ref: Reference) bool {
+        const scope = self.scoped_files orelse return true;
+        return scope.contains(ref.site.file);
     }
 };
 
@@ -945,4 +963,129 @@ test "SymbolGraph deinit cleans up all allocations" {
     try g.buildSiteIndex();
 
     g.deinit(); // testing allocator will catch leaks
+}
+
+test "getNodesByKind respects scoped_files" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Two callables in different files
+    _ = try g.addNode(.{
+        .id = nodeId("foo", "src/Scoped.sol", 5),
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "foo",
+        .qualified_name = "Scoped.foo",
+        .language = .solidity,
+        .locator = .{ .file = "src/Scoped.sol", .start_byte = 0, .end_byte = 50, .line = 5, .column = 0 },
+    });
+    _ = try g.addNode(.{
+        .id = nodeId("bar", "deps/Dep.sol", 10),
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "bar",
+        .qualified_name = "Dep.bar",
+        .language = .solidity,
+        .locator = .{ .file = "deps/Dep.sol", .start_byte = 0, .end_byte = 50, .line = 10, .column = 0 },
+    });
+
+    // Without scope: both returned
+    const all = try g.getNodesByKind(.callable, std.testing.allocator);
+    defer std.testing.allocator.free(all);
+    try std.testing.expectEqual(@as(usize, 2), all.len);
+
+    // With scope: only scoped file returned
+    var scope: std.StringHashMapUnmanaged(void) = .empty;
+    defer scope.deinit(std.testing.allocator);
+    try scope.put(std.testing.allocator, "src/Scoped.sol", {});
+    g.scoped_files = &scope;
+
+    const scoped = try g.getNodesByKind(.callable, std.testing.allocator);
+    defer std.testing.allocator.free(scoped);
+    try std.testing.expectEqual(@as(usize, 1), scoped.len);
+    try std.testing.expectEqualStrings("foo", scoped[0].name);
+}
+
+test "gapCount respects scoped_files" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Two refs with gaps in different files
+    try g.addRef(.{
+        .id = refId("src/Scoped.sol", 10),
+        .from = 1,
+        .kind = .call,
+        .target_name = "transfer",
+        .site = .{ .file = "src/Scoped.sol", .start_byte = 10, .end_byte = 20, .line = 5, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+    try g.addRef(.{
+        .id = refId("deps/Dep.sol", 10),
+        .from = 2,
+        .kind = .call,
+        .target_name = "approve",
+        .site = .{ .file = "deps/Dep.sol", .start_byte = 10, .end_byte = 20, .line = 3, .column = 0 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    });
+
+    // Without scope: both counted
+    try std.testing.expectEqual(@as(u32, 2), g.gapCount());
+
+    // With scope: only scoped ref counted
+    var scope: std.StringHashMapUnmanaged(void) = .empty;
+    defer scope.deinit(std.testing.allocator);
+    try scope.put(std.testing.allocator, "src/Scoped.sol", {});
+    g.scoped_files = &scope;
+
+    try std.testing.expectEqual(@as(u32, 1), g.gapCount());
+}
+
+test "isRefInScope returns true when scope is null" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    const ref = Reference{
+        .id = refId("any.sol", 10),
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "any.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
+        .targets = .empty,
+    };
+
+    try std.testing.expect(g.isRefInScope(ref));
+}
+
+test "isRefInScope filters by scoped_files" {
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    var scope: std.StringHashMapUnmanaged(void) = .empty;
+    defer scope.deinit(std.testing.allocator);
+    try scope.put(std.testing.allocator, "src/In.sol", {});
+    g.scoped_files = &scope;
+
+    const in_scope = Reference{
+        .id = refId("src/In.sol", 10),
+        .from = 1,
+        .kind = .call,
+        .target_name = "foo",
+        .site = .{ .file = "src/In.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
+        .targets = .empty,
+    };
+    const out_of_scope = Reference{
+        .id = refId("deps/Out.sol", 10),
+        .from = 2,
+        .kind = .call,
+        .target_name = "bar",
+        .site = .{ .file = "deps/Out.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
+        .targets = .empty,
+    };
+
+    try std.testing.expect(g.isRefInScope(in_scope));
+    try std.testing.expect(!g.isRefInScope(out_of_scope));
 }

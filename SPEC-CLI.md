@@ -1,6 +1,6 @@
-# aa CLI — Utility Commands Specification
+# aud CLI — Utility Commands Specification
 
-Utility subcommands for the aa CLI that operate independently of the symbol
+Utility subcommands for the aud CLI that operate independently of the symbol
 graph. These are lightweight tools for codebase exploration and estimation.
 
 The symbol graph commands (`gaps`, `run`, `call-chains`, `graph`, `info`) are
@@ -14,7 +14,7 @@ Extract function signatures from source files. Gives auditors a quick API
 surface view without reading full function bodies.
 
 ```
-aa peek <glob...>
+aud peek <glob...>
     --language=<lang>                           -- force language (otherwise auto-detected)
     --json                                      -- JSON output instead of TOON
 ```
@@ -49,7 +49,7 @@ function detection. No graph construction — just a per-file AST walk.
 Calculate code metrics for audit scoping and effort estimation.
 
 ```
-aa metrics <glob...>
+aud metrics <glob...>
     --language=<lang>                           -- force language (otherwise auto-detected)
     --json                                      -- JSON output instead of TOON
 ```
@@ -188,9 +188,9 @@ walked independently.
 
 The following may be added later:
 
-- **`aa diff <ref1> <ref2>`** — git diff with optional signature-level
+- **`aud diff <ref1> <ref2>`** — git diff with optional signature-level
   summarization (function-level changes rather than line-level)
-- **`aa diff-metrics <ref1> <ref2>`** — metrics computed on the diff between
+- **`aud diff-metrics <ref1> <ref2>`** — metrics computed on the diff between
   two git refs for incremental audit scoping
 
 These are deferred until their value over standard git tooling is validated.

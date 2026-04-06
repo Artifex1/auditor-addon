@@ -1,10 +1,10 @@
 const std = @import("std");
-const aa = @import("aa");
+const aud = @import("aud");
 
-const graph = aa.graph;
-const pipeline = aa.pipeline;
-const cfg = aa.cfg;
-const metrics_mod = aa.metrics;
+const graph = aud.graph;
+const pipeline = aud.pipeline;
+const cfg = aud.cfg;
+const metrics_mod = aud.metrics;
 const ts = @import("tree-sitter");
 
 // ── Helpers ───────────────────────────────────────────────────────────

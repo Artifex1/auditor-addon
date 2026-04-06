@@ -8,7 +8,7 @@ argument-hint: "<rule idea or vulnerability pattern>"
 
 Rules are `.lua` files. Two deployment modes:
 
-- **Shipped rules** (`rules/`): bundled with the tool. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`. Run automatically on `aa run` for applicable languages.
+- **Shipped rules** (`rules/`): bundled with the tool. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`. Run automatically on `aud run` for applicable languages.
 - **Adhoc rules** (any `.lua` file or inline string): per-engagement rules. Load at runtime via `--rule-path=<file>` or `--rule-inline=<lua_code>`. CUSTOM- prefix is conventional.
 
 Both use the exact same Lua interface.
@@ -218,7 +218,7 @@ CLI filter: `--confidence=issue,smell` runs only rules at those confidence level
 For quick one-off scans, use `--rule-inline` to avoid writing a file:
 
 ```bash
-aa run "src/**/*.sol" --rule-inline='
+aud run "src/**/*.sol" --rule-inline='
 rule = {id="X",name="assembly-use",severity="medium",type="scope",languages={"solidity"}}
 function enter(node, ctx)
   if node.kind == "assembly_statement" then
@@ -232,7 +232,7 @@ end'
 Test a shipped or custom rule by running it against a fixture file:
 
 ```bash
-aa run tests/solidity/fixtures/Vault.sol --rule-path=./rules/SOL-002-reentrancy.lua --json
+aud run tests/solidity/fixtures/Vault.sol --rule-path=./rules/SOL-002-reentrancy.lua --json
 ```
 
 Every rule needs a positive case (the pattern is present and flagged) and a negative case (the safe variant produces no findings). For shipped rules, add Zig integration tests in `tests/<lang>/integration_test.zig`.

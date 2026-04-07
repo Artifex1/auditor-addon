@@ -188,7 +188,7 @@ test "findRoots: callable with no incoming calls is root" {
     var targets: std.ArrayListUnmanaged(u64) = .empty;
     try targets.append(std.testing.allocator, b_id);
     try g.addRef(.{
-        .id = graph.refId("test.sol", 10),
+        .id = graph.refId("test.sol", 10, 20, .call),
         .from = a_id,
         .kind = .call,
         .target_name = "B",

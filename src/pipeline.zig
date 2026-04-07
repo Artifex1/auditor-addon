@@ -41,8 +41,11 @@ pub const Pipeline = struct {
         const parser = ts.Parser.create();
         try parser.setLanguage(lang_config.language.grammarFn()());
 
+        var g = graph.SymbolGraph.init(allocator);
+        g.inheritance_strategy = lang_config.inheritance_strategy;
+
         return .{
-            .graph = graph.SymbolGraph.init(allocator),
+            .graph = g,
             .allocator = allocator,
             .lang_config = lang_config,
             .parser = parser,
@@ -243,6 +246,14 @@ pub const Pipeline = struct {
         for (lc.events) |mapping| {
             if (std.mem.eql(u8, kind, mapping.ts_type)) {
                 try self.processEvent(node, source, file_path, mapping);
+                return;
+            }
+        }
+
+        // Check custom errors
+        for (lc.errors) |mapping| {
+            if (std.mem.eql(u8, kind, mapping.ts_type)) {
+                try self.processError(node, source, file_path, mapping);
                 return;
             }
         }
@@ -481,6 +492,32 @@ pub const Pipeline = struct {
         }
     }
 
+    fn processError(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ErrorMapping) !void {
+        const name = self.nodeText(node, source, mapping.name_field) orelse return;
+        const line = node.startPoint().row + 1;
+        const id = graph.nodeId(name, file_path, line);
+        const container_id = self.currentContainer();
+        const qualified = try self.buildQualifiedName(name);
+
+        const gn = try self.graph.addNode(.{
+            .id = id,
+            .kind = .custom_error,
+            .language_kind = node.kind(),
+            .name = name,
+            .qualified_name = qualified,
+            .container = container_id,
+            .language = self.lang_config.language,
+            .ast_node = node,
+            .locator = self.makeLocator(node, file_path),
+        });
+
+        try self.extractProperties(node, source, mapping.properties, gn);
+
+        if (container_id) |cid| {
+            try self.graph.addContains(cid, id);
+        }
+    }
+
     // ── Reference Processors ─────────────────────────────────────────
 
     fn processCallExpression(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8) !void {
@@ -488,7 +525,7 @@ pub const Pipeline = struct {
         const callee_node = node.childByFieldName(lc.call_expression.function_field) orelse return;
 
         // Extract target name — rightmost identifier for member calls, bare for simple
-        const target_name = unwrap(callee_node, source, self.lang_config, .callee) orelse return;
+        const target_name = cfg.unwrap(callee_node, source, self.lang_config, .callee) orelse return;
 
         // Filter builtins
         if (self.isBuiltin(target_name, callee_node, source)) return;
@@ -524,7 +561,7 @@ pub const Pipeline = struct {
         const target_node = node.childByFieldName(wp.target_field) orelse return;
 
         // Unwrap to root identifier (§4.2)
-        const root_name = unwrap(target_node, source, self.lang_config, .receiver) orelse return;
+        const root_name = cfg.unwrap(target_node, source, self.lang_config, .receiver) orelse return;
         try self.addReference(root_name, .state_write, node, file_path);
 
         // Also record the read side for augmented assignments
@@ -559,7 +596,7 @@ pub const Pipeline = struct {
 
         const from = self.currentFile() orelse return;
         try self.graph.addRef(.{
-            .id = graph.refIdWithKind(file_path, node.startByte(), .import),
+            .id = graph.refId(file_path, node.startByte(), node.endByte(), .import),
             .from = from,
             .target_name = import_path,
             .site = self.makeLocator(node, file_path),
@@ -567,35 +604,6 @@ pub const Pipeline = struct {
             .targets = .empty,
             .resolved = false,
         });
-    }
-
-    // ── Expression Unwrapping (§4.2) ─────────────────────────────────
-
-    pub fn unwrap(node: ts.Node, source: []const u8, lang_config: *const cfg.LanguageConfig, context: cfg.UnwrapContext) ?[]const u8 {
-        var current = node;
-        while (true) {
-            const node_type = current.kind();
-            if (std.mem.eql(u8, node_type, lang_config.identifier_type)) {
-                return source[current.startByte()..current.endByte()];
-            }
-            // Leaf named node (e.g. field_identifier) — treat as terminal
-            if (current.namedChildCount() == 0 and current.startByte() < current.endByte()) {
-                return source[current.startByte()..current.endByte()];
-            }
-            var matched = false;
-            for (lang_config.unwrap_table) |rule| {
-                if (rule.context != context) continue;
-                if (std.mem.eql(u8, node_type, rule.ts_type)) {
-                    current = if (rule.child_field) |f|
-                        current.childByFieldName(f) orelse return null
-                    else
-                        current.namedChild(0) orelse return null;
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) return null;
-        }
     }
 
     // ── Import Expansion (§3.4) ──────────────────────────────────────
@@ -638,6 +646,9 @@ pub const Pipeline = struct {
     // ── Resolution Phase (§4.1) ──────────────────────────────────────
 
     pub fn resolve(self: *Pipeline) !void {
+        // Wire source text for resolve hooks (e.g., super-call detection)
+        self.graph.sources = &self.sources;
+
         // Step 1: Resolve imports and inheritance refs
         for (self.graph.refs.items) |*ref| {
             if (ref.resolved) continue;
@@ -666,7 +677,7 @@ pub const Pipeline = struct {
 
             // Language-specific resolve hook runs first
             if (self.lang_config.resolve_hook) |hook| {
-                hook(ref, &self.graph);
+                hook(ref, &self.graph, self.lang_config, self.allocator);
                 if (ref.resolved) continue;
             }
 
@@ -678,10 +689,13 @@ pub const Pipeline = struct {
 
             switch (ref.kind) {
                 .call => {
-                    if (self.resolveInScope(container_id, ref.target_name, .callable)) |result| {
+                    if (self.graph.resolveInScope(container_id, ref.target_name, .callable)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                         ref.target_kind = .internal;
                         if (result.ambiguous) ref.gap = .low;
+                    } else if (self.graph.resolveInScope(container_id, ref.target_name, .custom_error)) |result| {
+                        try ref.addTarget(self.allocator, result.node.id);
+                        ref.target_kind = .internal;
                     } else {
                         ref.gap = .medium;
                     }
@@ -689,7 +703,7 @@ pub const Pipeline = struct {
                 },
                 .state_read => {
                     // §4.1: state_read → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |result| {
+                    if (self.graph.resolveInScope(container_id, ref.target_name, .variable)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                     }
                     // else: drop — likely a local or parameter
@@ -697,13 +711,13 @@ pub const Pipeline = struct {
                 },
                 .state_write => {
                     // §4.1: state_write → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .variable)) |result| {
+                    if (self.graph.resolveInScope(container_id, ref.target_name, .variable)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                     }
                     ref.resolved = true;
                 },
                 .modifier_use => {
-                    if (self.resolveInScope(container_id, ref.target_name, .modifier)) |result| {
+                    if (self.graph.resolveInScope(container_id, ref.target_name, .modifier)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                     } else {
                         ref.gap = .high;
@@ -712,7 +726,7 @@ pub const Pipeline = struct {
                 },
                 .event_emit => {
                     // §4.1: event_emit → target or drop (no gap)
-                    if (self.resolveInScope(container_id, ref.target_name, .event)) |result| {
+                    if (self.graph.resolveInScope(container_id, ref.target_name, .event)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                     }
                     ref.resolved = true;
@@ -723,152 +737,6 @@ pub const Pipeline = struct {
 
         // Build site index for O(1) ref lookups
         try self.graph.buildSiteIndex();
-    }
-
-    const ResolveResult = struct {
-        node: *graph.GraphNode,
-        ambiguous: bool,
-    };
-
-    /// Scoped resolution: check own container, then walk inheritance chain (§4.1, §4.3).
-    fn resolveInScope(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
-        // Check own container first
-        const matches = self.graph.lookupChildrenByName(container_id, name, expected_kind, self.allocator) catch return null;
-        defer self.allocator.free(matches);
-        if (matches.len > 0) {
-            return .{ .node = matches[0], .ambiguous = matches.len > 1 };
-        }
-
-        // Walk parents per inheritance strategy (§4.3)
-        switch (self.lang_config.inheritance_strategy) {
-            .c3_linearization => return self.resolveC3(container_id, name, expected_kind),
-            .single_chain => return self.resolveSingleChain(container_id, name, expected_kind),
-            .flat => return null, // no inheritance chain
-            .embedded_promotion => return self.resolveEmbedded(container_id, name, expected_kind),
-        }
-    }
-
-    /// C3 linearization (Solidity, Python): right-to-left depth-first, deduplicated.
-    /// `contract C is A, B` → check B first, then A (right-to-left).
-    /// Recurses into each parent's chain depth-first.
-    fn resolveC3(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
-        var mro = self.computeC3Mro(container_id) catch return null;
-        defer mro.deinit(self.allocator);
-        // Skip index 0 — that's the container itself, already checked by the caller
-        for (mro.items[1..]) |parent_id| {
-            const matches = self.graph.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
-            defer self.allocator.free(matches);
-            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
-        }
-        return null;
-    }
-
-    /// Computes the C3 linearization MRO for container_id.
-    /// Returns a list starting with container_id itself, followed by parents in MRO order.
-    fn computeC3Mro(self: *Pipeline, container_id: u64) !std.ArrayList(u64) {
-        const ally = self.allocator;
-        var result: std.ArrayList(u64) = .empty;
-        try result.append(ally, container_id);
-
-        const parents = try self.graph.getResolvedInheritanceTargets(container_id, ally);
-        defer ally.free(parents);
-        if (parents.len == 0) return result;
-
-        // Build linearization lists for each parent, plus the parents list itself
-        var lists: std.ArrayList(std.ArrayList(u64)) = .empty;
-        defer {
-            for (lists.items) |*l| l.deinit(ally);
-            lists.deinit(ally);
-        }
-        for (parents) |pid| {
-            const parent_mro = try self.computeC3Mro(pid);
-            try lists.append(ally, parent_mro);
-        }
-        // Append the parents list itself as the final merge input
-        var parents_list: std.ArrayList(u64) = .empty;
-        try parents_list.appendSlice(ally, parents);
-        try lists.append(ally, parents_list);
-
-        // C3 merge
-        while (true) {
-            // Check if all lists are empty
-            var all_empty = true;
-            for (lists.items) |l| {
-                if (l.items.len > 0) { all_empty = false; break; }
-            }
-            if (all_empty) break;
-
-            // Find a good head: head of some list that does not appear in the tail of any other
-            var good_head: ?u64 = null;
-            for (lists.items) |candidate_list| {
-                if (candidate_list.items.len == 0) continue;
-                const head = candidate_list.items[0];
-                var in_tail = false;
-                for (lists.items) |other| {
-                    if (other.items.len <= 1) continue;
-                    for (other.items[1..]) |tail_id| {
-                        if (tail_id == head) { in_tail = true; break; }
-                    }
-                    if (in_tail) break;
-                }
-                if (!in_tail) { good_head = head; break; }
-            }
-            // Inconsistent hierarchy — bail out with what we have
-            const head = good_head orelse break;
-            try result.append(ally, head);
-            // Remove head from the front of every list that starts with it
-            for (lists.items) |*l| {
-                if (l.items.len > 0 and l.items[0] == head) {
-                    _ = l.orderedRemove(0);
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /// Single chain (Java): one parent class + interfaces.
-    /// Walk the single parent chain upward; interface methods are not inherited.
-    fn resolveSingleChain(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
-        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
-        defer self.allocator.free(parents);
-
-        // First inheritance target is the parent class
-        if (parents.len > 0) {
-            const parent_id = parents[0];
-            const matches = self.graph.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
-            defer self.allocator.free(matches);
-            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
-            return self.resolveSingleChain(parent_id, name, expected_kind);
-        }
-        return null;
-    }
-
-    /// Embedded promotion (Go): shallowest embedding wins.
-    /// Check all immediate parents; if exactly one matches, return it.
-    /// If multiple match at same depth, it's ambiguous — skip.
-    fn resolveEmbedded(self: *Pipeline, container_id: u64, name: []const u8, expected_kind: graph.NodeKind) ?ResolveResult {
-        const parents = self.graph.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
-        defer self.allocator.free(parents);
-
-        var found: ?*graph.GraphNode = null;
-        for (parents) |parent_id| {
-            if (self.graph.lookupChildByName(parent_id, name, expected_kind)) |match| {
-                if (found != null) return null; // ambiguous across parents
-                found = match;
-            }
-        }
-        if (found) |f| return .{ .node = f, .ambiguous = false };
-
-        // Recurse deeper
-        var deep_result: ?ResolveResult = null;
-        for (parents) |parent_id| {
-            if (self.resolveEmbedded(parent_id, name, expected_kind)) |match| {
-                if (deep_result != null) return null; // ambiguous across parents
-                deep_result = match;
-            }
-        }
-        return deep_result;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -999,7 +867,7 @@ pub const Pipeline = struct {
     }
 
     fn extractReceiverName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        return unwrap(callee_node, source, self.lang_config, .receiver);
+        return cfg.unwrap(callee_node, source, self.lang_config, .receiver);
     }
 
     fn extractIdentifierText(self: *const Pipeline, node: ts.Node, source: []const u8) ?[]const u8 {
@@ -1019,7 +887,7 @@ pub const Pipeline = struct {
             if (std.mem.eql(u8, callee_name, builtin)) return true;
         }
         // Check builtin receivers (e.g., msg.sender → "msg" is builtin)
-        if (unwrap(callee_node, source, self.lang_config, .receiver)) |receiver| {
+        if (cfg.unwrap(callee_node, source, self.lang_config, .receiver)) |receiver| {
             for (self.lang_config.builtin_receivers) |builtin| {
                 if (std.mem.eql(u8, receiver, builtin)) return true;
             }
@@ -1048,13 +916,14 @@ pub const Pipeline = struct {
     fn addReference(self: *Pipeline, target_name: []const u8, kind: graph.RefKind, node: ts.Node, file_path: []const u8) !void {
         const from = self.currentScope() orelse return;
         try self.graph.addRef(.{
-            .id = graph.refIdWithKind(file_path, node.startByte(), kind),
+            .id = graph.refId(file_path, node.startByte(), node.endByte(), kind),
             .from = from,
             .target_name = target_name,
             .site = self.makeLocator(node, file_path),
             .kind = kind,
             .targets = .empty,
             .resolved = false,
+            .ast_node = node,
         });
     }
 

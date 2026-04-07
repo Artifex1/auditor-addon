@@ -179,16 +179,16 @@ test "pipeline: GapScenarios — resolution round-trip" {
         @as([]const u8, fixture_dir ++ "GapScenarios.sol"),
     });
 
-    const resolutions = try resolution.parseResolutionFile(csv, allocator);
+    var diag = resolution.ResolutionDiag.init(allocator);
+    defer diag.deinit();
+    const resolutions = try resolution.parseResolutionFile(csv, allocator, &diag);
     defer allocator.free(resolutions);
 
-    var result = resolution.ResolutionResult.init(allocator);
-    defer result.deinit();
-    try resolution.applyResolutions(&pipe.graph, resolutions, &result);
+    try resolution.applyResolutions(&pipe.graph, resolutions, &diag);
 
-    try std.testing.expectEqual(@as(u32, 1), result.resolved);
-    try std.testing.expectEqual(@as(u32, 0), result.stale);
-    try std.testing.expectEqual(@as(u32, 0), result.broken);
+    try std.testing.expectEqual(@as(u32, 1), diag.resolved_count);
+    try std.testing.expectEqual(@as(usize, 0), diag.stale.items.len);
+    try std.testing.expectEqual(@as(usize, 0), diag.broken.items.len);
 
     // transfer gap should be cleared
     try std.testing.expect(!hasGap(&pipe.graph, "transfer"));

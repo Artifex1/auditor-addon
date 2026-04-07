@@ -45,8 +45,11 @@ function check()
             goto continue
         end
 
-        -- Incomplete NatSpec: flag regardless of visibility
+        -- @inheritdoc delegates docs to parent — suppress all findings
         local combined = table.concat(natspec, "\n")
+        if combined:find("@inheritdoc", 1, true) then goto continue end
+
+        -- Incomplete NatSpec: flag regardless of visibility
         local has_param_tag = combined:find("@param", 1, true) ~= nil
         local has_return_tag = combined:find("@return", 1, true) ~= nil
 

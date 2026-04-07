@@ -17,6 +17,11 @@ function check()
 
         for _, edge in ipairs(reads) do
             if edge.to then
+                -- Skip immutable/constant (bytecode constants, no SLOAD)
+                local mut = graph.get_property(edge.to, "mutability")
+                local con = graph.get_property(edge.to, "constant")
+                if mut or con then goto continue_edge end
+
                 if seen[edge.to] then
                     local var = graph.get_node(edge.to)
                     if var then
@@ -30,6 +35,7 @@ function check()
                     seen[edge.to] = edge
                 end
             end
+            ::continue_edge::
         end
     end
 

@@ -28,7 +28,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
 | 🔬 **sast-pipeline** | Run the SAiST static analysis pipeline | Init scan → Resolve gaps → Run rules (shipped + custom) |
-| ✏️ **rule-authoring** | Author SAiST detection rules | Shallow, deep, and MapRule types with testing patterns |
+| ✏️ **rule-authoring** | Author SAiST detection rules | Scope, deep, and map rule types with testing patterns |
 
 ### How Skills Work
 
@@ -89,7 +89,7 @@ Builds the symbol graph and runs Lua-based detection rules against it. Rules are
 - `--rule-path=<path>` — run an adhoc rule from a `.lua` file
 - `--rule-inline=<lua>` — run an adhoc rule from an inline Lua string
 
-Findings include rule metadata, severity, location, and optional execution paths for deep rules. Supports filtering by severity and kind.
+Findings include rule metadata, confidence, location, and optional execution paths for deep rules. Supports filtering by confidence level (issue, smell, pointer).
 
 ### ℹ️ `aud info`
 

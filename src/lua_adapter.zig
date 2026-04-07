@@ -358,6 +358,9 @@ fn registerGraphApi(lua: *Lua) void {
     lua.pushFunction(zlua.wrap(luaGraphGetRefs));
     lua.setField(-2, "get_refs");
 
+    lua.pushFunction(zlua.wrap(luaGraphGetInheritanceParents));
+    lua.setField(-2, "get_inheritance_parents");
+
     lua.setGlobal("graph");
 }
 
@@ -546,6 +549,21 @@ fn luaGraphGetCallees(lua: *Lua) i32 {
                 pushGraphNodeTable(lua, callee);
                 lua.rawSetIndex(-2, @intCast(i + 1));
             }
+        }
+    }
+    return 1;
+}
+
+fn luaGraphGetInheritanceParents(lua: *Lua) i32 {
+    const id: u64 = @bitCast(lua.toInteger(1) catch return 0);
+    const parents = g_graph.getResolvedInheritanceTargets(id, g_allocator) catch return 0;
+    defer g_allocator.free(parents);
+
+    lua.createTable(@intCast(parents.len), 0);
+    for (parents, 0..) |parent_id, i| {
+        if (g_graph.lookupNode(parent_id)) |parent| {
+            pushGraphNodeTable(lua, parent);
+            lua.rawSetIndex(-2, @intCast(i + 1));
         }
     }
     return 1;

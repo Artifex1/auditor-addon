@@ -29,4 +29,16 @@ contract NatspecTest {
     function _helper() internal pure returns (uint256) {
         return 42;
     }
+
+    /// @inheritdoc ICounter
+    // NOT flagged: docs delegated to parent interface
+    function reset() external {
+        counter = 0;
+    }
+
+    /** @inheritdoc ICounter */
+    // NOT flagged: block comment style @inheritdoc
+    function value() external view returns (uint256) {
+        return counter;
+    }
 }

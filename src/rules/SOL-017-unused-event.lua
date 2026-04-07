@@ -2,42 +2,52 @@ rule = {
     id = "SOL-017",
     name = "unused-event",
     severity = "info",
-    type = "scope",
+    type = "map",
     confidence = "smell",
     languages = {"solidity"},
     description = "Event defined but never emitted. Dead code or missing emit statement.",
 }
 
--- { [name] = {file, line} } — event definitions
-local events = {}
--- { [name] = true } — events seen in emit statements
-local emitted = {}
+function check()
+    local findings = {}
 
-function enter(node, ctx)
-    if node.kind == "event_definition" then
-        local name_node = ast.child_by_field(node.handle, "name")
-        if name_node then
-            local name = ast.text(name_node)
-            events[name] = { file = ctx.current_file, line = node.line }
-        end
-    elseif node.kind == "emit_statement" then
-        local name_node = ast.child_by_field(node.handle, "name")
-        if name_node then
-            emitted[ast.text(name_node)] = true
+    local events = graph.get_nodes_by_kind("event")
+    if #events == 0 then return findings end
+
+    -- First pass: check resolved graph edges (cross-file)
+    local unused = {}
+    for _, ev in ipairs(events) do
+        local incoming = graph.get_incoming_edges(ev.id, "event_emit")
+        if #incoming == 0 then
+            unused[ev.name] = ev
         end
     end
-end
 
-function exit(node, ctx) end
+    if next(unused) == nil then return findings end
 
-function finalize()
-    for name, loc in pairs(events) do
-        if not emitted[name] then
-            report.hit({
-                file = loc.file,
-                line = loc.line,
-                node_text = name,
-            })
+    -- Second pass: scan AST for emit statements (catches unresolved cases)
+    for _, fn in ipairs(graph.get_nodes_by_kind("callable")) do
+        local fn_h = ast.node(fn.id)
+        if not fn_h then goto next_fn end
+
+        for _, em_h in ipairs(ast.find(fn_h, "emit_statement")) do
+            local name_node = ast.child_by_field(em_h, "name")
+            if name_node then
+                local name = ast.text(name_node)
+                if name then unused[name] = nil end
+            end
         end
+
+        ::next_fn::
     end
+
+    for name, ev in pairs(unused) do
+        table.insert(findings, {
+            file = ev.file,
+            line = ev.line,
+            node_text = name,
+        })
+    end
+
+    return findings
 end

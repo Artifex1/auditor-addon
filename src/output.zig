@@ -1,5 +1,6 @@
 const std = @import("std");
 const graph = @import("graph.zig");
+const resolution = @import("resolution.zig");
 
 const Writer = *std.Io.Writer;
 
@@ -375,6 +376,72 @@ pub fn writeJsonCallChains(roots: []const RootChains, writer: Writer) !void {
     try writer.writeAll("]}\n");
 }
 
+// ── TOON: Resolution Diagnostics ─────────────────────────────────────
+
+pub fn writeToonResolutionDiag(diag: *const resolution.ResolutionDiag, writer: Writer) !void {
+    const n_parse = diag.parse_errors.items.len;
+    const n_stale = diag.stale.items.len;
+    const n_broken = diag.broken.items.len;
+
+    try writer.print("resolution{{applied:{d},parse_errors:{d},stale:{d},broken:{d}}}:\n", .{
+        diag.resolved_count, n_parse, n_stale, n_broken,
+    });
+
+    if (n_parse > 0) {
+        try writer.print("  parse_errors[{d}]{{row,reason,raw_line}}:\n", .{n_parse});
+        for (diag.parse_errors.items) |e| {
+            try writer.print("    {d},{s},{s}\n", .{ e.row, @tagName(e.reason), e.raw_line });
+        }
+    }
+
+    if (n_stale > 0) {
+        try writer.print("  stale[{d}]{{row,ref_id,target_name,reason}}:\n", .{n_stale});
+        for (diag.stale.items) |s| {
+            try writer.print("    {d},{x},{s},{s}\n", .{ s.row, s.ref_id, s.target_name, @tagName(s.reason) });
+        }
+    }
+
+    if (n_broken > 0) {
+        try writer.print("  broken[{d}]{{row,ref_id,target_name,target_file,target_line}}:\n", .{n_broken});
+        for (diag.broken.items) |b| {
+            try writer.print("    {d},{x},{s},{s},{d}\n", .{ b.row, b.ref_id, b.target_name, b.target_file, b.target_line });
+        }
+    }
+}
+
+// ── JSON: Resolution Diagnostics ─────────────────────────────────────
+
+pub fn writeJsonResolutionDiag(diag: *const resolution.ResolutionDiag, writer: Writer) !void {
+    try writer.print("{{\"resolution\":{{\"applied\":{d},\"parse_errors\":[", .{diag.resolved_count});
+
+    for (diag.parse_errors.items, 0..) |e, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.print("{{\"row\":{d},\"reason\":\"{s}\",\"raw_line\":", .{ e.row, @tagName(e.reason) });
+        try writeJsonString(writer, e.raw_line);
+        try writer.writeByte('}');
+    }
+
+    try writer.writeAll("],\"stale\":[");
+    for (diag.stale.items, 0..) |s, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.print("{{\"row\":{d},\"ref_id\":\"{x}\",\"target_name\":", .{ s.row, s.ref_id });
+        try writeJsonString(writer, s.target_name);
+        try writer.print(",\"reason\":\"{s}\"}}", .{@tagName(s.reason)});
+    }
+
+    try writer.writeAll("],\"broken\":[");
+    for (diag.broken.items, 0..) |b, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.print("{{\"row\":{d},\"ref_id\":\"{x}\",\"target_name\":", .{ b.row, b.ref_id });
+        try writeJsonString(writer, b.target_name);
+        try writer.writeAll(",\"target_file\":");
+        try writeJsonString(writer, b.target_file);
+        try writer.print(",\"target_line\":{d}}}", .{b.target_line});
+    }
+
+    try writer.writeAll("]}}\n");
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 fn makeTestRef(id: u64, from: u64, target_name: []const u8, kind: graph.RefKind, file: []const u8, line: u32, gap: ?graph.Priority) graph.Reference {
@@ -585,4 +652,68 @@ test "writeJsonGraph outputs nodes, contains, and refs" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\"refs\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "transfer") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"gap\":\"high\"") != null);
+}
+
+test "writeToonResolutionDiag formats all sections" {
+    var diag = resolution.ResolutionDiag.init(std.testing.allocator);
+    defer diag.deinit();
+
+    diag.resolved_count = 1;
+    try diag.parse_errors.append(std.testing.allocator, .{ .row = 5, .raw_line = "bad,line", .reason = .wrong_field_count });
+    try diag.stale.append(std.testing.allocator, .{ .row = 3, .ref_id = 0xa4f2e81b, .target_name = "onlyOwner", .reason = .not_found });
+    try diag.broken.append(std.testing.allocator, .{ .row = 4, .ref_id = 0xc8d4e567, .target_name = "withdraw", .target_file = "src/Missing.sol", .target_line = 99 });
+
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeToonResolutionDiag(&diag, &w);
+    try w.flush();
+
+    const out = buf[0..w.end];
+    try std.testing.expect(std.mem.indexOf(u8, out, "resolution{applied:1,parse_errors:1,stale:1,broken:1}:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "parse_errors[1]{row,reason,raw_line}:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "5,wrong_field_count,bad,line") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "stale[1]{row,ref_id,target_name,reason}:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "a4f2e81b,onlyOwner,not_found") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "broken[1]{row,ref_id,target_name,target_file,target_line}:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "c8d4e567,withdraw,src/Missing.sol,99") != null);
+}
+
+test "writeJsonResolutionDiag produces valid structure" {
+    var diag = resolution.ResolutionDiag.init(std.testing.allocator);
+    defer diag.deinit();
+
+    diag.resolved_count = 2;
+    try diag.stale.append(std.testing.allocator, .{ .row = 3, .ref_id = 0xabc, .target_name = "foo", .reason = .already_resolved });
+    try diag.broken.append(std.testing.allocator, .{ .row = 4, .ref_id = 0xdef, .target_name = "bar", .target_file = "src/X.sol", .target_line = 10 });
+
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeJsonResolutionDiag(&diag, &w);
+    try w.flush();
+
+    const out = buf[0..w.end];
+    try std.testing.expect(std.mem.startsWith(u8, out, "{\"resolution\":{\"applied\":2,"));
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"stale\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"reason\":\"already_resolved\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"broken\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"target_file\":\"src/X.sol\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"target_line\":10") != null);
+}
+
+test "writeToonResolutionDiag omits empty sections" {
+    var diag = resolution.ResolutionDiag.init(std.testing.allocator);
+    defer diag.deinit();
+
+    diag.resolved_count = 3;
+
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeToonResolutionDiag(&diag, &w);
+    try w.flush();
+
+    const out = buf[0..w.end];
+    try std.testing.expect(std.mem.indexOf(u8, out, "resolution{applied:3,parse_errors:0,stale:0,broken:0}:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "parse_errors[") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "stale[") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "broken[") == null);
 }

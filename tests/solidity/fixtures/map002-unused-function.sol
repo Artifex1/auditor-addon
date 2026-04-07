@@ -39,3 +39,16 @@ contract UnusedFunctions {
     // NOT FLAGGED: fallback is exempt
     fallback() external payable {}
 }
+
+contract Base {
+    function _hook() internal virtual returns (uint256) { return 0; }
+    function execute() external returns (uint256) { return _hook(); }
+}
+
+contract Child is Base {
+    // NOT FLAGGED: override of virtual that has callers in parent
+    function _hook() internal override returns (uint256) { return 42; }
+
+    // FLAGGED: truly dead internal
+    function _noOneCallsMe() internal pure returns (uint256) { return 99; }
+}

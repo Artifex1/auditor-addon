@@ -27,4 +27,17 @@ contract DoubleStateReadTest {
         require(limit > 100);
         return limit < 1000;
     }
+
+    uint256 public immutable MAX_SUPPLY;
+    uint256 public constant FEE = 100;
+
+    // NOT FLAGGED: immutable variable, compiled into bytecode (no SLOAD)
+    function checkMax() external view returns (bool) {
+        return MAX_SUPPLY > 0 && MAX_SUPPLY < 1e18;
+    }
+
+    // NOT FLAGGED: constant variable, compiled into bytecode (no SLOAD)
+    function checkFee() external view returns (bool) {
+        return FEE > 0 && FEE < 1000;
+    }
 }

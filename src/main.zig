@@ -361,7 +361,7 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     pipe.graph.scoped_files = &pipe.scoped_files;
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator, use_json);
     }
 
     var buf: [8192]u8 = undefined;
@@ -415,7 +415,7 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
 
     // Apply resolutions if provided
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator, use_json);
     }
 
     // Arena for all rule execution allocations (Lua string dups, hits, metadata)
@@ -574,7 +574,7 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
     pipe.graph.scoped_files = &pipe.scoped_files;
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator, use_json);
     }
 
     const chain_results = try call_chains.computeCallChains(&pipe.graph, root_filter, max_depth, allocator);
@@ -647,7 +647,7 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
     try pipe.run(files, false);
 
     if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator);
+        try applyResolutionFile(&pipe, res_path, allocator, use_json);
     }
 
     var buf: [8192]u8 = undefined;
@@ -733,19 +733,23 @@ fn applyResolutionFile(
     pipe: *pipeline.Pipeline,
     res_path: []const u8,
     allocator: std.mem.Allocator,
+    use_json: bool,
 ) !void {
     const res_contents = try readFileContents(res_path, allocator);
     defer allocator.free(res_contents);
 
-    const resolutions = try resolution.parseResolutionFile(res_contents, allocator);
+    var diag = resolution.ResolutionDiag.init(allocator);
+    defer diag.deinit();
+
+    const resolutions = try resolution.parseResolutionFile(res_contents, allocator, &diag);
     defer allocator.free(resolutions);
 
     // Pre-parse resolution target files not yet in graph
     var parsed_new = false;
-    for (resolutions) |res| {
-        if (!pipe.walked_files.contains(res.target_file)) {
-            std.fs.cwd().access(res.target_file, .{}) catch continue;
-            try pipe.parseAndWalkFile(res.target_file);
+    for (resolutions) |pr| {
+        if (!pipe.walked_files.contains(pr.res.target_file)) {
+            std.fs.cwd().access(pr.res.target_file, .{}) catch continue;
+            try pipe.parseAndWalkFile(pr.res.target_file);
             parsed_new = true;
         }
     }
@@ -755,23 +759,19 @@ fn applyResolutionFile(
         try pipe.resolve();
     }
 
-    var result = resolution.ResolutionResult.init(allocator);
-    defer result.deinit();
+    try resolution.applyResolutions(&pipe.graph, resolutions, &diag);
 
-    try resolution.applyResolutions(&pipe.graph, resolutions, &result);
-
-    var buf: [1024]u8 = undefined;
-    var w = std.fs.File.stderr().writer(&buf);
-    if (result.stale > 0) {
-        try w.interface.print("warning: {d} stale resolution(s)\n", .{result.stale});
+    // Write structured diagnostics to stderr
+    if (diag.hasDiagnostics() or diag.resolved_count > 0) {
+        var buf: [8192]u8 = undefined;
+        var w = std.fs.File.stderr().writer(&buf);
+        if (use_json) {
+            try output.writeJsonResolutionDiag(&diag, &w.interface);
+        } else {
+            try output.writeToonResolutionDiag(&diag, &w.interface);
+        }
+        try w.interface.flush();
     }
-    if (result.broken > 0) {
-        try w.interface.print("error: {d} broken resolution(s)\n", .{result.broken});
-    }
-    if (result.resolved > 0) {
-        try w.interface.print("applied: {d} resolution(s)\n", .{result.resolved});
-    }
-    try w.interface.flush();
 }
 
 fn detectLanguage(file_path: []const u8) ?cfg.Language {

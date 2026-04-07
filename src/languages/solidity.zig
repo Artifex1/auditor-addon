@@ -15,6 +15,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "function_definition", .name_field = "name", .body_field = "body", .properties = &.{
             .{ .key = "visibility", .child_type = "visibility" },
             .{ .key = "mutability", .child_type = "state_mutability" },
+            .{ .key = "override", .child_type = "override_specifier" },
+            .{ .key = "virtual", .child_type = "virtual" },
         } },
         .{ .ts_type = "modifier_definition", .name_field = "name", .body_field = "body" },
         .{ .ts_type = "constructor_definition", .name_field = null, .body_field = "body" },
@@ -24,12 +26,18 @@ pub const config = cfg.LanguageConfig{
     .variables = &.{
         .{ .ts_type = "state_variable_declaration", .name_field = "name", .type_field = "type", .properties = &.{
             .{ .key = "visibility", .child_type = "visibility" },
+            .{ .key = "mutability", .child_type = "immutable" },
+            .{ .key = "constant", .child_type = "constant" },
         } },
     },
 
     .modifiers = &.{},
     .events = &.{
         .{ .ts_type = "event_definition", .name_field = "name" },
+    },
+
+    .errors = &.{
+        .{ .ts_type = "error_declaration", .name_field = "name" },
     },
 
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
@@ -99,11 +107,15 @@ fn solidityCustomHandler(_: *graph.SymbolGraph, node: ts.Node, _: []const u8) vo
 
 const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delegatecall", "staticcall" };
 
-/// Solidity resolve hook: external low-level calls (.call, .send, .transfer,
-/// .delegatecall, .staticcall) mark the reference as external with a low-priority gap.
-fn solidityResolveHook(ref: *graph.Reference, _: *const graph.SymbolGraph) void {
+/// Solidity resolve hook:
+/// 1. External low-level calls (.call, .send, .transfer, .delegatecall, .staticcall)
+///    → mark as external with low-priority gap.
+/// 2. Super-qualified calls (super.foo()) → resolve in parent containers only,
+///    skipping the current contract to avoid resolving to the local override.
+fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const cfg.LanguageConfig, allocator: std.mem.Allocator) void {
     if (ref.kind != .call) return;
 
+    // External low-level calls
     for (&external_call_methods) |ecm| {
         if (std.mem.eql(u8, ref.target_name, ecm)) {
             ref.target_kind = .external;
@@ -112,6 +124,23 @@ fn solidityResolveHook(ref: *graph.Reference, _: *const graph.SymbolGraph) void 
             return;
         }
     }
+
+    // Super-qualified calls: super.foo() should resolve in parents only
+    const ast_node = ref.ast_node orelse return;
+    const source = g.sourceForFile(ref.site.file) orelse return;
+    const callee_node = ast_node.childByFieldName(lang_config.call_expression.function_field) orelse return;
+    const receiver = cfg.unwrap(callee_node, source, lang_config, .receiver) orelse return;
+    if (!std.mem.eql(u8, receiver, "super")) return;
+
+    const container_id = g.containerOf(ref.from) orelse return;
+    if (g.resolveInParentsOnly(container_id, ref.target_name, .callable)) |result| {
+        ref.addTarget(allocator, result.node.id) catch return;
+        ref.target_kind = .internal;
+        if (result.ambiguous) ref.gap = .low;
+    } else {
+        ref.gap = .medium;
+    }
+    ref.resolved = true;
 }
 
 const std = @import("std");

@@ -11,6 +11,7 @@ pub const NodeKind = enum {
     variable,
     modifier,
     event,
+    custom_error,
 };
 
 // ── §2.4 Reference Types ─────────────────────────────────────────────
@@ -40,7 +41,7 @@ pub const Priority = enum {
 };
 
 pub const Reference = struct {
-    id: u64, // hash(file, start_byte)
+    id: u64, // hash(file, start_byte, end_byte, kind)
     from: u64, // enclosing scope node (callable or container)
     kind: RefKind,
     target_name: []const u8,
@@ -53,6 +54,10 @@ pub const Reference = struct {
     // Gap signal (orthogonal to targets)
     gap: ?Priority = null,
     resolved: bool = false,
+
+    // AST node for the reference site (e.g., the call_expression node).
+    // Enables resolve hooks to inspect syntax (e.g., detect super.foo() qualifier).
+    ast_node: ?ts.Node = null,
 
     pub fn hasTargets(self: *const Reference) bool {
         return self.targets.items.len > 0;
@@ -109,17 +114,11 @@ pub fn nodeId(name: []const u8, file: []const u8, line: u32) u64 {
     return hasher.final();
 }
 
-pub fn refId(file: []const u8, start_byte: u32) u64 {
+pub fn refId(file: []const u8, start_byte: u32, end_byte: u32, kind: RefKind) u64 {
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(file);
     hasher.update(std.mem.asBytes(&start_byte));
-    return hasher.final();
-}
-
-pub fn refIdWithKind(file: []const u8, start_byte: u32, kind: RefKind) u64 {
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(file);
-    hasher.update(std.mem.asBytes(&start_byte));
+    hasher.update(std.mem.asBytes(&end_byte));
     hasher.update(std.mem.asBytes(&kind));
     return hasher.final();
 }
@@ -141,6 +140,12 @@ pub const SymbolGraph = struct {
     // Scope filter: when set, getNodesByKind/gapCount/walker only see scoped files.
     // Non-owning pointer — set by the command after pipeline.run().
     scoped_files: ?*const std.StringHashMapUnmanaged(void) = null,
+
+    // Non-owning pointer to source text keyed by file path — for AST node text extraction.
+    sources: ?*const std.StringHashMapUnmanaged([]const u8) = null,
+
+    // Inheritance strategy — controls how resolveInScope walks parent chains.
+    inheritance_strategy: config.InheritanceStrategy = .flat,
 
     pub fn init(backing_allocator: std.mem.Allocator) SymbolGraph {
         return .{
@@ -418,6 +423,172 @@ pub const SymbolGraph = struct {
         const scope = self.scoped_files orelse return true;
         return scope.contains(ref.site.file);
     }
+
+    // ── Source Text ──────────────────────────────────────────────────
+
+    /// Get text for a tree-sitter node by slicing the source buffer for its file.
+    pub fn nodeText(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
+        const srcs = self.sources orelse return null;
+        var it = srcs.iterator();
+        while (it.next()) |entry| {
+            const source = entry.value_ptr.*;
+            const start = node.startByte();
+            const end = node.endByte();
+            if (end <= source.len) {
+                return source[start..end];
+            }
+        }
+        return null;
+    }
+
+    /// Look up the source text for a file by path.
+    pub fn sourceForFile(self: *const SymbolGraph, file: []const u8) ?[]const u8 {
+        const srcs = self.sources orelse return null;
+        return srcs.get(file);
+    }
+
+    // ── Resolution (§4.1, §4.3) ─────────────────────────────────────
+
+    pub const ResolveResult = struct {
+        node: *GraphNode,
+        ambiguous: bool,
+    };
+
+    /// Scoped resolution: check own container, then walk inheritance chain.
+    pub fn resolveInScope(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        // Check own container first
+        const matches = self.lookupChildrenByName(container_id, name, expected_kind, self.allocator) catch return null;
+        defer self.allocator.free(matches);
+        if (matches.len > 0) {
+            return .{ .node = matches[0], .ambiguous = matches.len > 1 };
+        }
+
+        return self.resolveInParents(container_id, name, expected_kind);
+    }
+
+    /// Resolve in parent containers only (skips own container).
+    /// Used for super-qualified calls.
+    pub fn resolveInParentsOnly(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        return self.resolveInParents(container_id, name, expected_kind);
+    }
+
+    fn resolveInParents(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        switch (self.inheritance_strategy) {
+            .c3_linearization => return self.resolveC3(container_id, name, expected_kind),
+            .single_chain => return self.resolveSingleChain(container_id, name, expected_kind),
+            .flat => return null,
+            .embedded_promotion => return self.resolveEmbedded(container_id, name, expected_kind),
+        }
+    }
+
+    /// C3 linearization (Solidity, Python): right-to-left depth-first, deduplicated.
+    fn resolveC3(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        var mro = self.computeC3Mro(container_id) catch return null;
+        defer mro.deinit(self.allocator);
+        // Skip index 0 — that's the container itself, already checked by the caller
+        for (mro.items[1..]) |parent_id| {
+            const matches = self.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
+            defer self.allocator.free(matches);
+            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
+        }
+        return null;
+    }
+
+    /// Computes the C3 linearization MRO for container_id.
+    fn computeC3Mro(self: *const SymbolGraph, container_id: u64) !std.ArrayList(u64) {
+        const ally = self.allocator;
+        var result: std.ArrayList(u64) = .empty;
+        try result.append(ally, container_id);
+
+        const parents = try self.getResolvedInheritanceTargets(container_id, ally);
+        defer ally.free(parents);
+        if (parents.len == 0) return result;
+
+        var lists: std.ArrayList(std.ArrayList(u64)) = .empty;
+        defer {
+            for (lists.items) |*l| l.deinit(ally);
+            lists.deinit(ally);
+        }
+        for (parents) |pid| {
+            const parent_mro = try self.computeC3Mro(pid);
+            try lists.append(ally, parent_mro);
+        }
+        var parents_list: std.ArrayList(u64) = .empty;
+        try parents_list.appendSlice(ally, parents);
+        try lists.append(ally, parents_list);
+
+        // C3 merge
+        while (true) {
+            var all_empty = true;
+            for (lists.items) |l| {
+                if (l.items.len > 0) { all_empty = false; break; }
+            }
+            if (all_empty) break;
+
+            var good_head: ?u64 = null;
+            for (lists.items) |candidate_list| {
+                if (candidate_list.items.len == 0) continue;
+                const head = candidate_list.items[0];
+                var in_tail = false;
+                for (lists.items) |other| {
+                    if (other.items.len <= 1) continue;
+                    for (other.items[1..]) |tail_id| {
+                        if (tail_id == head) { in_tail = true; break; }
+                    }
+                    if (in_tail) break;
+                }
+                if (!in_tail) { good_head = head; break; }
+            }
+            const head = good_head orelse break;
+            try result.append(ally, head);
+            for (lists.items) |*l| {
+                if (l.items.len > 0 and l.items[0] == head) {
+                    _ = l.orderedRemove(0);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// Single chain (Java): one parent class + interfaces.
+    fn resolveSingleChain(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        const parents = self.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
+        defer self.allocator.free(parents);
+
+        if (parents.len > 0) {
+            const parent_id = parents[0];
+            const matches = self.lookupChildrenByName(parent_id, name, expected_kind, self.allocator) catch return null;
+            defer self.allocator.free(matches);
+            if (matches.len > 0) return .{ .node = matches[0], .ambiguous = matches.len > 1 };
+            return self.resolveSingleChain(parent_id, name, expected_kind);
+        }
+        return null;
+    }
+
+    /// Embedded promotion (Go): shallowest embedding wins.
+    fn resolveEmbedded(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
+        const parents = self.getResolvedInheritanceTargets(container_id, self.allocator) catch return null;
+        defer self.allocator.free(parents);
+
+        var found: ?*GraphNode = null;
+        for (parents) |parent_id| {
+            if (self.lookupChildByName(parent_id, name, expected_kind)) |match| {
+                if (found != null) return null; // ambiguous
+                found = match;
+            }
+        }
+        if (found) |f| return .{ .node = f, .ambiguous = false };
+
+        var deep_result: ?ResolveResult = null;
+        for (parents) |parent_id| {
+            if (self.resolveEmbedded(parent_id, name, expected_kind)) |match| {
+                if (deep_result != null) return null; // ambiguous
+                deep_result = match;
+            }
+        }
+        return deep_result;
+    }
 };
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -437,20 +608,34 @@ test "nodeId differs for different inputs" {
 }
 
 test "refId is deterministic" {
-    const id1 = refId("src/Vault.sol", 100);
-    const id2 = refId("src/Vault.sol", 100);
+    const id1 = refId("src/Vault.sol", 100, 150, .call);
+    const id2 = refId("src/Vault.sol", 100, 150, .call);
     try std.testing.expectEqual(id1, id2);
 }
 
 test "refId differs for different byte offsets" {
-    const id1 = refId("src/Vault.sol", 100);
-    const id2 = refId("src/Vault.sol", 200);
+    const id1 = refId("src/Vault.sol", 100, 150, .call);
+    const id2 = refId("src/Vault.sol", 200, 250, .call);
     try std.testing.expect(id1 != id2);
 }
 
 test "refId differs for different files" {
-    const id1 = refId("src/Vault.sol", 100);
-    const id2 = refId("src/Ownable.sol", 100);
+    const id1 = refId("src/Vault.sol", 100, 150, .call);
+    const id2 = refId("src/Ownable.sol", 100, 150, .call);
+    try std.testing.expect(id1 != id2);
+}
+
+test "refId differs for nested calls with same start_byte" {
+    // Inner call: IERC20(asset()) — start=100, end=115
+    const id1 = refId("src/Vault.sol", 100, 115, .call);
+    // Outer call: IERC20(asset()).balanceOf(...) — start=100, end=150
+    const id2 = refId("src/Vault.sol", 100, 150, .call);
+    try std.testing.expect(id1 != id2);
+}
+
+test "refId differs for different kinds at same span" {
+    const id1 = refId("src/Vault.sol", 100, 150, .call);
+    const id2 = refId("src/Vault.sol", 100, 150, .state_write);
     try std.testing.expect(id1 != id2);
 }
 
@@ -520,7 +705,7 @@ test "Reference lifecycle: pending → resolved with target" {
     defer g.deinit();
 
     var ref = Reference{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
         .target_name = "withdraw",
@@ -544,7 +729,7 @@ test "Reference lifecycle: pending → resolved with target" {
 
 test "Reference lifecycle: pending → gap" {
     const ref = Reference{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
         .target_name = "onlyOwner",
@@ -564,7 +749,7 @@ test "Reference lifecycle: provisional (target + gap)" {
     defer g.deinit();
 
     var ref = Reference{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
         .target_name = "call",
@@ -584,7 +769,7 @@ test "Reference lifecycle: provisional (target + gap)" {
 
 test "Reference multi-target (dynamic dispatch)" {
     var ref = Reference{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
         .target_name = "withdraw",
@@ -607,7 +792,7 @@ test "SymbolGraph addRef and site_index lookup" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
-    const rid = refId("test.sol", 50);
+    const rid = refId("test.sol", 50, 70, .call);
     try g.addRef(.{
         .id = rid,
         .from = 1,
@@ -625,8 +810,53 @@ test "SymbolGraph addRef and site_index lookup" {
     try std.testing.expectEqualStrings("withdraw", found.?.target_name);
 
     // Not found
-    const missing = g.lookupRef(refId("other.sol", 50));
+    const missing = g.lookupRef(refId("other.sol", 50, 70, .call));
     try std.testing.expect(missing == null);
+}
+
+test "nested call_expressions at same start_byte are both reachable in site_index" {
+    // Regression: IERC20(asset()).balanceOf(...) produces two call_expression nodes
+    // that share start_byte. Before the fix, buildSiteIndex would overwrite the first.
+    var g = SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // Inner call: IERC20(asset()) — start=100, end=115
+    const rid_inner = refId("src/Vault.sol", 100, 115, .call);
+    try g.addRef(.{
+        .id = rid_inner,
+        .from = 1,
+        .kind = .call,
+        .target_name = "IERC20",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 115, .line = 77, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    // Outer call: IERC20(asset()).balanceOf(address(this)) — start=100, end=150
+    const rid_outer = refId("src/Vault.sol", 100, 150, .call);
+    try g.addRef(.{
+        .id = rid_outer,
+        .from = 1,
+        .kind = .call,
+        .target_name = "balanceOf",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 150, .line = 77, .column = 0 },
+        .targets = .empty,
+        .gap = .medium,
+        .resolved = true,
+    });
+
+    try std.testing.expect(rid_inner != rid_outer);
+
+    try g.buildSiteIndex();
+
+    // Both must be independently reachable
+    const inner = g.lookupRef(rid_inner);
+    const outer = g.lookupRef(rid_outer);
+    try std.testing.expect(inner != null);
+    try std.testing.expect(outer != null);
+    try std.testing.expectEqualStrings("IERC20", inner.?.target_name);
+    try std.testing.expectEqualStrings("balanceOf", outer.?.target_name);
 }
 
 test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
@@ -637,7 +867,7 @@ test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
     var ref1_targets: std.ArrayListUnmanaged(u64) = .empty;
     try ref1_targets.append(std.testing.allocator, 10);
     try g.addRef(.{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 60, .call),
         .from = 1,
         .kind = .call,
         .target_name = "foo",
@@ -650,7 +880,7 @@ test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
     var ref2_targets: std.ArrayListUnmanaged(u64) = .empty;
     try ref2_targets.append(std.testing.allocator, 20);
     try g.addRef(.{
-        .id = refId("test.sol", 70),
+        .id = refId("test.sol", 70, 80, .state_write),
         .from = 1,
         .kind = .state_write,
         .target_name = "balance",
@@ -661,7 +891,7 @@ test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
 
     // Unresolved gap (no targets)
     try g.addRef(.{
-        .id = refId("test.sol", 90),
+        .id = refId("test.sol", 90, 100, .call),
         .from = 1,
         .kind = .call,
         .target_name = "bar",
@@ -691,7 +921,7 @@ test "SymbolGraph getIncomingRefs" {
     try targets.append(std.testing.allocator, 10);
 
     try g.addRef(.{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 60, .call),
         .from = 1,
         .kind = .call,
         .target_name = "foo",
@@ -719,7 +949,7 @@ test "SymbolGraph hasIncomingRefs" {
     try targets.append(std.testing.allocator, 10);
 
     try g.addRef(.{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 60, .call),
         .from = 1,
         .kind = .call,
         .target_name = "foo",
@@ -741,7 +971,7 @@ test "SymbolGraph getResolvedInheritanceTargets preserves order" {
     var t1: std.ArrayListUnmanaged(u64) = .empty;
     try t1.append(std.testing.allocator, 100);
     try g.addRef(.{
-        .id = refId("test.sol", 10),
+        .id = refId("test.sol", 10, 20, .inheritance),
         .from = 1,
         .kind = .inheritance,
         .target_name = "A",
@@ -753,7 +983,7 @@ test "SymbolGraph getResolvedInheritanceTargets preserves order" {
     var t2: std.ArrayListUnmanaged(u64) = .empty;
     try t2.append(std.testing.allocator, 200);
     try g.addRef(.{
-        .id = refId("test.sol", 30),
+        .id = refId("test.sol", 30, 40, .inheritance),
         .from = 1,
         .kind = .inheritance,
         .target_name = "B",
@@ -775,7 +1005,7 @@ test "SymbolGraph gapCount counts refs with gap annotation" {
 
     // Gap ref
     try g.addRef(.{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 60, .call),
         .from = 1,
         .kind = .call,
         .target_name = "missing",
@@ -787,7 +1017,7 @@ test "SymbolGraph gapCount counts refs with gap annotation" {
 
     // Resolved (no gap)
     try g.addRef(.{
-        .id = refId("test.sol", 70),
+        .id = refId("test.sol", 70, 80, .call),
         .from = 1,
         .kind = .call,
         .target_name = "found",
@@ -798,7 +1028,7 @@ test "SymbolGraph gapCount counts refs with gap annotation" {
 
     // Provisional (target + gap)
     try g.addRef(.{
-        .id = refId("test.sol", 90),
+        .id = refId("test.sol", 90, 100, .call),
         .from = 1,
         .kind = .call,
         .target_name = "external",
@@ -816,7 +1046,7 @@ test "SymbolGraph lookupRefMut allows mutation" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
-    const rid = refId("test.sol", 50);
+    const rid = refId("test.sol", 50, 60, .call);
     try g.addRef(.{
         .id = rid,
         .from = 1,
@@ -916,8 +1146,8 @@ test "lookupChildByName" {
 
 test "two calls to same target produce different refIds" {
     // This is the key bug the old model had — gapId(from, "transfer", .calls) would collide
-    const id1 = refId("src/Vault.sol", 100); // first call to transfer()
-    const id2 = refId("src/Vault.sol", 200); // second call to transfer()
+    const id1 = refId("src/Vault.sol", 100, 150, .call); // first call to transfer()
+    const id2 = refId("src/Vault.sol", 200, 250, .call); // second call to transfer()
     try std.testing.expect(id1 != id2);
 }
 
@@ -951,7 +1181,7 @@ test "SymbolGraph deinit cleans up all allocations" {
     try targets.append(std.testing.allocator, fn_id);
 
     try g.addRef(.{
-        .id = refId("test.sol", 50),
+        .id = refId("test.sol", 50, 60, .call),
         .from = fn_id,
         .kind = .call,
         .target_name = "withdraw",
@@ -1012,7 +1242,7 @@ test "gapCount respects scoped_files" {
 
     // Two refs with gaps in different files
     try g.addRef(.{
-        .id = refId("src/Scoped.sol", 10),
+        .id = refId("src/Scoped.sol", 10, 20, .call),
         .from = 1,
         .kind = .call,
         .target_name = "transfer",
@@ -1022,7 +1252,7 @@ test "gapCount respects scoped_files" {
         .resolved = true,
     });
     try g.addRef(.{
-        .id = refId("deps/Dep.sol", 10),
+        .id = refId("deps/Dep.sol", 10, 20, .call),
         .from = 2,
         .kind = .call,
         .target_name = "approve",
@@ -1049,7 +1279,7 @@ test "isRefInScope returns true when scope is null" {
     defer g.deinit();
 
     const ref = Reference{
-        .id = refId("any.sol", 10),
+        .id = refId("any.sol", 10, 20, .call),
         .from = 1,
         .kind = .call,
         .target_name = "foo",
@@ -1070,7 +1300,7 @@ test "isRefInScope filters by scoped_files" {
     g.scoped_files = &scope;
 
     const in_scope = Reference{
-        .id = refId("src/In.sol", 10),
+        .id = refId("src/In.sol", 10, 20, .call),
         .from = 1,
         .kind = .call,
         .target_name = "foo",
@@ -1078,7 +1308,7 @@ test "isRefInScope filters by scoped_files" {
         .targets = .empty,
     };
     const out_of_scope = Reference{
-        .id = refId("deps/Out.sol", 10),
+        .id = refId("deps/Out.sol", 10, 20, .call),
         .from = 2,
         .kind = .call,
         .target_name = "bar",

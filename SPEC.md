@@ -24,7 +24,7 @@ edges** (structural parent→child), and **References** (all other relationships
 ```
 GraphNode {
     id:             u64             -- content-addressed hash (see §2.5)
-    kind:           NodeKind        -- taxonomy kind (file, container, callable, variable, modifier, event)
+    kind:           NodeKind        -- taxonomy kind (file, container, callable, variable, modifier, event, custom_error)
     language_kind:  []const u8      -- raw tree-sitter node type (e.g., "contract_declaration")
     name:           []const u8      -- short label (e.g., "withdraw")
     qualified_name: []const u8      -- fully qualified (e.g., "Vault.withdraw")
@@ -61,6 +61,7 @@ GraphNode {
 | `variable`    | state_variable        | attribute       | field               | field          | field             | field           |
 | `modifier`    | modifier              | decorator       | —                   | annotation     | attribute         | attribute       |
 | `event`       | event                 | —               | —                   | —              | —                 | —               |
+| `custom_error`| error                 | —               | —                   | —              | —                 | —               |
 
 Every file parsed becomes a `file` node — the root container for that file's
 declarations. Contracts, classes, and other containers are children of the file
@@ -178,13 +179,15 @@ fn nodeId(name: []const u8, file: []const u8, line: u32) u64 {
 }
 ```
 
-Reference IDs are deterministic hashes of the source location:
+Reference IDs are deterministic hashes of the source location, span, and kind:
 
 ```zig
-fn refId(file: []const u8, start_byte: u32) u64 {
+fn refId(file: []const u8, start_byte: u32, end_byte: u32, kind: RefKind) u64 {
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(file);
     hasher.update(std.mem.asBytes(&start_byte));
+    hasher.update(std.mem.asBytes(&end_byte));
+    hasher.update(std.mem.asBytes(&kind));
     return hasher.final();
 }
 ```
@@ -199,7 +202,9 @@ fn refId(file: []const u8, start_byte: u32) u64 {
   declarations with the same name on the same line in the same file cannot exist.
 
 **Reference ID properties:**
-- **Collision-free**: two AST nodes cannot start at the same byte in the same file.
+- **Collision-free**: hashing (file, start_byte, end_byte, kind) disambiguates
+  nested expressions sharing the same start position (e.g., `IERC20(asset()).balanceOf(...)`)
+  and different reference kinds at the same node.
 - **Not agent-computable**: ref IDs are opaque handles. The agent reads them from
   gaps output and echoes them back in the resolution file.
 
@@ -767,7 +772,7 @@ and any rule that needs to see the full file structure.
 
 Same full-file traversal as scope, but follows resolved call references across
 function boundaries when encountering call expressions. Uses site-based lookup
-(`refId(file, start_byte)` → site_index → reference → targets) for O(1)
+(`refId(file, start_byte, end_byte, kind)` → site_index → reference → targets) for O(1)
 matching of each call expression to its resolved callee(s).
 
 ```
@@ -776,7 +781,7 @@ for each file node in graph:
         update current_node when entering a callable/container/modifier
         call rule.enter(node, ctx)
         on call_expression (if depth < max_depth):
-            ref = site_index.lookup(refId(current_file, node.start_byte))
+            ref = site_index.lookup(refId(current_file, node.start_byte, node.end_byte, .call))
             if ref exists and ref has targets:
                 for each target in ref.targets:
                     if target.node has ast_node and not visited:
@@ -1093,9 +1098,11 @@ gains the target and its gap annotation is cleared.
 - If target node doesn't exist → broken, report error
 - Both are reported as warnings, not fatal errors
 
-The `ref_id` is collision-free (`hash(file, start_byte)`) — two calls to the
+The `ref_id` is collision-free (`hash(file, start_byte, end_byte, kind)`) — two calls to the
 same function from different sites produce different ref_ids and can be resolved
-independently. The agent never computes ref_ids; it reads them from gaps output.
+independently. Nested expressions sharing the same start position (e.g.,
+`IERC20(asset()).balanceOf(...)`) are disambiguated by their end_byte and kind.
+The agent never computes ref_ids; it reads them from gaps output.
 
 CSV is straightforward to parse in Zig without external dependencies.
 

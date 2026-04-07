@@ -145,11 +145,15 @@ fn walkAstNodeDeep(
         if (depth < max_depth) {
             // Follow resolved call references when encountering a call expression
             // or a modifier invocation — both use site-based ref lookup.
-            const is_followable = std.mem.eql(u8, child_kind, call_expression_type) or
-                (modifier_invocation_type != null and std.mem.eql(u8, child_kind, modifier_invocation_type.?));
+            const ref_kind: ?graph.RefKind = if (std.mem.eql(u8, child_kind, call_expression_type))
+                .call
+            else if (modifier_invocation_type != null and std.mem.eql(u8, child_kind, modifier_invocation_type.?))
+                .modifier_use
+            else
+                null;
 
-            if (is_followable) {
-                const rid = graph.refId(updated_ctx.current_file, child.startByte());
+            if (ref_kind) |rk| {
+                const rid = graph.refId(updated_ctx.current_file, child.startByte(), child.endByte(), rk);
                 if (g.lookupRef(rid)) |ref| {
                     for (ref.targets.items) |target| {
                         if (visited.contains(target)) continue;

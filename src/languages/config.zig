@@ -124,6 +124,12 @@ pub const EventMapping = struct {
     properties: []const PropertyExtractor = &.{},
 };
 
+pub const ErrorMapping = struct {
+    ts_type: []const u8,
+    name_field: []const u8,
+    properties: []const PropertyExtractor = &.{},
+};
+
 pub const PropertyExtractor = struct {
     key: []const u8,
     child_type: []const u8,
@@ -194,7 +200,7 @@ pub const MetricsConfig = struct {
 
 pub const CustomHandlerFn = *const fn (*graph.SymbolGraph, ts.Node, []const u8) void;
 
-pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph) void;
+pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const LanguageConfig, allocator: std.mem.Allocator) void;
 
 pub const LanguageConfig = struct {
     language: Language,
@@ -205,6 +211,7 @@ pub const LanguageConfig = struct {
     variables: []const VariableMapping,
     modifiers: []const ModifierMapping,
     events: []const EventMapping,
+    errors: []const ErrorMapping = &.{},
     // Reference detection
     call_expression: CallExpressionMapping,
     inheritance: ?InheritanceMapping = null,
@@ -255,6 +262,37 @@ const java = @import("java.zig");
 const tolk = @import("tolk.zig");
 const masm = @import("masm.zig");
 const compact = @import("compact.zig");
+
+// ── Expression Unwrapping (§4.2) ─────────────────────────────────────
+
+/// Walk unwrap_table rules for the given context to reach a terminal identifier.
+/// Returns the text of the terminal node, or null if no match.
+pub fn unwrap(node: ts.Node, source: []const u8, lang_config: *const LanguageConfig, context: UnwrapContext) ?[]const u8 {
+    var current = node;
+    while (true) {
+        const node_type = current.kind();
+        if (std.mem.eql(u8, node_type, lang_config.identifier_type)) {
+            return source[current.startByte()..current.endByte()];
+        }
+        // Leaf named node (e.g. field_identifier) — treat as terminal
+        if (current.namedChildCount() == 0 and current.startByte() < current.endByte()) {
+            return source[current.startByte()..current.endByte()];
+        }
+        var matched = false;
+        for (lang_config.unwrap_table) |rule| {
+            if (rule.context != context) continue;
+            if (std.mem.eql(u8, node_type, rule.ts_type)) {
+                current = if (rule.child_field) |f|
+                    current.childByFieldName(f) orelse return null
+                else
+                    current.namedChild(0) orelse return null;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return null;
+    }
+}
 
 pub fn getConfig(lang: Language) *const LanguageConfig {
     return switch (lang) {

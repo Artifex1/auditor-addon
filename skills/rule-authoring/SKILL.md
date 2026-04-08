@@ -74,8 +74,11 @@ function enter(node, ctx)
     end
 end
 
-function exit(node, ctx) end   -- optional
-function reset() end           -- optional: reset module state between rule invocations
+function exit(node, ctx) end   -- optional: called when leaving each node (bottom-up)
+
+function finalize()            -- optional: called once after all files have been walked
+    -- use for emitting findings that depend on state accumulated across the entire walk
+end
 ```
 
 ### Map Rule
@@ -109,6 +112,20 @@ function check()
     return findings
 end
 ```
+
+## Hook Lifecycle
+
+### Visitor rules (scope / deep)
+
+1. **`enter(node, ctx)`** — called top-down on every AST node. Implement detection logic by checking `node.kind` and accumulating state.
+2. **`exit(node, ctx)`** — called bottom-up when leaving each node. Use for cleanup or patterns that need to know when a subtree is fully visited (e.g., resetting per-function state when exiting a `function_definition`).
+3. **`finalize()`** — called once after all files have been walked. Use for emitting findings that depend on state accumulated across the entire walk (e.g., counting patterns across files, then reporting only if a threshold is met).
+
+All three are optional — define only what the rule needs. Most rules only need `enter`.
+
+### Map rules
+
+1. **`check()`** — called once after the full symbol graph is built. Query the graph, return a findings table.
 
 ## Lua API
 

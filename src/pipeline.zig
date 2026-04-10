@@ -2,6 +2,8 @@ const std = @import("std");
 const ts = @import("tree-sitter");
 const graph = @import("graph.zig");
 const cfg = @import("languages/config.zig");
+const diagnostics_mod = @import("diagnostics.zig");
+const test_filter = @import("test_filter.zig");
 
 // ── SPEC.md §3 & §4 — Pipeline ────────────────────────────────────────
 //
@@ -30,6 +32,12 @@ pub const Pipeline = struct {
 
     // Scope stack for nesting context (§4.1)
     scope_stack: std.ArrayList(ScopeFrame),
+
+    // Optional diagnostics accumulator (set by caller)
+    diag: ?*diagnostics_mod.Diagnostics = null,
+
+    // Test markers for --no-tests filtering (set by caller before run)
+    test_markers: []const cfg.TestMarker = &.{},
 
     const ScopeFrame = struct {
         id: u64,
@@ -181,7 +189,13 @@ pub const Pipeline = struct {
         while (true) {
             if (descend) {
                 const node = cursor.node();
-                try self.processNode(node, source, file_path);
+                if (self.test_markers.len > 0 and
+                    test_filter.isTestNode(node, source, self.test_markers))
+                {
+                    descend = false;
+                } else {
+                    try self.processNode(node, source, file_path);
+                }
             }
 
             if (descend and cursor.gotoFirstChild()) continue;
@@ -254,6 +268,14 @@ pub const Pipeline = struct {
         for (lc.errors) |mapping| {
             if (std.mem.eql(u8, kind, mapping.ts_type)) {
                 try self.processError(node, source, file_path, mapping);
+                return;
+            }
+        }
+
+        // Check type defs (structs, enums)
+        for (lc.type_defs) |mapping| {
+            if (std.mem.eql(u8, kind, mapping.ts_type)) {
+                try self.processTypeDef(node, source, file_path, mapping);
                 return;
             }
         }
@@ -492,7 +514,7 @@ pub const Pipeline = struct {
         }
     }
 
-    fn processError(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ErrorMapping) !void {
+    fn processError(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.SimpleMapping) !void {
         const name = self.nodeText(node, source, mapping.name_field) orelse return;
         const line = node.startPoint().row + 1;
         const id = graph.nodeId(name, file_path, line);
@@ -502,6 +524,32 @@ pub const Pipeline = struct {
         const gn = try self.graph.addNode(.{
             .id = id,
             .kind = .custom_error,
+            .language_kind = node.kind(),
+            .name = name,
+            .qualified_name = qualified,
+            .container = container_id,
+            .language = self.lang_config.language,
+            .ast_node = node,
+            .locator = self.makeLocator(node, file_path),
+        });
+
+        try self.extractProperties(node, source, mapping.properties, gn);
+
+        if (container_id) |cid| {
+            try self.graph.addContains(cid, id);
+        }
+    }
+
+    fn processTypeDef(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.SimpleMapping) !void {
+        const name = self.nodeText(node, source, mapping.name_field) orelse return;
+        const line = node.startPoint().row + 1;
+        const id = graph.nodeId(name, file_path, line);
+        const container_id = self.currentContainer();
+        const qualified = try self.buildQualifiedName(name);
+
+        const gn = try self.graph.addNode(.{
+            .id = id,
+            .kind = .type_def,
             .language_kind = node.kind(),
             .name = name,
             .qualified_name = qualified,
@@ -646,8 +694,9 @@ pub const Pipeline = struct {
     // ── Resolution Phase (§4.1) ──────────────────────────────────────
 
     pub fn resolve(self: *Pipeline) !void {
-        // Wire source text for resolve hooks (e.g., super-call detection)
+        // Wire source text and trees for resolve hooks and nodeText lookups
         self.graph.sources = &self.sources;
+        self.graph.trees = &self.trees;
 
         // Step 1: Resolve imports and inheritance refs
         for (self.graph.refs.items) |*ref| {
@@ -849,8 +898,6 @@ pub const Pipeline = struct {
         if (start >= end or start >= source.len) return null;
         return source[start..@min(end, @as(u32, @intCast(source.len)))];
     }
-
-
 
     /// Fallback name extraction: find the first direct child matching identifier_type.
     /// Used when the name_field lookup fails (e.g. Cairo impl_item has an unnamed identifier child).

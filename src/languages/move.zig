@@ -75,4 +75,11 @@ pub const config = cfg.LanguageConfig{
         .normalization_types = &.{ "function_decl", "call_expr" },
         .base_rate_per_day = 200,
     },
+
+    .test_markers = &.{
+        .{ .node_type = "function_decl", .detection = .{ .prev_sibling = .{
+            .sibling_type = "attributes",
+            .match_text = "test",
+        } } },
+    },
 };

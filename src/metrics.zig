@@ -1,6 +1,7 @@
 const std = @import("std");
 const ts = @import("tree-sitter");
 const config = @import("languages/config.zig");
+const test_filter = @import("test_filter.zig");
 
 // ── SPEC-CLI.md §2 — Metrics ──────────────────────────────────────────
 //
@@ -21,25 +22,30 @@ pub const FileMetrics = struct {
 
 /// Compute metrics for a single file using its tree-sitter parse tree.
 /// Per SPEC-CLI §2.1-§2.4: all counting is tree-sitter node driven.
-pub fn computeMetrics(tree: *const ts.Tree, source: []const u8, metrics_config: config.MetricsConfig) FileMetrics {
-    // §2.1 — total_lines
-    const total_lines = countLines(source);
+/// When `test_markers` is non-empty, test-annotated subtrees are excluded.
+pub fn computeMetrics(tree: *const ts.Tree, source: []const u8, metrics_config: config.MetricsConfig, test_markers: []const config.TestMarker) FileMetrics {
+    // §2.1 — total_lines and blank_lines, minus test overhead
+    var total_lines = countLines(source);
+    var blank_lines = countBlankLines(source);
 
-    // §2.1 — blank_lines (only metric requiring line-by-line check)
-    const blank_lines = countBlankLines(source);
+    if (test_markers.len > 0) {
+        const overhead = test_filter.countTestOverhead(tree, source, test_markers);
+        total_lines -|= overhead.lines;
+        blank_lines -|= overhead.blank_lines;
+    }
 
     // §2.1 — comment_lines: sum of (count \n in node.text() + 1) for each comment node
-    const comment_lines = countNodeLines(tree, source, metrics_config.comment_types);
+    const comment_lines = countNodeLines(tree, source, metrics_config.comment_types, test_markers);
 
     // §2.1 — normalization: sum of (count \n in node.text()) for each normalizable node
-    const normalization = countNormalization(tree, source, metrics_config.normalization_types);
+    const normalization = countNormalization(tree, source, metrics_config.normalization_types, test_markers);
 
     // §2.1 — nLOC
     const nloc_raw = @as(i64, total_lines) - @as(i64, blank_lines) - @as(i64, comment_lines) - @as(i64, normalization);
     const nloc: u32 = if (nloc_raw > 0) @intCast(nloc_raw) else 1; // floor at 1
 
     // §2.2 — Cognitive Complexity
-    const cognitive_complexity = computeCognitiveComplexity(tree, metrics_config.branching_types);
+    const cognitive_complexity = computeCognitiveComplexity(tree, source, metrics_config.branching_types, test_markers);
 
     // complexity per 100 lines (integer math, multiply first)
     const complexity_per_100 = (cognitive_complexity * 100) / nloc;
@@ -73,7 +79,7 @@ fn countLines(source: []const u8) u32 {
 }
 
 /// Count blank lines: lines where trim() == ""
-fn countBlankLines(source: []const u8) u32 {
+pub fn countBlankLines(source: []const u8) u32 {
     var count: u32 = 0;
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |line| {
@@ -85,7 +91,7 @@ fn countBlankLines(source: []const u8) u32 {
 
 /// Count lines spanned by nodes of given types.
 /// For each matching node: lines = count(\n in text) + 1
-fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8) u32 {
+fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8, test_markers: []const config.TestMarker) u32 {
     var total: u32 = 0;
     var cursor = tree.walk();
     defer cursor.destroy();
@@ -95,7 +101,9 @@ fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const 
     while (true) {
         if (descend) {
             const node = cursor.node();
-            if (matchesAnyType(node.kind(), node_types)) {
+            if (test_filter.isTestNode(node, source, test_markers)) {
+                descend = false;
+            } else if (matchesAnyType(node.kind(), node_types)) {
                 const text = source[node.startByte()..node.endByte()];
                 total += countNewlines(text) + 1;
                 // Don't descend into matched nodes (avoid double-counting nested comments)
@@ -122,7 +130,7 @@ fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const 
 /// function body. For other nodes (call_expression, array, etc.), count the
 /// whole node text.
 /// Skips children of matched nodes to avoid double-counting nested structures.
-fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8) u32 {
+fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8, test_markers: []const config.TestMarker) u32 {
     var total: u32 = 0;
     var cursor = tree.walk();
     defer cursor.destroy();
@@ -131,7 +139,9 @@ fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []co
     while (true) {
         if (descend) {
             const node = cursor.node();
-            if (matchesAnyType(node.kind(), node_types)) {
+            if (test_filter.isTestNode(node, source, test_markers)) {
+                descend = false;
+            } else if (matchesAnyType(node.kind(), node_types)) {
                 const start = node.startByte();
                 // If the node has a body field, only count the header (up to body start)
                 const end = if (node.childByFieldName("body")) |body|
@@ -158,7 +168,7 @@ fn countNormalization(tree: *const ts.Tree, source: []const u8, node_types: []co
 
 /// §2.2 — Cognitive Complexity: each branch node contributes 1 + nesting_depth.
 /// Nesting = count of ancestor nodes that are also branch nodes.
-fn computeCognitiveComplexity(tree: *const ts.Tree, branching_types: []const []const u8) u32 {
+fn computeCognitiveComplexity(tree: *const ts.Tree, source: []const u8, branching_types: []const []const u8, test_markers: []const config.TestMarker) u32 {
     var complexity: u32 = 0;
     var cursor = tree.walk();
     defer cursor.destroy();
@@ -170,7 +180,9 @@ fn computeCognitiveComplexity(tree: *const ts.Tree, branching_types: []const []c
     while (true) {
         if (descend) {
             const node = cursor.node();
-            if (matchesAnyType(node.kind(), branching_types)) {
+            if (test_filter.isTestNode(node, source, test_markers)) {
+                descend = false;
+            } else if (matchesAnyType(node.kind(), branching_types)) {
                 const nesting = countBranchingAncestors(node, branching_types);
                 complexity += 1 + nesting;
             }

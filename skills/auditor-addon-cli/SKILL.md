@@ -17,31 +17,14 @@ The `bin/aud` dispatcher auto-detects the current platform and runs the correct 
 
 Where `<SKILL_DIR>` is the directory containing this SKILL.md file.
 
-## Commands
+## Discovering Commands and Options
 
-| Command | Purpose |
-|:--------|:--------|
-| `aud peek <glob...>` | Extract function signatures for quick overview. |
-| `aud metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
-| `aud gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
-| `aud run <glob...>` | Build symbol graph, run rules, output findings. |
-| `aud call-chains <glob...>` | Map caller->callee chains from entry points. |
-| `aud graph <glob...>` | Build symbol graph, dump nodes and edges. |
-| `aud info <language>` | List language config (node types, properties). |
+Run `--help` on the binary itself to get the current command list and per-command options. This is always more up-to-date than any documentation:
 
-### Common Options
-
-| Option | Applies to | Description |
-|:-------|:-----------|:------------|
-| `--help` | all | Per-command help. |
-| `--language=<lang>` | all except info | Force language (otherwise auto-detected from extension). |
-| `--json` | all except info | JSON output instead of TOON. |
-| `--resolutions=<file>` | gaps, run, call-chains, graph | Apply resolution CSV. |
-| `--no-expand` | gaps | Skip import-driven file expansion. |
-| `--rule=<ID>` | run | Run specific shipped rule (repeatable). |
-| `--rule-path=<path>` | run | Run adhoc rule from .lua file. |
-| `--root=<name>` | call-chains | Start from specific function (repeatable). |
-| `--max-depth=<n>` | call-chains | Limit chain depth (default: 10). |
+```bash
+<SKILL_DIR>/bin/aud --help              # list all commands
+<SKILL_DIR>/bin/aud <command> --help     # per-command options
+```
 
 File arguments accept glob patterns (e.g., `"src/**/*.sol"`).
 

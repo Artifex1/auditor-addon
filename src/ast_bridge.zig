@@ -11,14 +11,14 @@ const graph = @import("graph.zig");
 pub const AstBridge = struct {
     allocator: std.mem.Allocator,
     handles: std.ArrayList(ts.Node),
-    /// Source text keyed by file path — for node text extraction.
-    sources: *const std.StringHashMapUnmanaged([]const u8),
+    /// Symbol graph — single source of truth for sources, trees, and node text.
+    g: *const graph.SymbolGraph,
 
-    pub fn init(allocator: std.mem.Allocator, sources: *const std.StringHashMapUnmanaged([]const u8)) AstBridge {
+    pub fn init(allocator: std.mem.Allocator, g: *const graph.SymbolGraph) AstBridge {
         return .{
             .allocator = allocator,
             .handles = .empty,
-            .sources = sources,
+            .g = g,
         };
     }
 
@@ -42,25 +42,6 @@ pub const AstBridge = struct {
     pub fn getNode(self: *const AstBridge, handle: u32) ?ts.Node {
         if (handle >= self.handles.items.len) return null;
         return self.handles.items[handle];
-    }
-
-    /// Get text for a node by slicing its file's source buffer.
-    pub fn nodeText(self: *const AstBridge, node: ts.Node) ?[]const u8 {
-        // We need to find the source for this node's file.
-        // Since tree-sitter nodes reference their tree, and we stored sources
-        // keyed by file path during pipeline, we iterate to find the matching source.
-        // For now, use the node's byte range against any source that contains it.
-        // TODO: track file→source mapping more efficiently via the graph locator
-        var it = self.sources.iterator();
-        while (it.next()) |entry| {
-            const source = entry.value_ptr.*;
-            const start = node.startByte();
-            const end = node.endByte();
-            if (end <= source.len) {
-                return source[start..end];
-            }
-        }
-        return null;
     }
 
     // ── SPEC.md §6.4 — ast.* API implementations ────────────────────
@@ -143,10 +124,10 @@ pub const AstBridge = struct {
         return node.kind();
     }
 
-    /// ast.text(handle) -> string
+    /// ast.text(handle) -> string — delegates to SymbolGraph.nodeText()
     pub fn textOf(self: *const AstBridge, handle: u32) ?[]const u8 {
         const node = self.getNode(handle) orelse return null;
-        return self.nodeText(node);
+        return self.g.nodeText(node);
     }
 
     /// ast.find(handle, type_name) -> []handle (recursive descendant search)
@@ -215,11 +196,9 @@ test "pushNode and getNode round-trip" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    defer sources.deinit(allocator);
-    try sources.put(allocator, "test.sol", source);
-
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     const root = tree.rootNode();
@@ -233,8 +212,9 @@ test "pushNode and getNode round-trip" {
 test "getNode returns null for invalid handle" {
     const allocator = std.testing.allocator;
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     try std.testing.expect(bridge.getNode(999) == null);
@@ -250,8 +230,9 @@ test "nodeType returns tree-sitter kind" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     const handle = try bridge.pushNode(tree.rootNode());
@@ -268,8 +249,9 @@ test "children returns child handles" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     const root_handle = try bridge.pushNode(tree.rootNode());
@@ -297,8 +279,9 @@ test "clear resets handle table" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     _ = try bridge.pushNode(tree.rootNode());
@@ -308,7 +291,7 @@ test "clear resets handle table" {
     try std.testing.expectEqual(@as(usize, 0), bridge.handles.items.len);
 }
 
-test "nodeText returns source text slice" {
+test "textOf returns source text slice via graph" {
     const allocator = std.testing.allocator;
 
     const source = "contract Foo {}";
@@ -322,13 +305,66 @@ test "nodeText returns source text slice" {
     defer sources.deinit(allocator);
     try sources.put(allocator, "test.sol", source);
 
-    var bridge = AstBridge.init(allocator, &sources);
+    var trees: std.StringHashMapUnmanaged(*ts.Tree) = .empty;
+    defer trees.deinit(allocator);
+    try trees.put(allocator, "test.sol", tree);
+
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    g.sources = &sources;
+    g.trees = &trees;
+
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     const handle = try bridge.pushNode(tree.rootNode());
     const text = bridge.textOf(handle);
     try std.testing.expect(text != null);
     try std.testing.expectEqualStrings(source, text.?);
+}
+
+test "textOf picks correct source with multiple files" {
+    const allocator = std.testing.allocator;
+
+    const parser = ts.Parser.create();
+    defer parser.destroy();
+    try parser.setLanguage(cfg.Language.solidity.grammarFn()());
+
+    // File A: short source
+    const source_a = "contract A {}";
+    const tree_a = parser.parseString(source_a, null) orelse return error.ParseFailed;
+    defer tree_a.destroy();
+
+    // File B: longer source (would match A's byte range in the old buggy code)
+    const source_b = "contract B { function foo() public {} }";
+    const tree_b = parser.parseString(source_b, null) orelse return error.ParseFailed;
+    defer tree_b.destroy();
+
+    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer sources.deinit(allocator);
+    try sources.put(allocator, "a.sol", source_a);
+    try sources.put(allocator, "b.sol", source_b);
+
+    var trees: std.StringHashMapUnmanaged(*ts.Tree) = .empty;
+    defer trees.deinit(allocator);
+    try trees.put(allocator, "a.sol", tree_a);
+    try trees.put(allocator, "b.sol", tree_b);
+
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    g.sources = &sources;
+    g.trees = &trees;
+
+    var bridge = AstBridge.init(allocator, &g);
+    defer bridge.deinit();
+
+    // Node from tree A must return text from source A
+    const handle_a = try bridge.pushNode(tree_a.rootNode());
+    try std.testing.expectEqualStrings(source_a, bridge.textOf(handle_a).?);
+
+    // Node from tree B must return text from source B
+    const handle_b = try bridge.pushNode(tree_b.rootNode());
+    try std.testing.expectEqualStrings(source_b, bridge.textOf(handle_b).?);
 }
 
 test "startLine returns 1-indexed line number" {
@@ -341,8 +377,9 @@ test "startLine returns 1-indexed line number" {
     const tree = parser.parseString(source, null) orelse return error.ParseFailed;
     defer tree.destroy();
 
-    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var bridge = AstBridge.init(allocator, &sources);
+    var g = graph.SymbolGraph.init(allocator);
+    defer g.deinit();
+    var bridge = AstBridge.init(allocator, &g);
     defer bridge.deinit();
 
     const handle = try bridge.pushNode(tree.rootNode());

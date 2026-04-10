@@ -83,7 +83,7 @@ Stale/broken resolutions are reported as warnings.
 aud run <files...>
 aud run <files...> --resolutions=resolutions.csv   # with resolved gaps
 aud run <files...> --rule=SOL-002                  # specific shipped rule
-aud run <files...> --rule-path=./rules/CUSTOM-001.lua   # adhoc rule file
+aud run <files...> --rule-path=./rules/my-rule.lua      # adhoc rule file
 aud run <files...> --rule-inline='rule={id="X",name="x",severity="info",type="scope"} function enter(n,c) if n.kind=="assembly_statement" then report.hit({file=c.current_file,line=n.line,node_text=""}) end end'
 ```
 
@@ -109,12 +109,12 @@ Custom rules are `.lua` files (see `rule-authoring` skill for authoring details)
 
 1. **Find an issue** during manual review
 2. **Recognize it's a pattern** — could it appear elsewhere?
-3. **Write a custom rule** (e.g. `./rules/CUSTOM-001-unbounded-loop.lua`)
+3. **Write a custom rule** (e.g. `./rules/unbounded-loop.lua`)
 4. **Test against the known instance** — the rule should flag the exact location
 5. **Run against the full codebase** — discover other instances
 
 ```bash
-aud run <files...> --rule-path=./rules/CUSTOM-001-unbounded-loop.lua
+aud run <files...> --rule-path=./rules/unbounded-loop.lua
 ```
 
 Multiple adhoc rules: repeat `--rule-path` or use `--rule-inline` for short patterns.

@@ -65,9 +65,9 @@ pub const all = [_]ShippedRule{
         .source = @embedFile("SOL-010-state-var-visibility-not-explicit.lua"),
     },
     .{
-        .id = "MAP-001",
-        .filename = "MAP-001-broad-visibility.lua",
-        .source = @embedFile("MAP-001-broad-visibility.lua"),
+        .id = "SOL-022",
+        .filename = "SOL-022-broad-visibility.lua",
+        .source = @embedFile("SOL-022-broad-visibility.lua"),
     },
     .{
         .id = "SOL-011",
@@ -125,8 +125,28 @@ pub const all = [_]ShippedRule{
         .source = @embedFile("GEN-003-unused-import.lua"),
     },
     .{
-        .id = "MAP-002",
-        .filename = "MAP-002-unused-function.lua",
-        .source = @embedFile("MAP-002-unused-function.lua"),
+        .id = "SOL-023",
+        .filename = "SOL-023-unused-function.lua",
+        .source = @embedFile("SOL-023-unused-function.lua"),
+    },
+    .{
+        .id = "SOL-024",
+        .filename = "SOL-024-post-super-require-revert.lua",
+        .source = @embedFile("SOL-024-post-super-require-revert.lua"),
+    },
+    .{
+        .id = "SOL-025",
+        .filename = "SOL-025-try-catch-silent-zero.lua",
+        .source = @embedFile("SOL-025-try-catch-silent-zero.lua"),
+    },
+    .{
+        .id = "SOL-026",
+        .filename = "SOL-026-orphan-interface.lua",
+        .source = @embedFile("SOL-026-orphan-interface.lua"),
+    },
+    .{
+        .id = "SOL-027",
+        .filename = "SOL-027-sibling-override.lua",
+        .source = @embedFile("SOL-027-sibling-override.lua"),
     },
 };

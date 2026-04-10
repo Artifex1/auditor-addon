@@ -36,12 +36,11 @@ pub const config = cfg.LanguageConfig{
     .inheritance_strategy = .flat,
 
     .builtin_functions = &.{
-        "make", "new", "len", "cap", "append", "copy", "close", "delete",
-        "complex", "real", "imag", "panic", "recover", "print", "println",
-        "min", "max", "clear",
-        "string", "int", "int8", "int16", "int32", "int64",
-        "uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-        "float32", "float64", "byte", "rune", "bool", "error",
+        "make",    "new",   "len",    "cap",    "append",  "copy",    "close",   "delete",
+        "complex", "real",  "imag",   "panic",  "recover", "print",   "println", "min",
+        "max",     "clear", "string", "int",    "int8",    "int16",   "int32",   "int64",
+        "uint",    "uint8", "uint16", "uint32", "uint64",  "uintptr", "float32", "float64",
+        "byte",    "rune",  "bool",   "error",
     },
     .builtin_receivers = &.{},
 
@@ -68,5 +67,12 @@ pub const config = cfg.LanguageConfig{
         .comment_types = &.{"comment"},
         .normalization_types = &.{ "function_declaration", "method_declaration", "call_expression", "composite_literal" },
         .base_rate_per_day = 250,
+    },
+
+    .test_markers = &.{
+        .{ .node_type = "function_declaration", .detection = .{ .name_prefix = .{
+            .name_field = "name",
+            .prefix = "Test",
+        } } },
     },
 };

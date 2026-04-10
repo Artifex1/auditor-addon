@@ -38,11 +38,11 @@ pub const config = cfg.LanguageConfig{
     .inheritance_strategy = .flat,
 
     .builtin_functions = &.{
-        "println", "eprintln", "print", "eprint", "format",
-        "write",  "writeln",  "panic",  "todo",   "unimplemented",
-        "unreachable", "assert", "assert_eq", "assert_ne",
-        "vec",    "drop",     "swap",   "replace",
-        "Some",   "None",     "Ok",     "Err",    "Box",
+        "println",     "eprintln", "print",     "eprint",    "format",
+        "write",       "writeln",  "panic",     "todo",      "unimplemented",
+        "unreachable", "assert",   "assert_eq", "assert_ne", "vec",
+        "drop",        "swap",     "replace",   "Some",      "None",
+        "Ok",          "Err",      "Box",
     },
     .builtin_receivers = &.{},
 
@@ -72,5 +72,16 @@ pub const config = cfg.LanguageConfig{
         .comment_types = &.{ "line_comment", "block_comment" },
         .normalization_types = &.{ "function_item", "call_expression", "array_expression" },
         .base_rate_per_day = 225,
+    },
+
+    .test_markers = &.{
+        .{ .node_type = "function_item", .detection = .{ .prev_sibling = .{
+            .sibling_type = "attribute_item",
+            .match_text = "test",
+        } } },
+        .{ .node_type = "mod_item", .detection = .{ .prev_sibling = .{
+            .sibling_type = "attribute_item",
+            .match_text = "cfg(test)",
+        } } },
     },
 };

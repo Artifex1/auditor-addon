@@ -101,4 +101,11 @@ pub const config = cfg.LanguageConfig{
         .normalization_types = &.{ "function_item", "external_function_item", "call_expression" },
         .base_rate_per_day = 200,
     },
+
+    .test_markers = &.{
+        .{ .node_type = "function_item", .detection = .{ .prev_sibling = .{
+            .sibling_type = "attribute_item",
+            .match_text = "test",
+        } } },
+    },
 };

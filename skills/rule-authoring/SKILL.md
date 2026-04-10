@@ -8,8 +8,8 @@ argument-hint: "<rule idea or vulnerability pattern>"
 
 Rules are `.lua` files. Two deployment modes:
 
-- **Shipped rules** (`rules/`): bundled with the tool. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`. Run automatically on `aud run` for applicable languages.
-- **Adhoc rules** (any `.lua` file or inline string): per-engagement rules. Load at runtime via `--rule-path=<file>` or `--rule-inline=<lua_code>`. CUSTOM- prefix is conventional.
+- **Shipped rules** (`rules/`): bundled with the tool. IDs use language prefixes: `SOL-` (Solidity), `GEN-` (generic/multi-language). Run automatically on `aud run` for applicable languages.
+- **Adhoc rules** (any `.lua` file or inline string): per-engagement rules. Load at runtime via `--rule-path=<file>` or `--rule-inline=<lua_code>`.
 
 Both use the exact same Lua interface.
 
@@ -85,7 +85,7 @@ end
 
 ```lua
 rule = {
-    id = "MAP-001",
+    id = "SOL-022",
     name = "broad-visibility",
     severity = "info",
     confidence = "pointer",
@@ -149,6 +149,18 @@ graph.get_ref_at(file, start_byte)         -> ref | nil   (O(1) site lookup)
 graph.get_gaps(?ref_kind)                  -> [{ref_id, from, kind, target_name, gap, site_line}]
 ```
 
+**Discovering the API vocabulary:** Call `graph.language_info()` to inspect what's available for the current language:
+
+```lua
+local info = graph.language_info()
+-- info.language    = "solidity"
+-- info.node_kinds  = {"file", "container", "callable", "variable", "modifier", "event", "custom_error"}
+-- info.ref_kinds   = {"import", "call", "inheritance", "state_read", "state_write", "modifier_use", "event_emit"}
+-- info.properties  = {"visibility", "mutability", "override", "virtual", "constant"}  (language-specific)
+```
+
+Use `node_kinds` for valid `graph.get_nodes_by_kind()` arguments, `ref_kinds` for `graph.get_outgoing_edges()`/`graph.get_refs()` kind filters, and `properties` for valid `graph.get_property()` keys. Passing an invalid kind emits a diagnostic warning and returns an empty table.
+
 ### AST Bridge (`ast.*`)
 
 For pattern-level rules that need raw tree-sitter access. Works identically for all grammars.
@@ -183,9 +195,13 @@ report.hit(opts)
         line:       number,   -- node.line
         node_text:  string,   -- optional, source text for context
     }
+
+report.warn(message)             -- emit a diagnostic warning (appears in diagnostics output section)
 ```
 
 Visitor rules call `report.hit()` inline. Map rules return a findings table from `check()`. Rule metadata (`id`, `name`, `severity`, `description`) is attached automatically — do not repeat it per hit.
+
+Use `report.warn()` to surface non-fatal issues during rule execution (e.g., unexpected graph state, skipped checks). Warnings appear in the `diagnostics` output section, separate from findings.
 
 ## Language Scoping
 
@@ -198,8 +214,6 @@ languages = {"solidity", "cairo"}  -- multi-language
 Naming convention:
 - **SOL-NNN** — Solidity-specific
 - **GEN-NNN** — multi-language (no filter)
-- **MAP-NNN** — map rules (post-graph)
-- **CUSTOM-NNN** — per-engagement adhoc rules
 
 Only list languages whose grammar you have verified against the vendor grammars in `vendor/grammars/`.
 

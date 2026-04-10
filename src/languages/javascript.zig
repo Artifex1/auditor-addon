@@ -34,11 +34,11 @@ pub const config = cfg.LanguageConfig{
     .inheritance_strategy = .flat,
 
     .builtin_functions = &.{
-        "require",      "console",       "setTimeout",    "setInterval",
-        "clearTimeout", "clearInterval", "Promise",       "Array",
-        "Object",       "String",        "Number",        "Boolean",
-        "Math",         "JSON",          "Error",         "Date",
-        "RegExp",       "Map",           "Set",           "parseInt",
+        "require",      "console",       "setTimeout", "setInterval",
+        "clearTimeout", "clearInterval", "Promise",    "Array",
+        "Object",       "String",        "Number",     "Boolean",
+        "Math",         "JSON",          "Error",      "Date",
+        "RegExp",       "Map",           "Set",        "parseInt",
         "parseFloat",   "fetch",
     },
     .builtin_receivers = &.{},
@@ -75,5 +75,12 @@ pub const config = cfg.LanguageConfig{
             "object",
         },
         .base_rate_per_day = 275,
+    },
+
+    .test_markers = &.{
+        .{ .node_type = "call_expression", .detection = .{ .call_wrapper = .{
+            .callee_field = "function",
+            .callee_names = &.{ "describe", "it", "test" },
+        } } },
     },
 };

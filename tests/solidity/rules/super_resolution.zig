@@ -3,8 +3,8 @@ const h = @import("./helpers.zig");
 
 const fix = "tests/solidity/fixtures/";
 
-test "MAP-002: super call does not cause false positive on override" {
-    const rule = "src/rules/MAP-002-unused-function.lua";
+test "SOL-023: super call does not cause false positive on override" {
+    const rule = "src/rules/SOL-023-unused-function.lua";
     const files = [_][]const u8{fix ++ "SuperCall.sol"};
     const count = try h.countRuleHits(std.testing.allocator, &files, rule);
     // SuperChild._hook is override of called virtual → NOT flagged

@@ -15,7 +15,7 @@ contract SuperBase {
 }
 
 contract SuperChild is SuperBase {
-    // MAP-002: NOT FLAGGED — super._hook() resolves to SuperBase._hook which has callers
+    // SOL-023: NOT FLAGGED — super._hook() resolves to SuperBase._hook which has callers
     function _hook() internal override returns (uint256) {
         return super._hook() + 1;
     }

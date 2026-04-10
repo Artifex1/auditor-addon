@@ -106,7 +106,7 @@ test "metrics: deep_nesting — cognitive complexity" {
     defer result.parser.destroy();
 
     const lang_config = cfg.getConfig(.cairo);
-    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics);
+    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics, &.{});
 
     // 3 nested ifs: depth 0=1, depth 1=2, depth 2=3 → total=6
     try std.testing.expectEqual(@as(u32, 6), m.cognitive_complexity);

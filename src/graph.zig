@@ -12,6 +12,7 @@ pub const NodeKind = enum {
     modifier,
     event,
     custom_error,
+    type_def,
 };
 
 // ── §2.4 Reference Types ─────────────────────────────────────────────
@@ -143,6 +144,9 @@ pub const SymbolGraph = struct {
 
     // Non-owning pointer to source text keyed by file path — for AST node text extraction.
     sources: ?*const std.StringHashMapUnmanaged([]const u8) = null,
+
+    // Non-owning pointer to parsed trees keyed by file path — for tree→file lookup in nodeText.
+    trees: ?*const std.StringHashMapUnmanaged(*ts.Tree) = null,
 
     // Inheritance strategy — controls how resolveInScope walks parent chains.
     inheritance_strategy: config.InheritanceStrategy = .flat,
@@ -427,15 +431,18 @@ pub const SymbolGraph = struct {
     // ── Source Text ──────────────────────────────────────────────────
 
     /// Get text for a tree-sitter node by slicing the source buffer for its file.
+    /// Identifies the correct file via tree-pointer matching against the trees map.
     pub fn nodeText(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
         const srcs = self.sources orelse return null;
-        var it = srcs.iterator();
+        const tree_map = self.trees orelse return null;
+        var it = tree_map.iterator();
         while (it.next()) |entry| {
-            const source = entry.value_ptr.*;
-            const start = node.startByte();
-            const end = node.endByte();
-            if (end <= source.len) {
-                return source[start..end];
+            if (@intFromPtr(entry.value_ptr.*) == @intFromPtr(node.tree)) {
+                const source = srcs.get(entry.key_ptr.*) orelse return null;
+                const start = node.startByte();
+                const end = node.endByte();
+                if (end <= source.len) return source[start..end];
+                return null;
             }
         }
         return null;

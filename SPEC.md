@@ -896,7 +896,7 @@ end
 
 ```lua
 rule = {
-    id = "MAP-001",
+    id = "SOL-022",
     name = "broad-visibility",
     severity = "info",
     type = "map",
@@ -1048,7 +1048,7 @@ findings[2]:
   SOL-002{severity:critical,name:reentrancy,hits[2]{file,line,node_text}}:
     src/Vault.sol,42,balances[msg.sender]
     src/Vault.sol,67,_transfer(msg.sender)
-  MAP-001{severity:info,name:broad-visibility,hits[1]{file,line,node_text}}:
+  SOL-022{severity:info,name:broad-visibility,hits[1]{file,line,node_text}}:
     src/Vault.sol,15,deposit
 ```
 
@@ -1227,7 +1227,7 @@ src/
         go.zig                  -- Go config + custom handler
         ... (one file per language)
 rules/
-    MAP-001-broad-visibility.lua
+    SOL-022-broad-visibility.lua
     SOL-002-reentrancy.lua
     SOL-017-variable-could-be-constant.lua
     GEN-001-naming-conventions.lua

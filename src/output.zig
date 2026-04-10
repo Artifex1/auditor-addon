@@ -1,6 +1,7 @@
 const std = @import("std");
 const graph = @import("graph.zig");
 const resolution = @import("resolution.zig");
+const diagnostics = @import("diagnostics.zig");
 
 const Writer = *std.Io.Writer;
 
@@ -440,6 +441,28 @@ pub fn writeJsonResolutionDiag(diag: *const resolution.ResolutionDiag, writer: W
     }
 
     try writer.writeAll("]}}\n");
+}
+
+// ── TOON: Diagnostics ───────────────────────────────────────────────
+
+pub fn writeToonDiagnostics(diag: *const diagnostics.Diagnostics, writer: Writer) !void {
+    try writer.print("diagnostics[{d}]{{level,source,message}}:\n", .{diag.entries.items.len});
+    for (diag.entries.items) |entry| {
+        try writer.print("  {s},{s},{s}\n", .{ @tagName(entry.level), entry.source, entry.message });
+    }
+}
+
+// ── JSON: Diagnostics ───────────────────────────────────────────────
+
+pub fn writeJsonDiagnostics(diag: *const diagnostics.Diagnostics, writer: Writer) !void {
+    try writer.writeAll("{\"diagnostics\":[");
+    for (diag.entries.items, 0..) |entry, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.print("{{\"level\":\"{s}\",\"source\":\"{s}\",\"message\":", .{ @tagName(entry.level), entry.source });
+        try writeJsonString(writer, entry.message);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("]}\n");
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────

@@ -124,7 +124,7 @@ pub const EventMapping = struct {
     properties: []const PropertyExtractor = &.{},
 };
 
-pub const ErrorMapping = struct {
+pub const SimpleMapping = struct {
     ts_type: []const u8,
     name_field: []const u8,
     properties: []const PropertyExtractor = &.{},
@@ -168,8 +168,8 @@ pub const WritePattern = struct {
 /// Which extraction site this rule applies to.
 pub const UnwrapContext = enum {
     receiver, // strip wrapper node to reach the root identifier (write targets, receiver detection)
-    callee,   // extract the callee name from a call expression node
-    name,     // extract the callable/container name from a definition node
+    callee, // extract the callee name from a call expression node
+    name, // extract the callable/container name from a definition node
     property, // extract a property value from a property-container node
 };
 
@@ -198,6 +198,44 @@ pub const MetricsConfig = struct {
     base_rate_per_day: u32,
 };
 
+// ── Test Marker Detection ────────────────────────────────────────────
+
+pub const TestMarker = struct {
+    /// Node type to check (e.g., "function_item", "mod_item", "call_expression")
+    node_type: []const u8,
+    /// How to detect the test annotation on that node
+    detection: Detection,
+
+    pub const Detection = union(enum) {
+        /// Previous named sibling of `sibling_type` whose text contains `match_text`.
+        /// Covers: Rust/Cairo/Noir #[test], Rust #[cfg(test)], Move #[test].
+        prev_sibling: struct {
+            sibling_type: []const u8,
+            match_text: []const u8,
+        },
+        /// Child field `parent_field` contains a child of `child_type` whose
+        /// text contains `match_text`.
+        /// Covers: Java @Test (modifiers > marker_annotation).
+        child_annotation: struct {
+            parent_field: []const u8,
+            child_type: []const u8,
+            match_text: []const u8,
+        },
+        /// The node's `name_field` child text starts with `prefix`.
+        /// Covers: Solidity test*, Go Test*, Python test_/Test.
+        name_prefix: struct {
+            name_field: []const u8,
+            prefix: []const u8,
+        },
+        /// The node's `callee_field` child text matches one of `callee_names`.
+        /// Covers: JS/TS/TSX/Flow describe(), it(), test().
+        call_wrapper: struct {
+            callee_field: []const u8,
+            callee_names: []const []const u8,
+        },
+    };
+};
+
 pub const CustomHandlerFn = *const fn (*graph.SymbolGraph, ts.Node, []const u8) void;
 
 pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const LanguageConfig, allocator: std.mem.Allocator) void;
@@ -211,7 +249,8 @@ pub const LanguageConfig = struct {
     variables: []const VariableMapping,
     modifiers: []const ModifierMapping,
     events: []const EventMapping,
-    errors: []const ErrorMapping = &.{},
+    errors: []const SimpleMapping = &.{},
+    type_defs: []const SimpleMapping = &.{},
     // Reference detection
     call_expression: CallExpressionMapping,
     inheritance: ?InheritanceMapping = null,
@@ -243,6 +282,9 @@ pub const LanguageConfig = struct {
 
     // Metrics
     metrics: MetricsConfig,
+
+    // Test markers for --no-tests filtering
+    test_markers: []const TestMarker = &.{},
 };
 
 // ── Config Lookup ──────────────────────────────────────────────────────

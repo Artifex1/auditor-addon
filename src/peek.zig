@@ -1,6 +1,7 @@
 const std = @import("std");
 const ts = @import("tree-sitter");
 const cfg = @import("languages/config.zig");
+const test_filter = @import("test_filter.zig");
 
 // ── SPEC-CLI.md §1 — Peek ─────────────────────────────────────────────
 //
@@ -22,6 +23,7 @@ pub fn extractSignatures(
     lang_config: *const cfg.LanguageConfig,
     file_path: []const u8,
     allocator: std.mem.Allocator,
+    test_markers: []const cfg.TestMarker,
 ) ![]Signature {
     var signatures: std.ArrayList(Signature) = .empty;
 
@@ -33,17 +35,22 @@ pub fn extractSignatures(
     while (true) {
         if (descend) {
             const node = cursor.node();
-            const kind = node.kind();
 
-            for (lang_config.callables) |callable| {
-                if (std.mem.eql(u8, kind, callable.ts_type)) {
-                    if (extractSignatureText(node, source, callable.body_field, allocator)) |sig_text| {
-                        try signatures.append(allocator, .{
-                            .file = file_path,
-                            .text = sig_text,
-                        });
-                    } else |_| {}
-                    break;
+            if (test_filter.isTestNode(node, source, test_markers)) {
+                descend = false;
+            } else {
+                const kind = node.kind();
+
+                for (lang_config.callables) |callable| {
+                    if (std.mem.eql(u8, kind, callable.ts_type)) {
+                        if (extractSignatureText(node, source, callable.body_field, allocator)) |sig_text| {
+                            try signatures.append(allocator, .{
+                                .file = file_path,
+                                .text = sig_text,
+                            });
+                        } else |_| {}
+                        break;
+                    }
                 }
             }
         }

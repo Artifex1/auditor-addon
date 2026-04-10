@@ -40,6 +40,11 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "error_declaration", .name_field = "name" },
     },
 
+    .type_defs = &.{
+        .{ .ts_type = "struct_declaration", .name_field = "name" },
+        .{ .ts_type = "enum_declaration", .name_field = "name" },
+    },
+
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = .{ .ts_type = "inheritance_specifier", .name_field = "ancestor" },
     .modifier_invocation = .{ .ts_type = "modifier_invocation", .name_field = "name" },
@@ -86,6 +91,13 @@ pub const config = cfg.LanguageConfig{
         .normalization_types = &.{ "function_definition", "call_expression" },
         .base_rate_per_day = 150,
     },
+
+    .test_markers = &.{
+        .{ .node_type = "function_definition", .detection = .{ .name_prefix = .{
+            .name_field = "name",
+            .prefix = "test",
+        } } },
+    },
 };
 
 /// Solidity-specific edge cases the declarative config can't express:
@@ -110,7 +122,8 @@ const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delega
 /// Solidity resolve hook:
 /// 1. External low-level calls (.call, .send, .transfer, .delegatecall, .staticcall)
 ///    → mark as external with low-priority gap.
-/// 2. Super-qualified calls (super.foo()) → resolve in parent containers only,
+/// 2. Struct/enum constructors → resolve to type_def, no gap.
+/// 3. Super-qualified calls (super.foo()) → resolve in parent containers only,
 ///    skipping the current contract to avoid resolving to the local override.
 fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const cfg.LanguageConfig, allocator: std.mem.Allocator) void {
     if (ref.kind != .call) return;
@@ -120,6 +133,16 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
         if (std.mem.eql(u8, ref.target_name, ecm)) {
             ref.target_kind = .external;
             ref.gap = .low;
+            ref.resolved = true;
+            return;
+        }
+    }
+
+    // Struct/enum constructor — resolves to type_def, no gap
+    if (g.containerOf(ref.from)) |cid| {
+        if (g.resolveInScope(cid, ref.target_name, .type_def)) |result| {
+            ref.addTarget(allocator, result.node.id) catch return;
+            ref.target_kind = .internal;
             ref.resolved = true;
             return;
         }

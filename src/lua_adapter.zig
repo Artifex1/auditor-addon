@@ -6,6 +6,7 @@ const graph = @import("graph.zig");
 const ast_bridge = @import("ast_bridge.zig");
 const walker = @import("walker.zig");
 const output = @import("output.zig");
+const diagnostics = @import("diagnostics.zig");
 
 const Lua = zlua.Lua;
 
@@ -20,6 +21,8 @@ var g_graph: *const graph.SymbolGraph = undefined;
 var g_bridge: *ast_bridge.AstBridge = undefined;
 var g_allocator: std.mem.Allocator = undefined;
 var g_hits: std.ArrayList(output.Hit) = .empty;
+var g_diag: ?*diagnostics.Diagnostics = null;
+var g_lang_config: ?*const cfg.LanguageConfig = null;
 
 /// Rule metadata read from the Lua `rule` table.
 pub const RuleMetadata = struct {
@@ -43,11 +46,20 @@ pub const LoadedRule = struct {
 /// Initialize Lua with registered APIs.
 /// `string_allocator` owns strings that outlive Lua (hits, metadata).
 /// `lua_allocator` owns the Lua VM and bridge internals.
-pub fn initLua(string_allocator: std.mem.Allocator, lua_allocator: std.mem.Allocator, g: *const graph.SymbolGraph, bridge: *ast_bridge.AstBridge) !*Lua {
+pub fn initLua(
+    string_allocator: std.mem.Allocator,
+    lua_allocator: std.mem.Allocator,
+    g: *const graph.SymbolGraph,
+    bridge: *ast_bridge.AstBridge,
+    diag: ?*diagnostics.Diagnostics,
+    lang_config: ?*const cfg.LanguageConfig,
+) !*Lua {
     g_graph = g;
     g_bridge = bridge;
     g_allocator = string_allocator;
     g_hits = .empty;
+    g_diag = diag;
+    g_lang_config = lang_config;
 
     const lua = try Lua.init(lua_allocator);
     lua.openLibs();
@@ -105,7 +117,42 @@ fn readRuleMetadata(lua: *Lua) !RuleMetadata {
         5;
     lua.pop(1);
 
-    // TODO: read languages array
+    // Read languages array (optional)
+    _ = lua.getField(-1, "languages");
+    const languages: ?[]const []const u8 = if (lua.isTable(-1)) blk: {
+        var lang_list: std.ArrayList([]const u8) = .empty;
+        var idx: i32 = 1;
+        while (true) {
+            _ = lua.rawGetIndex(-1, idx);
+            if (lua.isNil(-1)) {
+                lua.pop(1);
+                break;
+            }
+            const lang_str = lua.toString(-1) catch {
+                lua.pop(1);
+                idx += 1;
+                continue;
+            };
+            const duped = g_allocator.dupe(u8, lang_str) catch {
+                lua.pop(1);
+                idx += 1;
+                continue;
+            };
+            lang_list.append(g_allocator, duped) catch {
+                g_allocator.free(duped);
+                lua.pop(1);
+                idx += 1;
+                continue;
+            };
+            lua.pop(1);
+            idx += 1;
+        }
+        break :blk if (lang_list.items.len > 0)
+            lang_list.toOwnedSlice(g_allocator) catch null
+        else
+            null;
+    } else null;
+    lua.pop(1); // pop languages field
 
     lua.pop(1); // pop rule table
 
@@ -117,7 +164,7 @@ fn readRuleMetadata(lua: *Lua) !RuleMetadata {
         .rule_type = rule_type,
         .max_depth = max_depth,
         .description = description,
-        .languages = null,
+        .languages = languages,
     };
 }
 
@@ -137,11 +184,15 @@ pub fn executeVisitorRule(
     bridge: *ast_bridge.AstBridge,
     lang_config: *const cfg.LanguageConfig,
     allocator: std.mem.Allocator,
+    diag: ?*diagnostics.Diagnostics,
 ) ![]output.Hit {
     g_graph = g;
     g_bridge = bridge;
     g_allocator = allocator;
     g_hits = .empty;
+    g_diag = diag;
+    g_lang_config = lang_config;
+    g_hook_warned = false;
 
     const cb = walker.WalkCallback{
         .enter_fn = &luaEnterCallback,
@@ -171,11 +222,15 @@ pub fn executeMapRule(
     g: *const graph.SymbolGraph,
     bridge: *ast_bridge.AstBridge,
     allocator: std.mem.Allocator,
+    diag: ?*diagnostics.Diagnostics,
+    lang_config: ?*const cfg.LanguageConfig,
 ) ![]output.Hit {
     g_graph = g;
     g_bridge = bridge;
     g_allocator = allocator;
     g_hits = .empty;
+    g_diag = diag;
+    g_lang_config = lang_config;
     g_lua = lua;
 
     _ = lua.getGlobal("check") catch return &.{};
@@ -183,7 +238,9 @@ pub fn executeMapRule(
         lua.pop(1);
         return &.{};
     }
-    lua.protectedCall(.{ .args = 0, .results = 1 }) catch {};
+    lua.protectedCall(.{ .args = 0, .results = 1 }) catch {
+        if (g_diag) |d| d.warn("lua", "check() threw an error", .{});
+    };
 
     // Collect findings from return table (check() may return a table OR call report.hit())
     if (lua.isTable(-1)) {
@@ -241,6 +298,7 @@ pub fn executeMapRule(
 // ── Walker Callbacks ─────────────────────────────────────────────────
 
 var g_lua: *Lua = undefined;
+var g_hook_warned: bool = false;
 
 fn luaFinalizeCallback() void {
     _ = g_lua.getGlobal("finalize") catch return;
@@ -248,7 +306,9 @@ fn luaFinalizeCallback() void {
         g_lua.pop(1);
         return;
     }
-    g_lua.protectedCall(.{ .args = 0, .results = 0 }) catch {};
+    g_lua.protectedCall(.{ .args = 0, .results = 0 }) catch {
+        if (g_diag) |d| d.warn("lua", "finalize() threw an error", .{});
+    };
 }
 
 fn luaEnterCallback(node: ts.Node, ctx: walker.WalkContext) void {
@@ -275,7 +335,12 @@ fn callLuaHook(hook_name: [:0]const u8, node: ts.Node, ctx: walker.WalkContext) 
     // Push context table: {depth, current_file, current_node}
     pushContextTable(ctx);
 
-    g_lua.protectedCall(.{ .args = 2, .results = 0 }) catch {};
+    g_lua.protectedCall(.{ .args = 2, .results = 0 }) catch {
+        if (!g_hook_warned) {
+            if (g_diag) |d| d.warn("lua", "{s}() hook threw an error (further errors suppressed)", .{hook_name});
+            g_hook_warned = true;
+        }
+    };
 }
 
 fn pushAstNodeTable(node: ts.Node, ctx: walker.WalkContext) void {
@@ -294,7 +359,7 @@ fn pushAstNodeTable(node: ts.Node, ctx: walker.WalkContext) void {
     g_lua.setField(-2, "file");
 
     // name (node text, for context)
-    if (g_bridge.nodeText(node)) |text| {
+    if (g_graph.nodeText(node)) |text| {
         // Truncate to first 100 chars to avoid huge strings
         const t = if (text.len > 100) text[0..100] else text;
         _ = g_lua.pushString(t);
@@ -361,14 +426,25 @@ fn registerGraphApi(lua: *Lua) void {
     lua.pushFunction(zlua.wrap(luaGraphGetInheritanceParents));
     lua.setField(-2, "get_inheritance_parents");
 
+    lua.pushFunction(zlua.wrap(luaGraphLanguageInfo));
+    lua.setField(-2, "language_info");
+
     lua.setGlobal("graph");
 }
 
 fn luaGraphGetNodesByKind(lua: *Lua) i32 {
     const kind_str = lua.toString(1) catch return 0;
-    const kind = std.meta.stringToEnum(graph.NodeKind, kind_str) orelse return 0;
+    const kind = std.meta.stringToEnum(graph.NodeKind, kind_str) orelse {
+        if (g_diag) |d| d.warn("graph_api", "graph.get_nodes_by_kind: unknown kind '{s}'; valid: file, container, callable, variable, modifier, event, custom_error", .{kind_str});
+        lua.createTable(0, 0);
+        return 1;
+    };
 
-    const nodes = g_graph.getNodesByKind(kind, g_allocator) catch return 0;
+    const nodes = g_graph.getNodesByKind(kind, g_allocator) catch {
+        if (g_diag) |d| d.err("graph_api", "graph.get_nodes_by_kind: allocation failed", .{});
+        lua.createTable(0, 0);
+        return 1;
+    };
     defer g_allocator.free(nodes);
 
     lua.createTable(@intCast(nodes.len), 0);
@@ -567,6 +643,85 @@ fn luaGraphGetInheritanceParents(lua: *Lua) i32 {
         }
     }
     return 1;
+}
+
+/// graph.language_info() -> {language, node_kinds, ref_kinds, properties}
+fn luaGraphLanguageInfo(lua: *Lua) i32 {
+    const lc = g_lang_config orelse {
+        if (g_diag) |d| d.warn("graph_api", "graph.language_info: language config not available", .{});
+        lua.pushNil();
+        return 1;
+    };
+
+    lua.createTable(0, 4);
+
+    // language name
+    _ = lua.pushString(@tagName(lc.language));
+    lua.setField(-2, "language");
+
+    // node_kinds — comptime iterate NodeKind enum
+    {
+        const fields = @typeInfo(graph.NodeKind).@"enum".fields;
+        lua.createTable(@intCast(fields.len), 0);
+        inline for (fields, 0..) |f, i| {
+            _ = lua.pushString(f.name);
+            lua.rawSetIndex(-2, @intCast(i + 1));
+        }
+        lua.setField(-2, "node_kinds");
+    }
+
+    // ref_kinds — comptime iterate RefKind enum
+    {
+        const fields = @typeInfo(graph.RefKind).@"enum".fields;
+        lua.createTable(@intCast(fields.len), 0);
+        inline for (fields, 0..) |f, i| {
+            _ = lua.pushString(f.name);
+            lua.rawSetIndex(-2, @intCast(i + 1));
+        }
+        lua.setField(-2, "ref_kinds");
+    }
+
+    // properties — collect unique keys from all config mapping arrays
+    {
+        lua.createTable(0, 0);
+        var idx: i32 = 1;
+        var seen: [32][]const u8 = undefined;
+        var seen_count: usize = 0;
+
+        pushUniquePropertyKeys(lua, lc.containers, &seen, &seen_count, &idx);
+        pushUniquePropertyKeys(lua, lc.callables, &seen, &seen_count, &idx);
+        pushUniquePropertyKeys(lua, lc.variables, &seen, &seen_count, &idx);
+        pushUniquePropertyKeys(lua, lc.modifiers, &seen, &seen_count, &idx);
+        pushUniquePropertyKeys(lua, lc.events, &seen, &seen_count, &idx);
+        pushUniquePropertyKeys(lua, lc.errors, &seen, &seen_count, &idx);
+        lua.setField(-2, "properties");
+    }
+
+    return 1;
+}
+
+/// Iterate all mappings in a config array, push unique property keys onto the Lua table at stack top.
+fn pushUniquePropertyKeys(lua: *Lua, mappings: anytype, seen: *[32][]const u8, seen_count: *usize, idx: *i32) void {
+    for (mappings) |m| {
+        for (m.properties) |prop| {
+            var found = false;
+            for (seen[0..seen_count.*]) |s| {
+                if (std.mem.eql(u8, s, prop.key)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                if (seen_count.* < seen.len) {
+                    seen[seen_count.*] = prop.key;
+                    seen_count.* += 1;
+                }
+                _ = lua.pushString(prop.key);
+                lua.rawSetIndex(-2, idx.*);
+                idx.* += 1;
+            }
+        }
+    }
 }
 
 fn pushGraphNodeTable(lua: *Lua, node: *graph.GraphNode) void {
@@ -810,10 +965,13 @@ fn luaAstIsNamed(lua: *Lua) i32 {
 // ── report.* API Registration (§6.5) ─────────────────────────────────
 
 fn registerReportApi(lua: *Lua) void {
-    lua.createTable(0, 1);
+    lua.createTable(0, 2);
 
     lua.pushFunction(zlua.wrap(luaReportHit));
     lua.setField(-2, "hit");
+
+    lua.pushFunction(zlua.wrap(luaReportWarn));
+    lua.setField(-2, "warn");
 
     lua.setGlobal("report");
 }
@@ -848,5 +1006,12 @@ fn luaReportHit(lua: *Lua) i32 {
         .node_text = node_text,
     }) catch {};
 
+    return 0;
+}
+
+/// report.warn(message) — emit a diagnostic warning from a rule
+fn luaReportWarn(lua: *Lua) i32 {
+    const msg = lua.toString(1) catch return 0;
+    if (g_diag) |d| d.warn("rule", "{s}", .{msg});
     return 0;
 }

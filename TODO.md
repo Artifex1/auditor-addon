@@ -21,7 +21,7 @@ Spec needs updating (implementation intentionally diverged):
 
 Shipped rules — next batch (priority order):
 
-18. [x] MAP-001 broad-visibility: public callables with no cross-container callers → could be external (56 reported)
+18. [x] SOL-022 broad-visibility: public callables with no cross-container callers → could be external (56 reported)
 20. [x] SOL-011 div-before-mul: binary_expression(*) whose left subtree contains (/), precision loss (26 reported)
 21. [x] GEN-002 duplicated-import: same import path seen twice in a file, multi-language (16 reported)
 22. [x] GEN-001 constant-not-cap: constant/immutable not UPPER_CASE, multi-language (15 reported)
@@ -30,7 +30,7 @@ Shipped rules — next batch (priority order):
 
 Shipped rules — second tier (implement after batch above):
 
-19. [x] MAP-002 unused-function: internal/private callables with zero callers (13 reported)
+19. [x] SOL-023 unused-function: internal/private callables with zero callers (13 reported)
 26. [x] SOL-016 unused-error: custom error defined but never used in revert (33 reported) — MAP rule
 27. [x] SOL-017 unused-event: event defined but never emitted (14 reported) — MAP rule
 28. [x] SOL-013 state-update-no-event: state write with no corresponding event emit (20 reported)

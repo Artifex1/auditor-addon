@@ -32,16 +32,16 @@ pub const config = cfg.LanguageConfig{
     .inheritance_strategy = .flat,
 
     .builtin_functions = &.{
-        "print",      "len",       "range",     "int",       "str",
-        "float",      "list",      "dict",      "set",       "tuple",
-        "type",       "isinstance", "issubclass", "hasattr",  "getattr",
-        "setattr",    "delattr",   "super",     "property",  "staticmethod",
-        "classmethod", "enumerate", "zip",      "map",       "filter",
-        "sorted",     "reversed",  "min",       "max",       "sum",
-        "abs",        "round",     "open",      "input",     "bool",
-        "bytes",      "object",    "id",        "hash",      "repr",
-        "format",     "vars",      "dir",       "callable",  "iter",
-        "next",       "any",       "all",       "breakpoint",
+        "print",       "len",        "range",      "int",        "str",
+        "float",       "list",       "dict",       "set",        "tuple",
+        "type",        "isinstance", "issubclass", "hasattr",    "getattr",
+        "setattr",     "delattr",    "super",      "property",   "staticmethod",
+        "classmethod", "enumerate",  "zip",        "map",        "filter",
+        "sorted",      "reversed",   "min",        "max",        "sum",
+        "abs",         "round",      "open",       "input",      "bool",
+        "bytes",       "object",     "id",         "hash",       "repr",
+        "format",      "vars",       "dir",        "callable",   "iter",
+        "next",        "any",        "all",        "breakpoint",
     },
     .builtin_receivers = &.{},
 
@@ -68,5 +68,16 @@ pub const config = cfg.LanguageConfig{
         .comment_types = &.{"comment"},
         .normalization_types = &.{ "function_definition", "call", "list", "dictionary" },
         .base_rate_per_day = 275,
+    },
+
+    .test_markers = &.{
+        .{ .node_type = "function_definition", .detection = .{ .name_prefix = .{
+            .name_field = "name",
+            .prefix = "test",
+        } } },
+        .{ .node_type = "class_definition", .detection = .{ .name_prefix = .{
+            .name_field = "name",
+            .prefix = "Test",
+        } } },
     },
 };

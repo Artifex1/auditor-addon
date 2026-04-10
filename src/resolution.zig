@@ -57,6 +57,8 @@ pub const ResolutionDiag = struct {
     broken: std.ArrayList(BrokenResolution) = .empty,
     resolved_count: u32 = 0,
     allocator: std.mem.Allocator,
+    /// Backing buffers whose slices are referenced by diagnostic entries.
+    owned_buffers: std.ArrayList([]const u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) ResolutionDiag {
         return .{ .allocator = allocator };
@@ -66,6 +68,13 @@ pub const ResolutionDiag = struct {
         self.parse_errors.deinit(self.allocator);
         self.stale.deinit(self.allocator);
         self.broken.deinit(self.allocator);
+        for (self.owned_buffers.items) |buf| self.allocator.free(buf);
+        self.owned_buffers.deinit(self.allocator);
+    }
+
+    /// Transfer ownership of a buffer to this diag so slices into it remain valid.
+    pub fn ownBuffer(self: *ResolutionDiag, buf: []const u8) !void {
+        try self.owned_buffers.append(self.allocator, buf);
     }
 
     pub fn hasDiagnostics(self: *const ResolutionDiag) bool {
@@ -201,8 +210,13 @@ pub fn applyResolutions(
             continue;
         }
 
-        // Compute target node ID using the same hash as §2.5
-        const target_id = graph.nodeId(res.target_name, res.target_file, res.target_line);
+        // Compute target node ID using the same hash as §2.5.
+        // Import refs target the file node (matching expandImports semantics):
+        // the CSV target_file is the resolved dependency path, target_name/line are ignored.
+        const target_id = if (ref.kind == .import)
+            graph.nodeId(res.target_file, res.target_file, 1)
+        else
+            graph.nodeId(res.target_name, res.target_file, res.target_line);
         if (g.lookupNode(target_id) == null) {
             try diag.broken.append(diag.allocator, .{
                 .row = pr.csv_row,
@@ -581,4 +595,61 @@ test "apply resolutions: scoped_files excludes dependency gaps from count" {
 
     // With scope: only 1 gap (the one in src/Vault.sol)
     try std.testing.expectEqual(@as(u32, 1), g.gapCount());
+}
+
+test "apply resolutions: import gap resolves to file node" {
+    // Import gaps target the file node (nodeId(path, path, 1)), not a symbol node.
+    // The CSV target_name is ignored for imports — only target_file matters.
+    var g = graph.SymbolGraph.init(std.testing.allocator);
+    defer g.deinit();
+
+    // File node for the dependency (created by parseAndWalkFile)
+    const dep_path = "deps/@openzeppelin-contracts/token/ERC20/IERC20.sol";
+    const file_node_id = graph.nodeId(dep_path, dep_path, 1);
+    _ = try g.addNode(.{
+        .id = file_node_id,
+        .kind = .file,
+        .language_kind = "source_file",
+        .name = dep_path,
+        .qualified_name = dep_path,
+        .language = .solidity,
+    });
+
+    // Import ref with unresolved gap (set by resolve() step 1)
+    const rid = graph.refId("src/Vault.sol", 20, 80, .import);
+    try g.addRef(.{
+        .id = rid,
+        .from = 1,
+        .kind = .import,
+        .target_name = "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        .site = .{ .file = "src/Vault.sol", .start_byte = 20, .end_byte = 80, .line = 4, .column = 0 },
+        .targets = .empty,
+        .gap = .high,
+        .resolved = true,
+    });
+
+    // CSV: agent provides the resolved file path — target_name can be anything
+    var csv_buf: [512]u8 = undefined;
+    const csv = try std.fmt.bufPrint(
+        &csv_buf,
+        "ref_id,target_file,target_line,target_name\n{x},{s},4,IERC20\n",
+        .{ rid, dep_path },
+    );
+
+    var diag = ResolutionDiag.init(std.testing.allocator);
+    defer diag.deinit();
+    const resolutions = try parseResolutionFile(csv, std.testing.allocator, &diag);
+    defer std.testing.allocator.free(resolutions);
+
+    try applyResolutions(&g, resolutions, &diag);
+
+    try std.testing.expectEqual(@as(u32, 1), diag.resolved_count);
+    try std.testing.expectEqual(@as(usize, 0), diag.broken.items.len);
+    try std.testing.expectEqual(@as(usize, 0), diag.stale.items.len);
+
+    // Import gap cleared, target is the file node
+    try g.buildSiteIndex();
+    const ref = g.lookupRef(rid).?;
+    try std.testing.expect(ref.gap == null);
+    try std.testing.expectEqual(file_node_id, ref.firstTarget().?);
 }

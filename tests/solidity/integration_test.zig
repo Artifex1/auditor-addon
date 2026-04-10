@@ -236,7 +236,7 @@ test "metrics: DeepNesting fixture — cognitive complexity" {
     defer result.parser.destroy();
 
     const lang_config = cfg.getConfig(.solidity);
-    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics);
+    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics, &.{});
 
     // 3 nested ifs: depth 0=1, depth 1=2, depth 2=3 → total=6
     try std.testing.expectEqual(@as(u32, 6), m.cognitive_complexity);
@@ -249,7 +249,7 @@ test "metrics: Documented fixture — comment counting" {
     defer result.parser.destroy();
 
     const lang_config = cfg.getConfig(.solidity);
-    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics);
+    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics, &.{});
 
     // Comments: @notice, Internal state variable, @notice Sets, @param
     try std.testing.expect(m.comment_lines >= 4);
@@ -263,7 +263,7 @@ test "metrics: Metrics fixture — simple contract" {
     defer result.parser.destroy();
 
     const lang_config = cfg.getConfig(.solidity);
-    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics);
+    const m = metrics_mod.computeMetrics(result.tree, source, lang_config.metrics, &.{});
 
     try std.testing.expectEqual(@as(u32, 0), m.cognitive_complexity);
     try std.testing.expect(m.nloc > 0);
@@ -279,7 +279,7 @@ test "peek: SimpleVault fixture — extracts signatures" {
     defer result.parser.destroy();
 
     const lang_config = cfg.getConfig(.solidity);
-    const sigs = try peek_mod.extractSignatures(result.tree, source, lang_config, "SimpleVault.sol", allocator);
+    const sigs = try peek_mod.extractSignatures(result.tree, source, lang_config, "SimpleVault.sol", allocator, &.{});
     defer allocator.free(sigs);
 
     try std.testing.expect(sigs.len >= 2);
@@ -338,6 +338,25 @@ test "output: TOON graph from SimpleVault" {
     try std.testing.expect(std.mem.indexOf(u8, out, "refs[") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "SimpleVault") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "deposit") != null);
+}
+
+test "pipeline: StructConstructor — struct instantiation is not a gap" {
+    const allocator = std.testing.allocator;
+    const files = [_][]const u8{fixture_dir ++ "StructConstructor.sol"};
+    const pipe = try runPipeline(allocator, &files);
+    defer {
+        pipe.deinit();
+        allocator.destroy(pipe);
+    }
+    const g = &pipe.graph;
+
+    // Struct and enum tracked as type_def nodes
+    try std.testing.expect(hasNodeNamed(g, "Proposal", .type_def));
+    try std.testing.expect(hasNodeNamed(g, "Status", .type_def));
+
+    // Struct constructor call resolves (no gap)
+    try std.testing.expect(hasRefWithTarget(g, "create", "Proposal"));
+    try std.testing.expectEqual(@as(u32, 0), g.gapCount());
 }
 
 test "output: JSON gaps from GapScenarios" {

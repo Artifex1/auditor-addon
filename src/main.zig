@@ -13,6 +13,7 @@ pub const peek = @import("peek.zig");
 pub const call_chains = @import("call_chains.zig");
 pub const lua_adapter = @import("lua_adapter.zig");
 pub const ast_bridge = @import("ast_bridge.zig");
+pub const diagnostics = @import("diagnostics.zig");
 
 const glob = @import("glob.zig");
 const shipped_rules = @import("rules/shipped.zig");
@@ -112,6 +113,7 @@ const peek_params = clap.parseParamsComptime(
     \\-h, --help                Display this help and exit.
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\<str>...
     \\
 );
@@ -120,6 +122,7 @@ const metrics_params = clap.parseParamsComptime(
     \\-h, --help                Display this help and exit.
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\<str>...
     \\
 );
@@ -130,6 +133,7 @@ const gaps_params = clap.parseParamsComptime(
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
     \\    --no-expand           Skip import-driven file expansion.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\    --kind <str>          Filter gaps by edge kind (calls, inherits, imports, ...).
     \\    --priority <str>      Filter gaps by priority (high, medium, low).
     \\<str>...
@@ -141,6 +145,7 @@ const run_params = clap.parseParamsComptime(
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\    --rule <str>...       Run specific shipped rule(s) only.
     \\    --rule-path <str>...  Run adhoc rule(s) from .lua file or glob.
     \\    --rule-inline <str>   Run adhoc rule from inline Lua string.
@@ -154,6 +159,7 @@ const call_chains_params = clap.parseParamsComptime(
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\    --root <str>...       Start from specific function(s).
     \\    --max-depth <usize>   Limit chain depth (default: 10).
     \\<str>...
@@ -165,6 +171,7 @@ const graph_params = clap.parseParamsComptime(
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
     \\    --resolutions <str>   Apply resolution CSV file.
+    \\    --no-tests            Exclude test-annotated code from analysis.
     \\    --format <str>        Output format: toon, json (default: toon).
     \\<str>...
     \\
@@ -203,6 +210,7 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
     }
 
     const use_json = res.args.json != 0;
+    const no_tests = res.args.@"no-tests" != 0;
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
@@ -223,6 +231,7 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
     for (files) |file_path| {
         const lang = forced_lang orelse detectLanguage(file_path) orelse continue;
         const lang_config = cfg.getConfig(lang);
+        const test_markers: []const cfg.TestMarker = if (no_tests) lang_config.test_markers else &.{};
         const source = try readFileContents(file_path, allocator);
         defer allocator.free(source);
 
@@ -233,7 +242,7 @@ fn cmdPeek(allocator: std.mem.Allocator, iter: anytype) !void {
         const tree = parser.parseString(source, null) orelse continue;
         defer tree.destroy();
 
-        const sigs = try peek.extractSignatures(tree, source, lang_config, file_path, aa);
+        const sigs = try peek.extractSignatures(tree, source, lang_config, file_path, aa, test_markers);
         var sig_texts: std.ArrayList([]const u8) = .empty;
         for (sigs) |s| {
             try sig_texts.append(aa, s.text);
@@ -272,6 +281,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
     }
 
     const use_json = res.args.json != 0;
+    const no_tests = res.args.@"no-tests" != 0;
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
 
     const files = try expandPositionals(res.positionals[0], allocator);
@@ -288,6 +298,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
     for (files) |file_path| {
         const lang = forced_lang orelse detectLanguage(file_path) orelse continue;
         const lang_config = cfg.getConfig(lang);
+        const test_markers: []const cfg.TestMarker = if (no_tests) lang_config.test_markers else &.{};
         const source = try readFileContents(file_path, allocator);
         defer allocator.free(source);
 
@@ -298,7 +309,7 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
         const tree = parser.parseString(source, null) orelse continue;
         defer tree.destroy();
 
-        const m = metrics.computeMetrics(tree, source, lang_config.metrics);
+        const m = metrics.computeMetrics(tree, source, lang_config.metrics, test_markers);
 
         try all_metrics.append(allocator, .{
             .file = file_path,
@@ -339,6 +350,7 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     const use_json = res.args.json != 0;
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
     const no_expand = res.args.@"no-expand" != 0;
+    const no_tests = res.args.@"no-tests" != 0;
 
     const files = try expandPositionals(res.positionals[0], allocator);
     defer freeExpandedFiles(files, allocator);
@@ -348,28 +360,49 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
         return;
     }
 
-    const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aud gaps: cannot detect language\n");
-        return;
-    };
-
-    const lang_config = cfg.getConfig(lang);
-    var pipe = try pipeline.Pipeline.init(allocator, lang_config);
-    defer pipe.deinit();
-
-    try pipe.run(files, no_expand);
-    pipe.graph.scoped_files = &pipe.scoped_files;
-
-    if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator, use_json);
+    const groups = try groupFilesByLanguage(files, forced_lang, allocator, null);
+    defer {
+        for (groups) |g| allocator.free(g.files);
+        allocator.free(groups);
     }
+
+    if (groups.len == 0) {
+        try stderrPrint("aud gaps: no files with recognized language\n");
+        return;
+    }
+
+    var res_diag = resolution.ResolutionDiag.init(allocator);
+    defer res_diag.deinit();
 
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
-    if (use_json) {
-        try output.writeJsonGaps(&pipe.graph, &w.interface);
-    } else {
-        try output.writeToonGaps(&pipe.graph, &w.interface);
+
+    for (groups) |group| {
+        const lang_config = cfg.getConfig(group.language);
+        var pipe = try pipeline.Pipeline.init(allocator, lang_config);
+        defer pipe.deinit();
+        if (no_tests) pipe.test_markers = lang_config.test_markers;
+
+        try pipe.run(group.files, no_expand);
+        pipe.graph.scoped_files = &pipe.scoped_files;
+
+        if (res.args.resolutions) |res_path| {
+            try applyResolutionFile(&pipe, res_path, allocator, &res_diag);
+        }
+
+        if (use_json) {
+            try output.writeJsonGaps(&pipe.graph, &w.interface);
+        } else {
+            try output.writeToonGaps(&pipe.graph, &w.interface);
+        }
+    }
+
+    if (res_diag.hasDiagnostics() or res_diag.resolved_count > 0) {
+        if (use_json) {
+            try output.writeJsonResolutionDiag(&res_diag, &w.interface);
+        } else {
+            try output.writeToonResolutionDiag(&res_diag, &w.interface);
+        }
     }
     try w.interface.flush();
 }
@@ -392,6 +425,7 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
 
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
     const use_json = res.args.json != 0;
+    const no_tests = res.args.@"no-tests" != 0;
 
     const files = try expandPositionals(res.positionals[0], allocator);
     defer freeExpandedFiles(files, allocator);
@@ -401,67 +435,82 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
         return;
     }
 
-    const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aud run: cannot detect language\n");
-        return;
-    };
+    // Tool diagnostics accumulator (shared across all languages)
+    var tool_diag = diagnostics.Diagnostics.init(allocator);
+    defer tool_diag.deinit();
 
-    // Build graph
-    const lang_config = cfg.getConfig(lang);
-    var pipe = try pipeline.Pipeline.init(allocator, lang_config);
-    defer pipe.deinit();
-    try pipe.run(files, false);
-    pipe.graph.scoped_files = &pipe.scoped_files;
-
-    // Apply resolutions if provided
-    if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator, use_json);
+    // Group files by detected language
+    const groups = try groupFilesByLanguage(files, forced_lang, allocator, &tool_diag);
+    defer {
+        for (groups) |g| allocator.free(g.files);
+        allocator.free(groups);
     }
+
+    if (groups.len == 0) {
+        try stderrPrint("aud run: no files with recognized language\n");
+        return;
+    }
+
+    // Apply resolutions if provided (shared across languages)
+    var res_diag = resolution.ResolutionDiag.init(allocator);
+    defer res_diag.deinit();
 
     // Arena for all rule execution allocations (Lua string dups, hits, metadata)
     var rule_arena = std.heap.ArenaAllocator.init(allocator);
     defer rule_arena.deinit();
     const ra = rule_arena.allocator();
 
-    // Set up AST bridge
-    var bridge = ast_bridge.AstBridge.init(allocator, &pipe.sources);
-    defer bridge.deinit();
-
-    // Collect all findings across rules
+    // Collect all findings across languages and rules
     var all_findings: std.ArrayList(output.Finding) = .empty;
 
-    // Load and execute rules
-    // --rule-path or --rule-inline: adhoc rules only (skip shipped)
-    // Otherwise: run shipped rules, optionally filtered by --rule=<ID>
+    // Per-language pipeline execution
     const has_adhoc = res.args.@"rule-path".len > 0 or res.args.@"rule-inline" != null;
 
-    if (res.args.@"rule-path".len > 0) {
-        const rule_files = try expandPositionals(res.args.@"rule-path", allocator);
-        defer freeExpandedFiles(rule_files, allocator);
-        for (rule_files) |rule_path| {
-            try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, rule_path, null, &all_findings);
+    for (groups) |group| {
+        const lang_config = cfg.getConfig(group.language);
+        var pipe = try pipeline.Pipeline.init(allocator, lang_config);
+        if (no_tests) pipe.test_markers = lang_config.test_markers;
+        defer pipe.deinit();
+        try pipe.run(group.files, false);
+        pipe.graph.scoped_files = &pipe.scoped_files;
+
+        // Apply resolutions per pipeline
+        if (res.args.resolutions) |res_path| {
+            try applyResolutionFile(&pipe, res_path, allocator, &res_diag);
         }
-    }
 
-    if (res.args.@"rule-inline") |rule_code| {
-        try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, rule_code, &all_findings);
-    }
+        // AST bridge per pipeline
+        var bridge = ast_bridge.AstBridge.init(allocator, &pipe.graph);
+        defer bridge.deinit();
 
-    if (!has_adhoc) {
-        const rule_filter = res.args.rule;
-        for (&shipped_rules.all) |shipped| {
-            // Apply --rule filter if specified
-            if (rule_filter.len > 0) {
-                var matched = false;
-                for (rule_filter) |filter| {
-                    if (std.mem.eql(u8, shipped.id, filter)) {
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) continue;
+        // Execute rules (adhoc or shipped, filtered by language)
+        if (res.args.@"rule-path".len > 0) {
+            const rule_files = try expandPositionals(res.args.@"rule-path", allocator);
+            defer freeExpandedFiles(rule_files, allocator);
+            for (rule_files) |rule_path| {
+                try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, rule_path, null, &all_findings, &tool_diag, group.language);
             }
-            try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, shipped.source, &all_findings);
+        }
+
+        if (res.args.@"rule-inline") |rule_code| {
+            try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, rule_code, &all_findings, &tool_diag, group.language);
+        }
+
+        if (!has_adhoc) {
+            const rule_filter = res.args.rule;
+            for (&shipped_rules.all) |shipped| {
+                if (rule_filter.len > 0) {
+                    var matched = false;
+                    for (rule_filter) |filter| {
+                        if (std.mem.eql(u8, shipped.id, filter)) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (!matched) continue;
+                }
+                try executeRule(ra, allocator, &pipe.graph, &bridge, lang_config, null, shipped.source, &all_findings, &tool_diag, group.language);
+            }
         }
     }
 
@@ -482,6 +531,20 @@ fn cmdRun(allocator: std.mem.Allocator, iter: anytype) !void {
 
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
+    if (tool_diag.hasDiagnostics()) {
+        if (use_json) {
+            try output.writeJsonDiagnostics(&tool_diag, &w.interface);
+        } else {
+            try output.writeToonDiagnostics(&tool_diag, &w.interface);
+        }
+    }
+    if (res_diag.hasDiagnostics() or res_diag.resolved_count > 0) {
+        if (use_json) {
+            try output.writeJsonResolutionDiag(&res_diag, &w.interface);
+        } else {
+            try output.writeToonResolutionDiag(&res_diag, &w.interface);
+        }
+    }
     if (use_json) {
         try output.writeJsonFindings(findings_slice, &w.interface);
     } else {
@@ -499,8 +562,10 @@ fn executeRule(
     rule_path: ?[]const u8,
     rule_code: ?[]const u8,
     all_findings: *std.ArrayList(output.Finding),
+    diag: ?*diagnostics.Diagnostics,
+    current_language: cfg.Language,
 ) !void {
-    const lua = try lua_adapter.initLua(arena_alloc, lua_alloc, g, bridge);
+    const lua = try lua_adapter.initLua(arena_alloc, lua_alloc, g, bridge, diag, lang_config);
     defer lua.deinit();
 
     // Load rule
@@ -511,11 +576,24 @@ fn executeRule(
     else
         return;
 
+    // Language filter: skip rule if its languages list doesn't include current language
+    if (metadata.languages) |langs| {
+        const lang_name = @tagName(current_language);
+        var matched = false;
+        for (langs) |l| {
+            if (std.mem.eql(u8, l, lang_name)) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return;
+    }
+
     // Execute based on rule type
     const hits = if (std.mem.eql(u8, metadata.rule_type, "map"))
-        try lua_adapter.executeMapRule(lua, g, bridge, arena_alloc)
+        try lua_adapter.executeMapRule(lua, g, bridge, arena_alloc, diag, lang_config)
     else
-        try lua_adapter.executeVisitorRule(lua, g, metadata, bridge, lang_config, arena_alloc);
+        try lua_adapter.executeVisitorRule(lua, g, metadata, bridge, lang_config, arena_alloc, diag);
 
     if (hits.len > 0) {
         try all_findings.append(arena_alloc, .{
@@ -546,6 +624,7 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
 
     const use_json = res.args.json != 0;
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
+    const no_tests = res.args.@"no-tests" != 0;
     const max_depth: u32 = if (res.args.@"max-depth") |d| @intCast(d) else 10;
 
     const root_filter: ?[]const []const u8 = if (res.args.root.len > 0)
@@ -561,42 +640,61 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
         return;
     }
 
-    const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aud call-chains: cannot detect language\n");
-        return;
-    };
-
-    const lang_config = cfg.getConfig(lang);
-    var pipe = try pipeline.Pipeline.init(allocator, lang_config);
-    defer pipe.deinit();
-
-    try pipe.run(files, false);
-    pipe.graph.scoped_files = &pipe.scoped_files;
-
-    if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator, use_json);
+    const groups = try groupFilesByLanguage(files, forced_lang, allocator, null);
+    defer {
+        for (groups) |g| allocator.free(g.files);
+        allocator.free(groups);
     }
 
-    const chain_results = try call_chains.computeCallChains(&pipe.graph, root_filter, max_depth, allocator);
-    defer allocator.free(chain_results);
+    if (groups.len == 0) {
+        try stderrPrint("aud call-chains: no files with recognized language\n");
+        return;
+    }
+
+    var res_diag = resolution.ResolutionDiag.init(allocator);
+    defer res_diag.deinit();
 
     var output_roots: std.ArrayList(output.RootChains) = .empty;
     defer output_roots.deinit(allocator);
 
-    for (chain_results) |cs| {
-        var chain_strs: std.ArrayList([]const u8) = .empty;
-        for (cs.chains.items) |chain| {
-            const formatted = try call_chains.formatChain(chain, allocator);
-            try chain_strs.append(allocator, formatted);
+    for (groups) |group| {
+        const lang_config = cfg.getConfig(group.language);
+        var pipe = try pipeline.Pipeline.init(allocator, lang_config);
+        defer pipe.deinit();
+        if (no_tests) pipe.test_markers = lang_config.test_markers;
+
+        try pipe.run(group.files, false);
+        pipe.graph.scoped_files = &pipe.scoped_files;
+
+        if (res.args.resolutions) |res_path| {
+            try applyResolutionFile(&pipe, res_path, allocator, &res_diag);
         }
-        try output_roots.append(allocator, .{
-            .root_name = cs.root_name,
-            .chains = try chain_strs.toOwnedSlice(allocator),
-        });
+
+        const chain_results = try call_chains.computeCallChains(&pipe.graph, root_filter, max_depth, allocator);
+        defer call_chains.freeCallChains(chain_results, allocator);
+
+        for (chain_results) |cs| {
+            var chain_strs: std.ArrayList([]const u8) = .empty;
+            for (cs.chains.items) |chain| {
+                const formatted = try call_chains.formatChain(chain, allocator);
+                try chain_strs.append(allocator, formatted);
+            }
+            try output_roots.append(allocator, .{
+                .root_name = try allocator.dupe(u8, cs.root_name),
+                .chains = try chain_strs.toOwnedSlice(allocator),
+            });
+        }
     }
 
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
+    if (res_diag.hasDiagnostics() or res_diag.resolved_count > 0) {
+        if (use_json) {
+            try output.writeJsonResolutionDiag(&res_diag, &w.interface);
+        } else {
+            try output.writeToonResolutionDiag(&res_diag, &w.interface);
+        }
+    }
     if (use_json) {
         try output.writeJsonCallChains(output_roots.items, &w.interface);
     } else {
@@ -626,6 +724,7 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
     else
         res.args.json != 0;
     const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
+    const no_tests = res.args.@"no-tests" != 0;
 
     const files = try expandPositionals(res.positionals[0], allocator);
     defer freeExpandedFiles(files, allocator);
@@ -635,27 +734,48 @@ fn cmdGraph(allocator: std.mem.Allocator, iter: anytype) !void {
         return;
     }
 
-    const lang = forced_lang orelse detectLanguage(files[0]) orelse {
-        try stderrPrint("aud graph: cannot detect language\n");
-        return;
-    };
-
-    const lang_config = cfg.getConfig(lang);
-    var pipe = try pipeline.Pipeline.init(allocator, lang_config);
-    defer pipe.deinit();
-
-    try pipe.run(files, false);
-
-    if (res.args.resolutions) |res_path| {
-        try applyResolutionFile(&pipe, res_path, allocator, use_json);
+    const groups = try groupFilesByLanguage(files, forced_lang, allocator, null);
+    defer {
+        for (groups) |g| allocator.free(g.files);
+        allocator.free(groups);
     }
+
+    if (groups.len == 0) {
+        try stderrPrint("aud graph: no files with recognized language\n");
+        return;
+    }
+
+    var res_diag = resolution.ResolutionDiag.init(allocator);
+    defer res_diag.deinit();
 
     var buf: [8192]u8 = undefined;
     var w = std.fs.File.stdout().writer(&buf);
-    if (use_json) {
-        try output.writeJsonGraph(&pipe.graph, &w.interface);
-    } else {
-        try output.writeToonGraph(&pipe.graph, &w.interface);
+
+    for (groups) |group| {
+        const lang_config = cfg.getConfig(group.language);
+        var pipe = try pipeline.Pipeline.init(allocator, lang_config);
+        defer pipe.deinit();
+        if (no_tests) pipe.test_markers = lang_config.test_markers;
+
+        try pipe.run(group.files, false);
+
+        if (res.args.resolutions) |res_path| {
+            try applyResolutionFile(&pipe, res_path, allocator, &res_diag);
+        }
+
+        if (use_json) {
+            try output.writeJsonGraph(&pipe.graph, &w.interface);
+        } else {
+            try output.writeToonGraph(&pipe.graph, &w.interface);
+        }
+    }
+
+    if (res_diag.hasDiagnostics() or res_diag.resolved_count > 0) {
+        if (use_json) {
+            try output.writeJsonResolutionDiag(&res_diag, &w.interface);
+        } else {
+            try output.writeToonResolutionDiag(&res_diag, &w.interface);
+        }
     }
     try w.interface.flush();
 }
@@ -733,15 +853,12 @@ fn applyResolutionFile(
     pipe: *pipeline.Pipeline,
     res_path: []const u8,
     allocator: std.mem.Allocator,
-    use_json: bool,
+    diag: *resolution.ResolutionDiag,
 ) !void {
     const res_contents = try readFileContents(res_path, allocator);
-    defer allocator.free(res_contents);
+    try diag.ownBuffer(res_contents);
 
-    var diag = resolution.ResolutionDiag.init(allocator);
-    defer diag.deinit();
-
-    const resolutions = try resolution.parseResolutionFile(res_contents, allocator, &diag);
+    const resolutions = try resolution.parseResolutionFile(res_contents, allocator, diag);
     defer allocator.free(resolutions);
 
     // Pre-parse resolution target files not yet in graph
@@ -759,24 +876,68 @@ fn applyResolutionFile(
         try pipe.resolve();
     }
 
-    try resolution.applyResolutions(&pipe.graph, resolutions, &diag);
-
-    // Write structured diagnostics to stderr
-    if (diag.hasDiagnostics() or diag.resolved_count > 0) {
-        var buf: [8192]u8 = undefined;
-        var w = std.fs.File.stderr().writer(&buf);
-        if (use_json) {
-            try output.writeJsonResolutionDiag(&diag, &w.interface);
-        } else {
-            try output.writeToonResolutionDiag(&diag, &w.interface);
-        }
-        try w.interface.flush();
-    }
+    try resolution.applyResolutions(&pipe.graph, resolutions, diag);
 }
 
 fn detectLanguage(file_path: []const u8) ?cfg.Language {
     const ext = std.fs.path.extension(file_path);
     return cfg.Language.fromExtension(ext);
+}
+
+// ── Multi-Language File Grouping ────────────────────────────────────
+
+const LanguageFileGroup = struct {
+    language: cfg.Language,
+    files: []const []const u8,
+};
+
+fn groupFilesByLanguage(
+    files: []const []const u8,
+    forced_lang: ?cfg.Language,
+    allocator: std.mem.Allocator,
+    diag: ?*diagnostics.Diagnostics,
+) ![]LanguageFileGroup {
+    // Bucket files by detected language
+    var buckets: std.AutoHashMapUnmanaged(cfg.Language, std.ArrayListUnmanaged([]const u8)) = .empty;
+    defer {
+        var it = buckets.iterator();
+        while (it.next()) |entry| entry.value_ptr.deinit(allocator);
+        buckets.deinit(allocator);
+    }
+
+    for (files) |file_path| {
+        const detected = detectLanguage(file_path);
+        if (forced_lang) |fl| {
+            // --language filter: only keep files matching the forced language
+            if (detected == null or detected.? != fl) continue;
+        }
+        const lang = detected orelse {
+            if (diag) |d| d.warn("multi-lang", "skipping '{s}': unrecognized extension", .{file_path});
+            continue;
+        };
+        const gop = try buckets.getOrPut(allocator, lang);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(allocator, file_path);
+    }
+
+    // Collect into sorted slice for deterministic output order
+    var result: std.ArrayListUnmanaged(LanguageFileGroup) = .empty;
+    var it = buckets.iterator();
+    while (it.next()) |entry| {
+        try result.append(allocator, .{
+            .language = entry.key_ptr.*,
+            .files = try entry.value_ptr.toOwnedSlice(allocator),
+        });
+    }
+
+    // Sort by language enum value for deterministic ordering
+    std.mem.sort(LanguageFileGroup, result.items, {}, struct {
+        fn lessThan(_: void, a: LanguageFileGroup, b: LanguageFileGroup) bool {
+            return @intFromEnum(a.language) < @intFromEnum(b.language);
+        }
+    }.lessThan);
+
+    return try result.toOwnedSlice(allocator);
 }
 
 fn readFileContents(file_path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
@@ -801,6 +962,7 @@ comptime {
     _ = @import("walker.zig");
     _ = @import("lua_adapter.zig");
     _ = @import("ast_bridge.zig");
+    _ = @import("diagnostics.zig");
     _ = @import("languages/config.zig");
     _ = @import("languages/solidity.zig");
 }

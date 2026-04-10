@@ -42,8 +42,8 @@ pub const config = cfg.LanguageConfig{
     .inheritance_strategy = .flat,
 
     .builtin_functions = &.{
-        "toString", "equals", "hashCode", "compareTo", "clone",
-        "println", "print", "printf", "format", "valueOf",
+        "toString", "equals",    "hashCode",    "compareTo", "clone",
+        "println",  "print",     "printf",      "format",    "valueOf",
         "parseInt", "parseLong", "parseDouble",
     },
     .builtin_receivers = &.{ "System", "Math", "String", "Integer", "Long", "Double", "Arrays", "Collections", "Objects", "Optional" },
@@ -75,5 +75,13 @@ pub const config = cfg.LanguageConfig{
         .comment_types = &.{ "line_comment", "block_comment" },
         .normalization_types = &.{ "method_declaration", "method_invocation", "array_initializer" },
         .base_rate_per_day = 225,
+    },
+
+    .test_markers = &.{
+        .{ .node_type = "method_declaration", .detection = .{ .child_annotation = .{
+            .parent_field = "modifiers",
+            .child_type = "marker_annotation",
+            .match_text = "Test",
+        } } },
     },
 };

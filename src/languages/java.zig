@@ -79,7 +79,7 @@ pub const config = cfg.LanguageConfig{
 
     .test_markers = &.{
         .{ .node_type = "method_declaration", .detection = .{ .child_annotation = .{
-            .parent_field = "modifiers",
+            .parent_type = "modifiers",
             .child_type = "marker_annotation",
             .match_text = "Test",
         } } },

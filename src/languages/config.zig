@@ -213,11 +213,11 @@ pub const TestMarker = struct {
             sibling_type: []const u8,
             match_text: []const u8,
         },
-        /// Child field `parent_field` contains a child of `child_type` whose
+        /// Child of type `parent_type` contains a child of `child_type` whose
         /// text contains `match_text`.
         /// Covers: Java @Test (modifiers > marker_annotation).
         child_annotation: struct {
-            parent_field: []const u8,
+            parent_type: []const u8,
             child_type: []const u8,
             match_text: []const u8,
         },

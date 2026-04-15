@@ -28,7 +28,7 @@ pub fn isTestNode(
                     return true;
             },
             .child_annotation => |ca| {
-                if (checkChildAnnotation(node, source, ca.parent_field, ca.child_type, ca.match_text))
+                if (checkChildAnnotation(node, source, ca.parent_type, ca.child_type, ca.match_text))
                     return true;
             },
             .name_prefix => |np| {
@@ -65,24 +65,31 @@ fn checkPrevSibling(
     return false;
 }
 
-/// Get child field `parent_field`, then iterate its children for one of
+/// Find a child of `parent_type`, then iterate its children for one of
 /// `child_type` whose text contains `match_text`.
 /// Covers: Java @Test (method_declaration > modifiers > marker_annotation).
 fn checkChildAnnotation(
     node: ts.Node,
     source: []const u8,
-    parent_field: []const u8,
+    parent_type: []const u8,
     child_type: []const u8,
     match_text: []const u8,
 ) bool {
-    const parent = node.childByFieldName(parent_field) orelse return false;
-    var i: u32 = 0;
-    while (i < parent.childCount()) : (i += 1) {
-        const child = parent.child(i) orelse continue;
-        if (std.mem.eql(u8, child.kind(), child_type)) {
-            const text = source[child.startByte()..child.endByte()];
-            if (std.mem.indexOf(u8, text, match_text) != null)
-                return true;
+    // Find the parent node by type (e.g., "modifiers") among direct children
+    var pi: u32 = 0;
+    while (pi < node.childCount()) : (pi += 1) {
+        const parent = node.child(pi) orelse continue;
+        if (!std.mem.eql(u8, parent.kind(), parent_type)) continue;
+
+        // Scan the parent's children for the annotation
+        var ci: u32 = 0;
+        while (ci < parent.childCount()) : (ci += 1) {
+            const child = parent.child(ci) orelse continue;
+            if (std.mem.eql(u8, child.kind(), child_type)) {
+                const text = source[child.startByte()..child.endByte()];
+                if (std.mem.indexOf(u8, text, match_text) != null)
+                    return true;
+            }
         }
     }
     return false;

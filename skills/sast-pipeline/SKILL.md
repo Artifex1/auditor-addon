@@ -32,28 +32,16 @@ Only use glob patterns when the user explicitly asks for a broad scan (e.g., "sc
 
 ## Phase 1: Gaps Scan
 
-```bash
-aud gaps <files...>
-aud gaps <files...> --json   # JSON output
-```
+Run `aud gaps <files...>` to build the symbol graph and emit all unresolved references. Use `aud gaps --help` for filtering options (by priority, kind, etc.).
 
-Builds the symbol graph and emits all unresolved references (gaps). Gaps are grouped by priority:
-
+Gaps are grouped by priority:
 - `high` — in call chains from public entry points
 - `medium` — have public callers
 - `low` — internal, unlikely to affect rule accuracy
 
-Gap output (TOON):
-```
-gaps[3]{ref_id,from_name,target_name,kind,file,line,priority}:
-  a4f2e81b,withdraw,onlyOwner,call,src/Vault.sol,42,high
-  b7c3d012,deposit,Ownable,call,src/Vault.sol,12,medium
-  ...
-```
+Clean (no gaps) → skip to Phase 3. Otherwise proceed to Phase 2.
 
-Status is clean if no gaps; otherwise proceed to Phase 2 before running rules.
-
-## Phase 2: Resolve Gaps (optional)
+## Phase 2: Resolve Gaps
 
 Review gaps and resolve what you can. Create a CSV file:
 
@@ -64,66 +52,36 @@ b7c3d012,src/Ownable.sol,3,Ownable
 ```
 
 **Triage:**
-- **high**: read code, determine the real target, add to CSV
-- **medium**: resolve if it affects rule accuracy
+- **high**: always resolve
+- **medium**: resolve if they touch public entry points or affect rule accuracy
 - **low**: safe to skip
+
+**How to resolve a gap:** Use only basic file operations — Read, Glob, Grep. No scripts.
+1. Grep the codebase for the target name (function, contract, modifier, type)
+2. Read the candidate file to confirm it's the right definition
+3. Note the file path, line number, and name — add a row to the CSV
+
+Use `aud peek` on candidate files to quickly scan signatures without reading full source.
+
+**Iterate:** After resolving a batch, re-run `aud gaps <files...> --resolutions=resolutions.csv` to confirm progress. Resolve more if high/medium gaps remain. Repeat until only low-priority or genuinely unresolvable gaps are left.
 
 Resolution target files do NOT need to be in the original scope — `aud` automatically parses them into the graph when applying the CSV. Findings and gaps still only report on scoped files.
 
-Verify resolutions are applied correctly:
-```bash
-aud gaps <files...> --resolutions=resolutions.csv
-```
-
-Stale/broken resolutions are reported as warnings.
-
 ## Phase 3: Run Rules
 
-```bash
-aud run <files...>
-aud run <files...> --resolutions=resolutions.csv   # with resolved gaps
-aud run <files...> --rule=SOL-002                  # specific shipped rule
-aud run <files...> --rule-path=./rules/my-rule.lua      # adhoc rule file
-aud run <files...> --rule-inline='rule={id="X",name="x",severity="info",type="scope"} function enter(n,c) if n.kind=="assembly_statement" then report.hit({file=c.current_file,line=n.line,node_text=""}) end end'
-```
+Run `aud run <files...> --resolutions=resolutions.csv` (omit `--resolutions` if Phase 1 was clean). Use `aud run --help` for options (specific rules, adhoc rule files, confidence filters, etc.).
 
-Findings are grouped by rule in TOON output:
-```
-findings[SOL-002]{severity=critical,name=reentrancy}:
-  src/Vault.sol:42  withdraw → balances[msg.sender] -= amount
-```
-
-## Finding Kinds
-
-Shipped rules tag findings with a kind (visible in `--json` output):
-
-| Kind | Confidence | Meaning |
-|---|---|---|
-| `issue` | high | Confirmed defect — must fix |
-| `smell` | medium | Likely problem — investigate |
-| `pointer` | low | Suspicious pattern — verify manually |
+Findings are tagged with a confidence kind:
+- `issue` — high confidence, confirmed defect
+- `smell` — medium confidence, likely problem
+- `pointer` — low confidence, suspicious pattern
 
 ## Custom Rules (Per-Engagement)
 
 Custom rules are `.lua` files (see `rule-authoring` skill for authoring details). The flywheel:
 
-1. **Find an issue** during manual review
-2. **Recognize it's a pattern** — could it appear elsewhere?
-3. **Write a custom rule** (e.g. `./rules/unbounded-loop.lua`)
-4. **Test against the known instance** — the rule should flag the exact location
-5. **Run against the full codebase** — discover other instances
-
-```bash
-aud run <files...> --rule-path=./rules/unbounded-loop.lua
-```
-
-Multiple adhoc rules: repeat `--rule-path` or use `--rule-inline` for short patterns.
-
-## Typical Workflow
-
-1. `aud gaps <files...>` — find gaps
-2. If high-priority gaps: read code, determine real targets, create `resolutions.csv`
-3. `aud run <files...> --resolutions=resolutions.csv`
-4. Validate findings against code at reported locations
-5. If a confirmed finding is a repeatable pattern, write a custom rule and re-run
-6. Write up confirmed findings with the `scribe` skill
+1. Find an issue during manual review
+2. Recognize it's a repeatable pattern
+3. Write a custom rule (see `aud run --help` for `--rule-path` usage)
+4. Test against the known instance
+5. Run against the full codebase to discover other instances

@@ -150,6 +150,10 @@ pub const ImportMapping = struct {
     path_field: []const u8,
 };
 
+pub const UsingForMapping = struct {
+    ts_type: []const u8, // "using_directive"
+};
+
 pub const ModifierInvocationMapping = struct {
     ts_type: []const u8,
     name_field: []const u8,
@@ -261,6 +265,9 @@ pub const LanguageConfig = struct {
 
     // Import extraction
     imports: ?ImportMapping = null,
+
+    // using-for directive extraction (Solidity)
+    using_for: ?UsingForMapping = null,
 
     // Inheritance resolution strategy
     inheritance_strategy: InheritanceStrategy,

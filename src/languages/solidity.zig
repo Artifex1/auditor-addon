@@ -58,6 +58,7 @@ pub const config = cfg.LanguageConfig{
     .write_call_methods = &.{ "push", "pop" },
 
     .imports = .{ .ts_type = "import_directive", .path_field = "source" },
+    .using_for = .{ .ts_type = "using_directive" },
     .inheritance_strategy = .c3_linearization,
 
     .builtin_functions = &.{ "require", "assert", "revert", "keccak256", "ecrecover", "addmod", "mulmod", "blockhash" },
@@ -100,35 +101,30 @@ pub const config = cfg.LanguageConfig{
     },
 };
 
-/// Solidity-specific edge cases the declarative config can't express:
-/// - using-for directives (library attachment)
-/// - yul_function_call in assembly blocks
-/// - expression node unwrapping (handled via unwrap_rules above, but
-///   complex patterns like type(...).creationCode need special handling)
+/// Solidity-specific edge cases the declarative config can't express.
+/// Currently: yul_function_call in assembly blocks (TODO).
 fn solidityCustomHandler(_: *graph.SymbolGraph, node: ts.Node, _: []const u8) void {
-    const node_type = node.kind();
-
-    if (std.mem.eql(u8, node_type, "yul_function_call")) {
+    if (std.mem.eql(u8, node.kind(), "yul_function_call")) {
         // Assembly calls: extract the yul_identifier as call target
         // TODO: create PendingRef for user-defined yul functions
-    } else if (std.mem.eql(u8, node_type, "using_directive")) {
-        // using SafeMath for uint256 — attaches library methods to a type
-        // TODO: record using-for relationship for call resolution
     }
 }
 
 const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delegatecall", "staticcall" };
 
-/// Solidity resolve hook:
+/// Solidity resolve hook — runs before default resolution for each .call ref.
+///
 /// 1. External low-level calls (.call, .send, .transfer, .delegatecall, .staticcall)
 ///    → mark as external with low-priority gap.
 /// 2. Struct/enum constructors → resolve to type_def, no gap.
 /// 3. Super-qualified calls (super.foo()) → resolve in parent containers only,
 ///    skipping the current contract to avoid resolving to the local override.
+/// 4. Using-for library calls (receiver.method()) → resolve method in any library
+///    attached to the contract via using-for. gap = .low (type not verified).
 fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const cfg.LanguageConfig, allocator: std.mem.Allocator) void {
     if (ref.kind != .call) return;
 
-    // External low-level calls
+    // 1. External low-level calls
     for (&external_call_methods) |ecm| {
         if (std.mem.eql(u8, ref.target_name, ecm)) {
             ref.target_kind = .external;
@@ -138,7 +134,7 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
         }
     }
 
-    // Struct/enum constructor — resolves to type_def, no gap
+    // 2. Struct/enum constructor — resolves to type_def, no gap
     if (g.containerOf(ref.from)) |cid| {
         if (g.resolveInScope(cid, ref.target_name, .type_def)) |result| {
             ref.addTarget(allocator, result.node.id) catch return;
@@ -148,22 +144,49 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
         }
     }
 
-    // Super-qualified calls: super.foo() should resolve in parents only
+    // 3 & 4: Both require extracting the receiver from a member expression.
     const ast_node = ref.ast_node orelse return;
     const source = g.sourceForFile(ref.site.file) orelse return;
     const callee_node = ast_node.childByFieldName(lang_config.call_expression.function_field) orelse return;
     const receiver = cfg.unwrap(callee_node, source, lang_config, .receiver) orelse return;
-    if (!std.mem.eql(u8, receiver, "super")) return;
-
     const container_id = g.containerOf(ref.from) orelse return;
-    if (g.resolveInParentsOnly(container_id, ref.target_name, .callable)) |result| {
-        ref.addTarget(allocator, result.node.id) catch return;
-        ref.target_kind = .internal;
-        if (result.ambiguous) ref.gap = .low;
-    } else {
-        ref.gap = .medium;
+
+    if (std.mem.eql(u8, receiver, "super")) {
+        // 3. Super-qualified call: resolve in parents only (skip own override)
+        if (g.resolveInParentsOnly(container_id, ref.target_name, .callable)) |result| {
+            ref.addTarget(allocator, result.node.id) catch return;
+            ref.target_kind = .internal;
+            if (result.ambiguous) ref.gap = .low;
+        } else {
+            ref.gap = .medium;
+        }
+        ref.resolved = true;
+        return;
     }
-    ref.resolved = true;
+
+    // 4. Using-for: check if any library attached to this contract has the method.
+    //    Skip builtin receivers (msg, block, etc.) — those aren't library calls.
+    for (lang_config.builtin_receivers) |b| {
+        if (std.mem.eql(u8, receiver, b)) return;
+    }
+
+    const lib_ids = g.getUsingForLibraries(container_id, allocator) catch return;
+    defer allocator.free(lib_ids);
+    if (lib_ids.len == 0) return;
+
+    var found = false;
+    for (lib_ids) |lib_id| {
+        if (g.resolveInScope(lib_id, ref.target_name, .callable)) |result| {
+            ref.addTarget(allocator, result.node.id) catch return;
+            ref.target_kind = .cross_module;
+            found = true;
+        }
+    }
+    if (found) {
+        ref.gap = .low; // provisionally resolved; receiver type not verified
+        ref.resolved = true;
+    }
+    // else: fall through — default resolution handles it (medium gap)
 }
 
 const std = @import("std");

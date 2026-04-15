@@ -21,6 +21,7 @@ pub const RefKind = enum {
     import,
     call,
     inheritance,
+    using_for, // using X for Y — library attachment directive
     state_read,
     state_write,
     modifier_use,
@@ -471,6 +472,35 @@ pub const SymbolGraph = struct {
         }
 
         return self.resolveInParents(container_id, name, expected_kind);
+    }
+
+    /// Collect resolved library container IDs from all .using_for refs in this
+    /// container and all ancestors (C3 MRO walk). De-duplicated. Caller frees.
+    pub fn getUsingForLibraries(
+        self: *const SymbolGraph,
+        container_id: u64,
+        allocator: std.mem.Allocator,
+    ) ![]const u64 {
+        var mro = try self.computeC3Mro(container_id);
+        defer mro.deinit(allocator);
+
+        var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        defer seen.deinit(allocator);
+        var result: std.ArrayListUnmanaged(u64) = .empty;
+        errdefer result.deinit(allocator);
+
+        for (mro.items) |cid| {
+            for (self.refs.items) |ref| {
+                if (ref.kind != .using_for) continue;
+                if (ref.from != cid) continue;
+                if (!ref.resolved) continue;
+                for (ref.targets.items) |lib_id| {
+                    const gop = try seen.getOrPut(allocator, lib_id);
+                    if (!gop.found_existing) try result.append(allocator, lib_id);
+                }
+            }
+        }
+        return result.toOwnedSlice(allocator);
     }
 
     /// Resolve in parent containers only (skips own container).

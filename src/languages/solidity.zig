@@ -58,7 +58,7 @@ pub const config = cfg.LanguageConfig{
     .write_call_methods = &.{ "push", "pop" },
 
     .imports = .{ .ts_type = "import_directive", .path_field = "source" },
-    .using_for = .{ .ts_type = "using_directive" },
+
     .inheritance_strategy = .c3_linearization,
 
     .builtin_functions = &.{ "require", "assert", "revert", "keccak256", "ecrecover", "addmod", "mulmod", "blockhash" },
@@ -77,7 +77,7 @@ pub const config = cfg.LanguageConfig{
     },
     .identifier_type = "identifier",
 
-    .custom_handler = &solidityCustomHandler,
+    .walk_hook = &solidityWalkHook,
     .resolve_hook = &solidityResolveHook,
 
     .metrics = .{
@@ -101,12 +101,54 @@ pub const config = cfg.LanguageConfig{
     },
 };
 
-/// Solidity-specific edge cases the declarative config can't express.
-/// Currently: yul_function_call in assembly blocks (TODO).
-fn solidityCustomHandler(_: *graph.SymbolGraph, node: ts.Node, _: []const u8) void {
-    if (std.mem.eql(u8, node.kind(), "yul_function_call")) {
-        // Assembly calls: extract the yul_identifier as call target
-        // TODO: create PendingRef for user-defined yul functions
+/// Solidity-specific walk hook — handles AST nodes the declarative config can't express.
+fn solidityWalkHook(ctx: cfg.WalkContext) anyerror!void {
+    const kind = ctx.node.kind();
+    if (std.mem.eql(u8, kind, "using_directive")) {
+        try handleUsingDirective(ctx);
+    } else if (std.mem.eql(u8, kind, "yul_function_call")) {
+        // TODO: emit .call ref for user-defined yul functions
+    }
+}
+
+/// Parse a `using_directive` node and emit .using_for refs to library containers.
+///
+/// Form 1 — `using SafeMath for uint256`:
+///   One child of kind "type_alias" holds the library name.
+///
+/// Form 2 — `using {SafeMath.add, StringLib.concat} for uint256`:
+///   Multiple `using_alias` children each hold a qualified name (e.g. "SafeMath.add").
+///   Library name = everything before the last dot. De-duplicated.
+fn handleUsingDirective(ctx: cfg.WalkContext) !void {
+    var added: std.StringHashMapUnmanaged(void) = .empty;
+    defer added.deinit(ctx.allocator);
+
+    var i: u32 = 0;
+    while (i < ctx.node.childCount()) : (i += 1) {
+        const child = ctx.node.child(i) orelse continue;
+        const child_kind = child.kind();
+
+        if (std.mem.eql(u8, child_kind, "type_alias")) {
+            // Form 1: whole library attached
+            const text = ctx.source[child.startByte()..child.endByte()];
+            const lib_name = try ctx.graph.dupeString(text);
+            if (!added.contains(lib_name)) {
+                try added.put(ctx.allocator, lib_name, {});
+                try ctx.emitRef(lib_name, .using_for);
+            }
+        } else if (std.mem.eql(u8, child_kind, "using_alias")) {
+            // Form 2: explicit function list — extract library from "SafeMath.add"
+            const text = ctx.source[child.startByte()..child.endByte()];
+            const lib_name = if (std.mem.lastIndexOfScalar(u8, text, '.')) |dot|
+                try ctx.graph.dupeString(text[0..dot])
+            else
+                try ctx.graph.dupeString(text);
+
+            if (!added.contains(lib_name)) {
+                try added.put(ctx.allocator, lib_name, {});
+                try ctx.emitRef(lib_name, .using_for);
+            }
+        }
     }
 }
 

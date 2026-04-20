@@ -150,10 +150,6 @@ pub const ImportMapping = struct {
     path_field: []const u8,
 };
 
-pub const UsingForMapping = struct {
-    ts_type: []const u8, // "using_directive"
-};
-
 pub const ModifierInvocationMapping = struct {
     ts_type: []const u8,
     name_field: []const u8,
@@ -240,7 +236,42 @@ pub const TestMarker = struct {
     };
 };
 
-pub const CustomHandlerFn = *const fn (*graph.SymbolGraph, ts.Node, []const u8) void;
+/// Context passed to language-specific walk hooks during the AST walk phase.
+/// Provides everything needed to emit references without coupling language
+/// files to pipeline internals.
+pub const WalkContext = struct {
+    graph: *graph.SymbolGraph,
+    node: ts.Node,
+    source: []const u8,
+    file_path: []const u8,
+    scope: ?u64, // current scope node ID; null at file top-level
+    allocator: std.mem.Allocator,
+
+    /// Emit a reference from the current scope to target_name.
+    /// target_name must be durable (arena-duped or a literal).
+    /// No-ops silently if scope is null.
+    pub fn emitRef(self: WalkContext, target_name: []const u8, kind: graph.RefKind) !void {
+        const from = self.scope orelse return;
+        try self.graph.addRef(.{
+            .id = graph.refId(self.file_path, self.node.startByte(), self.node.endByte(), kind),
+            .from = from,
+            .target_name = target_name,
+            .site = .{
+                .file = self.file_path,
+                .start_byte = self.node.startByte(),
+                .end_byte = self.node.endByte(),
+                .line = self.node.startPoint().row + 1,
+                .column = self.node.startPoint().column,
+            },
+            .kind = kind,
+            .targets = .empty,
+            .resolved = false,
+            .ast_node = self.node,
+        });
+    }
+};
+
+pub const WalkHookFn = *const fn (ctx: WalkContext) anyerror!void;
 
 pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const LanguageConfig, allocator: std.mem.Allocator) void;
 
@@ -266,9 +297,6 @@ pub const LanguageConfig = struct {
     // Import extraction
     imports: ?ImportMapping = null,
 
-    // using-for directive extraction (Solidity)
-    using_for: ?UsingForMapping = null,
-
     // Inheritance resolution strategy
     inheritance_strategy: InheritanceStrategy,
 
@@ -281,8 +309,8 @@ pub const LanguageConfig = struct {
     unwrap_table: []const UnwrapRule = &.{},
     identifier_type: []const u8,
 
-    // Custom handler for edge cases during walk
-    custom_handler: ?CustomHandlerFn = null,
+    // Language-specific walk hook — called for every AST node during walk
+    walk_hook: ?WalkHookFn = null,
 
     // Language-specific resolve hook (§4.1) — called before default resolution
     resolve_hook: ?ResolveHookFn = null,

@@ -326,23 +326,22 @@ pub const Pipeline = struct {
             }
         }
 
-        // Check using-for directives
-        if (lc.using_for) |uf| {
-            if (std.mem.eql(u8, kind, uf.ts_type)) {
-                try self.processUsingFor(node, source, file_path);
-                return;
-            }
-        }
-
         // Check identifiers for state_read candidates
         if (std.mem.eql(u8, kind, lc.identifier_type)) {
             try self.processStateRead(node, source, file_path);
             return;
         }
 
-        // Custom handler
-        if (lc.custom_handler) |handler| {
-            handler(&self.graph, node, source);
+        // Language-specific walk hook
+        if (lc.walk_hook) |hook| {
+            try hook(.{
+                .graph = &self.graph,
+                .node = node,
+                .source = source,
+                .file_path = file_path,
+                .scope = self.currentScope(),
+                .allocator = self.allocator,
+            });
         }
     }
 
@@ -660,48 +659,6 @@ pub const Pipeline = struct {
             .targets = .empty,
             .resolved = false,
         });
-    }
-
-    /// Parse a `using_directive` node and emit .using_for refs to library containers.
-    ///
-    /// Form 1 — `using SafeMath for uint256`:
-    ///   One child of kind "type_alias" holds the library name.
-    ///
-    /// Form 2 — `using {SafeMath.add, StringLib.concat} for uint256`:
-    ///   Multiple `using_alias` children each hold a qualified name (e.g. "SafeMath.add").
-    ///   Library name = everything before the last dot. De-duplicated.
-    fn processUsingFor(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8) !void {
-        var added: std.StringHashMapUnmanaged(void) = .empty;
-        defer added.deinit(self.allocator);
-
-        var i: u32 = 0;
-        while (i < node.childCount()) : (i += 1) {
-            const child = node.child(i) orelse continue;
-            const child_kind = child.kind();
-
-            if (std.mem.eql(u8, child_kind, "type_alias")) {
-                // Form 1: whole library attached
-                const text = source[child.startByte()..child.endByte()];
-                const lib_name = try self.graph.dupeString(text);
-                if (!added.contains(lib_name)) {
-                    try added.put(self.allocator, lib_name, {});
-                    try self.addReference(lib_name, .using_for, node, file_path);
-                }
-            } else if (std.mem.eql(u8, child_kind, "using_alias")) {
-                // Form 2: explicit function list — extract library from "SafeMath.add"
-                const text = source[child.startByte()..child.endByte()];
-                // Library is everything before the last dot (or the whole text if no dot)
-                const lib_name = if (std.mem.lastIndexOfScalar(u8, text, '.')) |dot|
-                    try self.graph.dupeString(text[0..dot])
-                else
-                    try self.graph.dupeString(text);
-
-                if (!added.contains(lib_name)) {
-                    try added.put(self.allocator, lib_name, {});
-                    try self.addReference(lib_name, .using_for, node, file_path);
-                }
-            }
-        }
     }
 
     // ── Import Expansion (§3.4) ──────────────────────────────────────

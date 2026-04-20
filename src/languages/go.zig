@@ -6,7 +6,7 @@ pub const config = cfg.LanguageConfig{
     .containers = &.{},
     // Go has no explicit container syntax — methods are associated via receiver types.
     // The pipeline creates implicit containers from method_declaration receivers.
-    // TODO: consider a custom_handler to create struct containers from receiver types.
+    // TODO: consider a walk_hook to create struct containers from receiver types.
 
     .callables = &.{
         .{ .ts_type = "function_declaration", .name_field = "name", .body_field = "body" },
@@ -53,7 +53,6 @@ pub const config = cfg.LanguageConfig{
     },
     .identifier_type = "identifier",
 
-    .custom_handler = null,
     .resolve_hook = null,
 
     .metrics = .{

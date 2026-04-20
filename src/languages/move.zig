@@ -60,7 +60,6 @@ pub const config = cfg.LanguageConfig{
     },
     .identifier_type = "identifier",
 
-    .custom_handler = null,
     .resolve_hook = null,
 
     .metrics = .{

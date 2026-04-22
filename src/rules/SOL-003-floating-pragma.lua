@@ -8,8 +8,7 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    if node.kind ~= "pragma_directive" then return end
+function enter_pragma_directive(node, ctx)
     local text = ast.text(node.handle) or node.name
     -- Only Solidity version pragmas, not e.g. "pragma abicoder v2"
     if not text:find("pragma%s+solidity") then return end
@@ -22,5 +21,3 @@ function enter(node, ctx)
         })
     end
 end
-
-function exit(node, ctx) end

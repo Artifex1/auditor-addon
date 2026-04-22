@@ -8,8 +8,7 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    if node.kind ~= "member_expression" then return end
+function enter_member_expression(node, ctx)
     local h = node.handle
     local obj = ast.child_by_field(h, "object")
     local prop = ast.child_by_field(h, "property")
@@ -49,5 +48,3 @@ function enter(node, ctx)
         end
     end
 end
-
-function exit(node, ctx) end

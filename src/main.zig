@@ -137,7 +137,7 @@ const gaps_params = clap.parseParamsComptime(
     \\    --resolutions <str>   Apply resolution CSV file.
     \\    --no-expand           Skip import-driven file expansion.
     \\    --no-tests            Exclude test-annotated code from analysis.
-    \\    --kind <str>          Filter gaps by edge kind (calls, inherits, imports, ...).
+    \\    --kind <str>          Filter gaps by ref kind (import, call, inheritance, using_for).
     \\    --priority <str>      Filter gaps by priority (high, medium, low).
     \\<str>...
     \\
@@ -355,6 +355,21 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
     const no_expand = res.args.@"no-expand" != 0;
     const no_tests = res.args.@"no-tests" != 0;
 
+    const priority_filter: ?graph.Priority = if (res.args.priority) |p|
+        std.meta.stringToEnum(graph.Priority, p) orelse {
+            try stderrPrint("aud gaps: invalid --priority (expected high|medium|low)\n");
+            return;
+        }
+    else
+        null;
+    const kind_filter: ?graph.RefKind = if (res.args.kind) |k|
+        std.meta.stringToEnum(graph.RefKind, k) orelse {
+            try stderrPrint("aud gaps: invalid --kind (expected import|call|inheritance|using_for)\n");
+            return;
+        }
+    else
+        null;
+
     const files = try expandPositionals(res.positionals[0], allocator);
     defer freeExpandedFiles(files, allocator);
 
@@ -394,9 +409,9 @@ fn cmdGaps(allocator: std.mem.Allocator, iter: anytype) !void {
         }
 
         if (use_json) {
-            try output.writeJsonGaps(&pipe.graph, &w.interface);
+            try output.writeJsonGaps(&pipe.graph, &w.interface, priority_filter, kind_filter);
         } else {
-            try output.writeToonGaps(&pipe.graph, &w.interface);
+            try output.writeToonGaps(&pipe.graph, &w.interface, priority_filter, kind_filter);
         }
     }
 
@@ -595,8 +610,12 @@ fn executeRule(
     // Execute based on rule type
     const hits = if (std.mem.eql(u8, metadata.rule_type, "map"))
         try lua_adapter.executeMapRule(lua, g, bridge, arena_alloc, diag, lang_config)
-    else
-        try lua_adapter.executeVisitorRule(lua, g, metadata, bridge, lang_config, arena_alloc, diag);
+    else lua_adapter.executeVisitorRule(lua, g, metadata, bridge, lang_config, arena_alloc, diag) catch |err| switch (err) {
+        // Rule defined a hook for a node kind that doesn't exist in the
+        // declared languages — already reported to stderr by the adapter.
+        error.UnknownNodeKind => return,
+        else => return err,
+    };
 
     if (hits.len > 0) {
         try all_findings.append(arena_alloc, .{
@@ -657,8 +676,13 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
     var res_diag = resolution.ResolutionDiag.init(allocator);
     defer res_diag.deinit();
 
+    // Arena backs all output_roots content (root_name copies, formatted
+    // chain strings). Single bulk free on function return.
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+
     var output_roots: std.ArrayList(output.RootChains) = .empty;
-    defer output_roots.deinit(allocator);
 
     for (groups) |group| {
         const lang_config = cfg.getConfig(group.language);
@@ -679,12 +703,12 @@ fn cmdCallChains(allocator: std.mem.Allocator, iter: anytype) !void {
         for (chain_results) |cs| {
             var chain_strs: std.ArrayList([]const u8) = .empty;
             for (cs.chains.items) |chain| {
-                const formatted = try call_chains.formatChain(chain, allocator);
-                try chain_strs.append(allocator, formatted);
+                const formatted = try call_chains.formatChain(chain, aa);
+                try chain_strs.append(aa, formatted);
             }
-            try output_roots.append(allocator, .{
-                .root_name = try allocator.dupe(u8, cs.root_name),
-                .chains = try chain_strs.toOwnedSlice(allocator),
+            try output_roots.append(aa, .{
+                .root_name = try aa.dupe(u8, cs.root_name),
+                .chains = try chain_strs.toOwnedSlice(aa),
             });
         }
     }

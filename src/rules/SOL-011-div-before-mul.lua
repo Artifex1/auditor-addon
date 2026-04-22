@@ -43,45 +43,41 @@ local function simple_name(h)
     return nil
 end
 
-function enter(node, ctx)
-    -- Reset taint set at every function boundary
-    if node.kind == "function_definition" then
-        div_vars = {}
-        return
-    end
+-- Reset taint set at every function boundary
+function enter_function_definition(node, ctx)
+    div_vars = {}
+end
 
-    -- Track: local variable declaration whose value contains division
-    --   uint256 x = a / b;
-    if node.kind == "variable_declaration_statement" then
-        local val_h = ast.child_by_field(node.handle, "value")
-        if val_h and contains_division(val_h) then
-            for _, vd_h in ipairs(ast.find(node.handle, "variable_declaration")) do
-                local name_h = ast.child_by_field(vd_h, "name")
-                if name_h then div_vars[ast.text(name_h)] = true end
-            end
+-- Track: local variable declaration whose value contains division
+--   uint256 x = a / b;
+function enter_variable_declaration_statement(node, ctx)
+    local val_h = ast.child_by_field(node.handle, "value")
+    if val_h and contains_division(val_h) then
+        for _, vd_h in ipairs(ast.find(node.handle, "variable_declaration")) do
+            local name_h = ast.child_by_field(vd_h, "name")
+            if name_h then div_vars[ast.text(name_h)] = true end
         end
-        return
     end
+end
 
-    -- Track: assignment whose RHS contains division; clear taint on reassignment
-    --   x = a / b;   →  taint x
-    --   x = other;   →  clear x (no longer a division result)
-    if node.kind == "assignment_expression" then
-        local left_h  = ast.child_by_field(node.handle, "left")
-        local right_h = ast.child_by_field(node.handle, "right")
-        local var = simple_name(left_h)
-        if var then
-            if right_h and contains_division(right_h) then
-                div_vars[var] = true
-            else
-                div_vars[var] = nil
-            end
+-- Track: assignment whose RHS contains division; clear taint on reassignment
+--   x = a / b;   →  taint x
+--   x = other;   →  clear x (no longer a division result)
+function enter_assignment_expression(node, ctx)
+    local left_h  = ast.child_by_field(node.handle, "left")
+    local right_h = ast.child_by_field(node.handle, "right")
+    local var = simple_name(left_h)
+    if var then
+        if right_h and contains_division(right_h) then
+            div_vars[var] = true
+        else
+            div_vars[var] = nil
         end
-        return
     end
+end
 
-    -- Detect: multiplication where either operand is a division result
-    if node.kind ~= "binary_expression" then return end
+-- Detect: multiplication where either operand is a division result
+function enter_binary_expression(node, ctx)
     local op_h = ast.child_by_field(node.handle, "operator")
     if not op_h or ast.text(op_h) ~= "*" then return end
 

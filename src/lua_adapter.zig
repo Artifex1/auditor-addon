@@ -203,6 +203,11 @@ pub fn executeVisitorRule(
     // Store lua pointer for callbacks
     g_lua = lua;
 
+    // Build hook registry from Lua globals. Fails if enter_<kind>/exit_<kind>
+    // references a node kind not in the rule's declared languages.
+    g_hooks = try buildHookRegistry(lua, metadata, allocator);
+    defer g_hooks.deinit(lua, allocator);
+
     if (std.mem.eql(u8, metadata.rule_type, "deep")) {
         try walker.walkDeep(g, cb, metadata.max_depth, lang_config, allocator);
     } else {
@@ -213,6 +218,130 @@ pub fn executeVisitorRule(
     bridge.clear();
 
     return try g_hits.toOwnedSlice(allocator);
+}
+
+/// Scan _G for enter_*/exit_* hook functions. For each hook, luaL_ref the
+/// function into the Lua registry for O(1) invocation. Validates that the
+/// kind suffix is a real node kind in at least one of the rule's declared
+/// languages — typos become startup errors, not silently-dead hooks.
+fn buildHookRegistry(lua: *Lua, metadata: RuleMetadata, allocator: std.mem.Allocator) !HookRegistry {
+    var reg: HookRegistry = .{};
+    errdefer reg.deinit(lua, allocator);
+
+    // Build the set of valid named kinds across the rule's declared languages.
+    // If no languages declared (generic rule), skip validation and accept all.
+    var valid_kinds: std.StringHashMapUnmanaged(void) = .empty;
+    defer valid_kinds.deinit(allocator);
+    const validate = metadata.languages != null;
+
+    if (metadata.languages) |langs| {
+        for (langs) |lname| {
+            const lang = std.meta.stringToEnum(cfg.Language, lname) orelse continue;
+            const ts_lang = lang.grammarFn()();
+            const n = ts_lang.nodeKindCount();
+            var i: u16 = 0;
+            while (i < n) : (i += 1) {
+                if (!ts_lang.nodeKindIsNamed(i)) continue;
+                const kname = ts_lang.nodeKindForId(i) orelse continue;
+                // kname points into the grammar's static table, good for process lifetime.
+                try valid_kinds.put(allocator, kname, {});
+            }
+        }
+    }
+
+    lua.pushGlobalTable();
+    defer lua.pop(1);
+
+    lua.pushNil();
+    while (lua.next(-2)) {
+        // stack top: [_G, key, value]
+        const keep_value = lua.typeOf(-2) == .string and lua.typeOf(-1) == .function;
+        if (!keep_value) {
+            lua.pop(1); // pop value, keep key
+            continue;
+        }
+
+        const key = lua.toString(-2) catch {
+            lua.pop(1);
+            continue;
+        };
+
+        if (std.mem.eql(u8, key, "enter")) {
+            lua.pushValue(-1);
+            reg.enter_generic = try lua.ref(zlua.registry_index);
+        } else if (std.mem.eql(u8, key, "exit")) {
+            lua.pushValue(-1);
+            reg.exit_generic = try lua.ref(zlua.registry_index);
+        } else if (std.mem.startsWith(u8, key, "enter_")) {
+            const kind = key[6..];
+            if (validate and !valid_kinds.contains(kind)) {
+                reportUnknownKind(metadata, "enter_", kind, &valid_kinds);
+                return error.UnknownNodeKind;
+            }
+            const kind_dup = try allocator.dupe(u8, kind);
+            lua.pushValue(-1);
+            const r = try lua.ref(zlua.registry_index);
+            try reg.enter_refs.put(allocator, kind_dup, r);
+        } else if (std.mem.startsWith(u8, key, "exit_")) {
+            const kind = key[5..];
+            if (validate and !valid_kinds.contains(kind)) {
+                reportUnknownKind(metadata, "exit_", kind, &valid_kinds);
+                return error.UnknownNodeKind;
+            }
+            const kind_dup = try allocator.dupe(u8, kind);
+            lua.pushValue(-1);
+            const r = try lua.ref(zlua.registry_index);
+            try reg.exit_refs.put(allocator, kind_dup, r);
+        }
+
+        lua.pop(1); // pop value, keep key for next iteration
+    }
+
+    return reg;
+}
+
+/// Report an unknown node kind to the unified diag flow. Suggests the
+/// closest valid kind by longest common prefix.
+fn reportUnknownKind(
+    metadata: RuleMetadata,
+    prefix: []const u8,
+    kind: []const u8,
+    valid_kinds: *const std.StringHashMapUnmanaged(void),
+) void {
+    var best: ?[]const u8 = null;
+    var best_score: usize = 0;
+    var it = valid_kinds.iterator();
+    while (it.next()) |e| {
+        const cand = e.key_ptr.*;
+        const score = commonPrefixLen(kind, cand);
+        if (score > best_score) {
+            best_score = score;
+            best = cand;
+        }
+    }
+
+    if (g_diag) |d| {
+        if (best) |b| {
+            d.err(
+                "rule",
+                "rule {s}: hook '{s}{s}' references unknown node kind '{s}' (did you mean '{s}'?)",
+                .{ metadata.id, prefix, kind, kind, b },
+            );
+        } else {
+            d.err(
+                "rule",
+                "rule {s}: hook '{s}{s}' references unknown node kind '{s}'",
+                .{ metadata.id, prefix, kind, kind },
+            );
+        }
+    }
+}
+
+fn commonPrefixLen(a: []const u8, b: []const u8) usize {
+    const n = @min(a.len, b.len);
+    var i: usize = 0;
+    while (i < n and a[i] == b[i]) : (i += 1) {}
+    return i;
 }
 
 /// Execute a map rule (§6.2). Calls check() and returns hits.
@@ -299,6 +428,37 @@ pub fn executeMapRule(
 var g_lua: *Lua = undefined;
 var g_hook_warned: bool = false;
 
+/// Registry of Lua hooks for a rule. Populated at rule load, consumed by
+/// walker callbacks. Per-kind dispatch: the walker only invokes a hook when
+/// `enter_<node.kind()>` / `exit_<node.kind()>` was defined by the rule.
+/// Bare `enter`/`exit` act as a catch-all fallback.
+const HookRegistry = struct {
+    enter_refs: std.StringHashMapUnmanaged(i32) = .empty,
+    exit_refs: std.StringHashMapUnmanaged(i32) = .empty,
+    enter_generic: ?i32 = null,
+    exit_generic: ?i32 = null,
+
+    fn deinit(self: *HookRegistry, lua: *Lua, allocator: std.mem.Allocator) void {
+        var it = self.enter_refs.iterator();
+        while (it.next()) |e| {
+            lua.unref(zlua.registry_index, e.value_ptr.*);
+            allocator.free(e.key_ptr.*);
+        }
+        var it2 = self.exit_refs.iterator();
+        while (it2.next()) |e| {
+            lua.unref(zlua.registry_index, e.value_ptr.*);
+            allocator.free(e.key_ptr.*);
+        }
+        if (self.enter_generic) |r| lua.unref(zlua.registry_index, r);
+        if (self.exit_generic) |r| lua.unref(zlua.registry_index, r);
+        self.enter_refs.deinit(allocator);
+        self.exit_refs.deinit(allocator);
+        self.* = .{};
+    }
+};
+
+var g_hooks: HookRegistry = .{};
+
 fn luaFinalizeCallback() void {
     _ = g_lua.getGlobal("finalize") catch return;
     if (!g_lua.isFunction(-1)) {
@@ -311,32 +471,35 @@ fn luaFinalizeCallback() void {
 }
 
 fn luaEnterCallback(node: ts.Node, ctx: walker.WalkContext) void {
-    callLuaHook("enter", node, ctx);
+    const kind = node.kind();
+    if (g_hooks.enter_refs.get(kind)) |ref| {
+        callLuaHookRef(ref, node, ctx);
+    } else if (g_hooks.enter_generic) |ref| {
+        callLuaHookRef(ref, node, ctx);
+    }
 }
 
 fn luaExitCallback(node: ts.Node, ctx: walker.WalkContext) void {
-    callLuaHook("exit", node, ctx);
+    const kind = node.kind();
+    if (g_hooks.exit_refs.get(kind)) |ref| {
+        callLuaHookRef(ref, node, ctx);
+    } else if (g_hooks.exit_generic) |ref| {
+        callLuaHookRef(ref, node, ctx);
+    }
 }
 
-fn callLuaHook(hook_name: [:0]const u8, node: ts.Node, ctx: walker.WalkContext) void {
-    // Ensure enough stack space for function + 2 tables + fields
+fn callLuaHookRef(ref: i32, node: ts.Node, ctx: walker.WalkContext) void {
     g_lua.checkStack(20) catch return;
 
-    _ = g_lua.getGlobal(hook_name) catch return;
-    if (!g_lua.isFunction(-1)) {
-        g_lua.pop(1);
-        return;
-    }
+    // Push function by registry ref (O(1), no hash lookup).
+    _ = g_lua.rawGetIndex(zlua.registry_index, ref);
 
-    // Push node table: {kind, line, file, name, handle}
     pushAstNodeTable(node, ctx);
-
-    // Push context table: {depth, current_file, current_node}
     pushContextTable(ctx);
 
     g_lua.protectedCall(.{ .args = 2, .results = 0 }) catch {
         if (!g_hook_warned) {
-            if (g_diag) |d| d.warn("lua", "{s}() hook threw an error (further errors suppressed)", .{hook_name});
+            if (g_diag) |d| d.warn("lua", "hook threw an error (further errors suppressed)", .{});
             g_hook_warned = true;
         }
     };
@@ -359,7 +522,6 @@ fn pushAstNodeTable(node: ts.Node, ctx: walker.WalkContext) void {
 
     // name (node text, for context)
     if (g_graph.nodeText(node)) |text| {
-        // Truncate to first 100 chars to avoid huge strings
         const t = if (text.len > 100) text[0..100] else text;
         _ = g_lua.pushString(t);
     } else {

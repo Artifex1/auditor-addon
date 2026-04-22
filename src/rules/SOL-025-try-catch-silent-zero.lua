@@ -8,9 +8,7 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    if node.kind ~= "try_statement" then return end
-
+function enter_try_statement(node, ctx)
     local catches = ast.find(node.handle, "catch_clause")
     for _, catch_node in ipairs(catches) do
         local returns = ast.find(catch_node, "return_statement")

@@ -21,23 +21,8 @@ local function name_text(h)
     return ast.text(n)
 end
 
-function enter(node, ctx)
-    local h = node.handle
-    local name = nil
-
-    if node.kind == "constant_variable_declaration" then
-        -- Solidity: file-level `uint256 constant FOO = 1;`
-        name = name_text(h)
-
-    elseif node.kind == "const_item" then
-        -- Rust / Cairo: `const FOO: u32 = 1;`
-        name = name_text(h)
-
-    elseif node.kind == "constant_decl" then
-        -- Move: `const FOO: u64 = 0;`
-        name = name_text(h)
-    end
-
+local function check(node, ctx)
+    local name = name_text(node.handle)
     if name == nil then return end
     if not is_upper(name) then
         report.hit({
@@ -48,4 +33,11 @@ function enter(node, ctx)
     end
 end
 
-function exit(node, ctx) end
+-- Solidity: `uint256 constant FOO = 1;`
+function enter_constant_variable_declaration(node, ctx) check(node, ctx) end
+
+-- Rust / Cairo: `const FOO: u32 = 1;`
+function enter_const_item(node, ctx) check(node, ctx) end
+
+-- Move: `const FOO: u64 = 0;`
+function enter_constant_decl(node, ctx) check(node, ctx) end

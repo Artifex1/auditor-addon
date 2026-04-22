@@ -46,38 +46,37 @@ rule = {
 -- Module-level state persists across the entire walk (all files)
 local seen_external_call = false
 
-function enter(node, ctx)
+-- Per-kind hooks: define `enter_<node_type>` / `exit_<node_type>` for the
+-- tree-sitter node kinds you care about. The walker only invokes hooks that
+-- exist, so rules only pay the Lua call cost for nodes they actually handle.
+function enter_function_definition(node, ctx)
     -- node = { kind, line, file, name, handle }
     -- ctx  = { depth, current_file, current_node }
+    seen_external_call = false   -- reset per-function state
+end
 
-    -- Reset per-function state at function boundaries
-    if node.kind == "function_definition" then
-        seen_external_call = false
-    end
-
+function enter_call_expression(node, ctx)
     -- Heuristic: any call is treated as potentially external.
-    -- Emits pointer-confidence findings; a follow-up pass can filter internal calls.
-    if not seen_external_call and node.kind == "call_expression" then
+    if not seen_external_call then
         seen_external_call = true
     end
-
-    if seen_external_call then
-        if node.kind == "assignment_expression"
-            or node.kind == "augmented_assignment_expression" then
-            report.hit({
-                file = ctx.current_file,
-                line = node.line,
-                node_text = ast.text(node.handle) or "",
-            })
-        end
-    end
 end
 
-function exit(node, ctx) end   -- optional: called when leaving each node (bottom-up)
-
-function finalize()            -- optional: called once after all files have been walked
-    -- use for emitting findings that depend on state accumulated across the entire walk
+local function report_write(node, ctx)
+    if not seen_external_call then return end
+    report.hit({
+        file = ctx.current_file,
+        line = node.line,
+        node_text = ast.text(node.handle) or "",
+    })
 end
+
+function enter_assignment_expression(node, ctx)           report_write(node, ctx) end
+function enter_augmented_assignment_expression(node, ctx) report_write(node, ctx) end
+
+-- Optional: `exit_<kind>` fires bottom-up when leaving a subtree.
+-- Optional: `finalize()` fires once after all files have been walked; use for
+--           findings that depend on state accumulated across the entire walk.
 ```
 
 ### Map Rule
@@ -116,11 +115,13 @@ end
 
 ### Visitor rules (scope / deep)
 
-1. **`enter(node, ctx)`** — called top-down on every AST node. Implement detection logic by checking `node.kind` and accumulating state.
-2. **`exit(node, ctx)`** — called bottom-up when leaving each node. Use for cleanup or patterns that need to know when a subtree is fully visited (e.g., resetting per-function state when exiting a `function_definition`).
+1. **`enter_<kind>(node, ctx)`** — called top-down when entering a node of the given tree-sitter kind. Define one per kind you care about (e.g., `enter_function_definition`, `enter_call_expression`).
+2. **`exit_<kind>(node, ctx)`** — called bottom-up when leaving a node of that kind. Use for cleanup or patterns that need to know when a subtree is fully visited.
 3. **`finalize()`** — called once after all files have been walked. Use for emitting findings that depend on state accumulated across the entire walk (e.g., counting patterns across files, then reporting only if a threshold is met).
 
-All three are optional — define only what the rule needs. Most rules only need `enter`.
+All hooks are optional — define only what the rule needs. The walker validates every `enter_*` / `exit_*` function name at load time against the declared languages' tree-sitter vocabulary; typos (e.g., `enter_function_defintion`) raise a rule-load error with a "did you mean" suggestion.
+
+A generic `enter(node, ctx)` / `exit(node, ctx)` is also still accepted and fires on every node — only use it when the rule genuinely needs to react to every kind. Per-kind hooks are dramatically faster because the walker skips nodes with no matching hook entirely.
 
 ### Map rules
 
@@ -229,10 +230,8 @@ For quick one-off scans, use `--rule-inline` to avoid writing a file:
 ```bash
 aud run "src/**/*.sol" --rule-inline='
 rule = {id="X",name="assembly-use",severity="medium",type="scope",languages={"solidity"}}
-function enter(node, ctx)
-  if node.kind == "assembly_statement" then
-    report.hit({file=ctx.current_file, line=node.line, node_text=""})
-  end
+function enter_assembly_statement(node, ctx)
+  report.hit({file=ctx.current_file, line=node.line, node_text=""})
 end'
 ```
 

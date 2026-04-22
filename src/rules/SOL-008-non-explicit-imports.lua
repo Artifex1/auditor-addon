@@ -8,8 +8,7 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    if node.kind ~= "import_directive" then return end
+function enter_import_directive(node, ctx)
     local text = ast.text(node.handle) or node.name
     -- Explicit imports always contain the 'from' keyword:
     --   import {Foo} from "file.sol"
@@ -25,5 +24,3 @@ function enter(node, ctx)
         })
     end
 end
-
-function exit(node, ctx) end

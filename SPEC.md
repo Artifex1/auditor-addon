@@ -8,7 +8,7 @@ Port of the auditor-addon static analysis engine from TypeScript to a Zig CLI wi
 - **Unified reference model**: Every non-structural relationship (calls, reads, writes, modifiers, inheritance, imports, emits) is a **Reference** — a site-specific link from source location to zero or more target nodes. References replace the old edge/gap/PendingRef split with a single type that carries resolution state.
 - **Config-driven adapters**: Language-specific knowledge is expressed as declarative config (node type mappings, field names, property extraction) + minimal Zig custom handlers for edge cases.
 - **Common taxonomy**: Rules target a language-agnostic node model. Language-specific detail is accessible via the AST bridge for pattern-level rules.
-- **Lua rules with visitor pattern**: Rules define `enter(node)`/`exit(node)` hooks. The Zig walker drives traversal (scope or deep), Lua reacts. No iteration boilerplate in rules.
+- **Lua rules with visitor pattern**: Rules define per-kind `enter_<kind>(node)` / `exit_<kind>(node)` hooks (or a generic `enter`/`exit` fallback). The Zig walker drives traversal (scope or deep) and dispatches only to the hooks the rule defines. No iteration boilerplate in rules.
 - **Two rule families**: Visitor rules (AST-aware, walker-driven) and Map rules (graph-only, no AST walking).
 - **Import-driven file expansion**: A single scan automatically discovers imports, parses referenced files, and iterates until no new files are found. Nodes are cheap to rebuild; references are the persisted artifact.
 
@@ -760,8 +760,8 @@ Walks full file ASTs. Does not follow call edges.
 for each file node in graph:
     walk file's ast_node (tree root) depth-first:
         update current_node when entering a callable/container/modifier
-        call rule.enter(node, ctx) on entry
-        call rule.exit(node, ctx) on exit
+        dispatch: rule.enter_<node.kind>(node, ctx) if defined, else rule.enter(node, ctx) if defined
+        dispatch: rule.exit_<node.kind>(node, ctx)  if defined, else rule.exit(node, ctx)  if defined
 finalize()
 ```
 
@@ -779,7 +779,7 @@ matching of each call expression to its resolved callee(s).
 for each file node in graph:
     walk file's ast_node (tree root) depth-first:
         update current_node when entering a callable/container/modifier
-        call rule.enter(node, ctx)
+        dispatch: rule.enter_<node.kind>(node, ctx) if defined, else rule.enter(node, ctx) if defined
         on call_expression (if depth < max_depth):
             ref = site_index.lookup(refId(current_file, node.start_byte, node.end_byte, .call))
             if ref exists and ref has targets:
@@ -787,7 +787,7 @@ for each file node in graph:
                     if target.node has ast_node and not visited:
                         mark visited
                         walk target's ast_node with depth+1
-        call rule.exit(node, ctx)
+        dispatch: rule.exit_<node.kind>(node, ctx) if defined, else rule.exit(node, ctx) if defined
 finalize()
 ```
 
@@ -861,35 +861,34 @@ rule = {
 -- Module-level state: persists across the entire walk
 local seen_external_call = false
 
-function enter(node, ctx)
+-- Per-kind hooks: the walker only dispatches to kinds the rule defines.
+-- Function names (enter_<kind> / exit_<kind>) are validated at load time
+-- against the declared languages' tree-sitter vocabulary.
+function enter_function_definition(node, ctx)
     -- node = { kind, line, file, name, handle }
     -- ctx  = { depth, current_file, current_node }
+    seen_external_call = false   -- reset per-function state
+end
 
-    -- Reset per-function state at function boundaries
-    if node.kind == "function_definition" then
-        seen_external_call = false
-    end
-
-    -- Check if this specific call expression is an external call (O(1) site lookup)
-    if not seen_external_call and node.kind == "call_expression" then
-        local ref = graph.get_ref_at(ctx.current_file, node.start_byte)
-        if ref and ref.target_kind == "external" then
-            seen_external_call = true
-        end
-    end
-
-    -- After an external call, any state write is a reentrancy risk
-    if seen_external_call then
-        if node.kind == "assignment_expression"
-            or node.kind == "augmented_assignment_expression" then
-            report.hit({
-                file = ctx.current_file,
-                line = node.line,
-                node_text = ast.text(node.handle) or "",
-            })
-        end
+function enter_call_expression(node, ctx)
+    if seen_external_call then return end
+    local ref = graph.ref_at(node.handle)
+    if ref and ref.target_kind == "external" then
+        seen_external_call = true
     end
 end
+
+local function report_write(node, ctx)
+    if not seen_external_call then return end
+    report.hit({
+        file = ctx.current_file,
+        line = node.line,
+        node_text = ast.text(node.handle) or "",
+    })
+end
+
+function enter_assignment_expression(node, ctx)           report_write(node, ctx) end
+function enter_augmented_assignment_expression(node, ctx) report_write(node, ctx) end
 ```
 
 ### 6.2 Map Rules (direct graph query, no walking)

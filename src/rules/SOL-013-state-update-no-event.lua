@@ -31,31 +31,28 @@ local has_emit = false
 local entry_fn = nil
 local entry_has_writes = false
 
-function enter(node, ctx)
-    if ctx.depth == 0 and node.kind == "function_definition" then
-        has_emit = false
-        entry_fn = nil
-        entry_has_writes = false
+function enter_function_definition(node, ctx)
+    if ctx.depth ~= 0 then return end
+    has_emit = false
+    entry_fn = nil
+    entry_has_writes = false
 
-        local gn = graph.get_node(ctx.current_node)
-        if gn then
-            local vis = graph.get_property(gn.id, "visibility")
-            if (vis == "public" or vis == "external") and gn.name ~= "constructor" then
-                entry_fn = gn
-                entry_has_writes = function_body_writes_state(node.handle)
-            end
+    local gn = graph.get_node(ctx.current_node)
+    if gn then
+        local vis = graph.get_property(gn.id, "visibility")
+        if (vis == "public" or vis == "external") and gn.name ~= "constructor" then
+            entry_fn = gn
+            entry_has_writes = function_body_writes_state(node.handle)
         end
-    end
-
-    if not entry_fn then return end
-
-    if node.kind == "emit_statement" then
-        has_emit = true
     end
 end
 
-function exit(node, ctx)
-    if ctx.depth == 0 and node.kind == "function_definition" then
+function enter_emit_statement(node, ctx)
+    if entry_fn then has_emit = true end
+end
+
+function exit_function_definition(node, ctx)
+    if ctx.depth == 0 then
         if entry_fn and entry_has_writes and not has_emit then
             report.hit({
                 file = entry_fn.file,

@@ -8,26 +8,23 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    -- revert statement: flag bare revert() and revert("string")
-    if node.kind == "revert_statement" then
-        local text = ast.text(node.handle) or ""
-        text = text:gsub("[%s;]+$", "")
-        local after = text:match("^revert%s*(.*)")
-        if not after then return end
+function enter_revert_statement(node, ctx)
+    local text = ast.text(node.handle) or ""
+    text = text:gsub("[%s;]+$", "")
+    local after = text:match("^revert%s*(.*)")
+    if not after then return end
 
-        -- bare revert() — no error type
-        if after == "" or after:match("^%(%)%s*$") then
-            report.hit({file = ctx.current_file, line = node.line, node_text = "bare revert()"})
-        -- revert("string") — string literal as error
-        elseif after:match('^%("') or after:match("^%('") then
-            report.hit({file = ctx.current_file, line = node.line, node_text = text:sub(1, 80)})
-        end
-        return
+    -- bare revert() — no error type
+    if after == "" or after:match("^%(%)%s*$") then
+        report.hit({file = ctx.current_file, line = node.line, node_text = "bare revert()"})
+    -- revert("string") — string literal as error
+    elseif after:match('^%("') or after:match("^%('") then
+        report.hit({file = ctx.current_file, line = node.line, node_text = text:sub(1, 80)})
     end
+end
 
-    -- require call: flag require(cond) and require(cond, "string")
-    if node.kind ~= "call_expression" then return end
+function enter_call_expression(node, ctx)
+    -- flag require(cond) and require(cond, "string")
     local text = node.name
     if text:sub(1, 8) ~= "require(" then return end
 
@@ -47,5 +44,3 @@ function enter(node, ctx)
         report.hit({file = ctx.current_file, line = node.line, node_text = text:sub(1, 80)})
     end
 end
-
-function exit(node, ctx) end

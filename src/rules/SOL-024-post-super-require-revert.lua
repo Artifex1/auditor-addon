@@ -24,15 +24,15 @@ local function unwrap_fn(call_handle)
     return fn
 end
 
-function enter(node, ctx)
-    -- Reset at each new function boundary.
-    if node.kind == "function_definition" then
-        seen_super_call = false
-        return
-    end
+function enter_function_definition(node, ctx)
+    seen_super_call = false
+end
 
-    if node.kind ~= "call_expression" then return end
+function exit_function_definition(node, ctx)
+    seen_super_call = false
+end
 
+function enter_call_expression(node, ctx)
     local inner = unwrap_fn(node.handle)
     if not inner then return end
 
@@ -54,11 +54,5 @@ function enter(node, ctx)
             line = node.line,
             node_text = ast.text(node.handle) or "",
         })
-    end
-end
-
-function exit(node, ctx)
-    if node.kind == "function_definition" then
-        seen_super_call = false
     end
 end

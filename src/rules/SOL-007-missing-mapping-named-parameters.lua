@@ -8,17 +8,13 @@ rule = {
     languages = {"solidity"},
 }
 
-function enter(node, ctx)
-    -- type_name nodes represent mapping types when their first child is the "mapping" keyword
-    if node.kind ~= "type_name" then return end
-
+function enter_type_name(node, ctx)
     local children = ast.children(node.handle)
     if #children == 0 then return end
 
-    -- First anonymous child is the "mapping" keyword token
+    -- First anonymous child is the "mapping" keyword token for mapping types
     if ast.type(children[1]) ~= "mapping" then return end
 
-    -- Check for named key and value parameters
     local key_id = ast.child_by_field(node.handle, "key_identifier")
     local val_id = ast.child_by_field(node.handle, "value_identifier")
 
@@ -30,5 +26,3 @@ function enter(node, ctx)
         })
     end
 end
-
-function exit(node, ctx) end

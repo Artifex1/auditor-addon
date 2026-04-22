@@ -19,9 +19,7 @@ local function unwrap(h)
     return h
 end
 
-function enter(node, ctx)
-    if node.kind ~= "call_expression" then return end
-
+function enter_call_expression(node, ctx)
     local h = node.handle
     local fn_inner = unwrap(ast.child_by_field(h, "function"))
     if fn_inner == nil then return end
@@ -44,5 +42,3 @@ function enter(node, ctx)
         node_text = ast.text(prop),
     })
 end
-
-function exit(node, ctx) end

@@ -36,13 +36,20 @@ fn writeJsonString(writer: Writer, s: []const u8) !void {
 // ── TOON: Gaps ────────────────────────────────────────────────────────
 // SPEC.md §8.1
 
-pub fn writeToonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
-    const gap_count = g.gapCount();
+pub fn writeToonGaps(
+    g: *const graph.SymbolGraph,
+    writer: Writer,
+    priority_filter: ?graph.Priority,
+    kind_filter: ?graph.RefKind,
+) !void {
+    const gap_count = countFilteredGaps(g, priority_filter, kind_filter);
     try writer.print("gaps[{d}]{{ref_id,from_name,target_name,kind,file,line,priority}}:\n", .{gap_count});
 
     for (g.refs.items) |ref| {
         if (ref.gapPriority()) |priority| {
             if (!g.isRefInScope(ref)) continue;
+            if (priority_filter) |pf| if (pf != priority) continue;
+            if (kind_filter) |kf| if (kf != ref.kind) continue;
             const from_name = if (g.lookupNode(ref.from)) |node| node.name else "";
             try writer.print("  {x},{s},{s},{s},{s},{d},{s}\n", .{
                 ref.id,
@@ -55,6 +62,24 @@ pub fn writeToonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
             });
         }
     }
+}
+
+fn countFilteredGaps(
+    g: *const graph.SymbolGraph,
+    priority_filter: ?graph.Priority,
+    kind_filter: ?graph.RefKind,
+) usize {
+    if (priority_filter == null and kind_filter == null) return g.gapCount();
+    var n: usize = 0;
+    for (g.refs.items) |ref| {
+        if (ref.gapPriority()) |p| {
+            if (!g.isRefInScope(ref)) continue;
+            if (priority_filter) |pf| if (pf != p) continue;
+            if (kind_filter) |kf| if (kf != ref.kind) continue;
+            n += 1;
+        }
+    }
+    return n;
 }
 
 // ── TOON: Graph ───────────────────────────────────────────────────────
@@ -210,12 +235,19 @@ pub fn writeToonCallChains(roots: []const RootChains, writer: Writer) !void {
 
 // ── JSON Output ───────────────────────────────────────────────────────
 
-pub fn writeJsonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
+pub fn writeJsonGaps(
+    g: *const graph.SymbolGraph,
+    writer: Writer,
+    priority_filter: ?graph.Priority,
+    kind_filter: ?graph.RefKind,
+) !void {
     try writer.writeAll("{\"gaps\":[");
     var first = true;
     for (g.refs.items) |ref| {
         if (ref.gapPriority()) |priority| {
             if (!g.isRefInScope(ref)) continue;
+            if (priority_filter) |pf| if (pf != priority) continue;
+            if (kind_filter) |kf| if (kf != ref.kind) continue;
             if (!first) try writer.writeAll(",");
             first = false;
             const from_name = if (g.lookupNode(ref.from)) |node| node.name else "";
@@ -557,7 +589,7 @@ test "writeToonGaps formats gap rows from refs" {
 
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try writeToonGaps(&g, &w);
+    try writeToonGaps(&g, &w, null, null);
     try w.flush();
 
     const out = buf[0..w.end];
@@ -629,7 +661,7 @@ test "writeJsonGaps produces valid structure from refs" {
 
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try writeJsonGaps(&g, &w);
+    try writeJsonGaps(&g, &w, null, null);
     try w.flush();
 
     const out = buf[0..w.end];

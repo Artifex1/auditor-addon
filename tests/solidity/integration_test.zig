@@ -300,7 +300,7 @@ test "output: TOON gaps from GapScenarios" {
 
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try output.writeToonGaps(&pipe.graph, &w);
+    try output.writeToonGaps(&pipe.graph, &w, null, null);
     try w.flush();
 
     const out = buf[0..w.end];
@@ -357,7 +357,7 @@ test "output: JSON gaps from GapScenarios" {
 
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try output.writeJsonGaps(&pipe.graph, &w);
+    try output.writeJsonGaps(&pipe.graph, &w, null, null);
     try w.flush();
 
     const out = buf[0..w.end];

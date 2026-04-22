@@ -133,7 +133,7 @@ claude
 ### Via Gemini CLI Extension
 
 ```bash
-gemini extensions install https://github.com/Artifex1/auditor-addon
+gemini extensions install <repository-url>
 ```
 
 ### Other AI Coding Environments (Cursor, Codex, Windsurf, etc.)
@@ -141,7 +141,7 @@ gemini extensions install https://github.com/Artifex1/auditor-addon
 Skills can be installed using the [skills CLI](https://skills.sh/). This includes the `aud` CLI — pre-built binaries for all platforms are shipped with the `auditor-addon-cli` skill:
 
 ```bash
-npx skills add Artifex1/auditor-addon
+npx skills add <repository-url>
 ```
 
 The AI can invoke `aud` directly via the skill path. For manual use, see the `auditor-addon-cli` skill's SKILL.md for instructions on adding `aud` to your PATH.
@@ -191,9 +191,6 @@ zig build test
 - [`GEMINI.md`](./GEMINI.md): 🤖 Gemini CLI extension context guide
 - [`gemini-extension.json`](./gemini-extension.json): ⚙️ Gemini CLI extension configuration
 - [`skills/`](./skills/): 🎯 Skill definitions and protocols
-- [`commands/`](./commands/): 📋 Command alias definitions for Gemini CLI
 - [`src/`](./src/): 🔧 Zig source (pipeline, language configs, output, CLI)
 - [`vendor/grammars/`](./vendor/grammars/): 🌳 Tree-sitter grammar sources
 - [`skills/auditor-addon-cli/bin/`](./skills/auditor-addon-cli/bin/): 📦 Pre-built binaries + platform dispatcher
-- [`SPEC.md`](./SPEC.md): 📐 Symbol graph and pipeline specification
-- [`SPEC-CLI.md`](./SPEC-CLI.md): 📐 CLI commands specification

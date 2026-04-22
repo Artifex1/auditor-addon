@@ -1,16 +1,12 @@
 ---
 name: estimator
 description: Conducting project scoping and estimation using logical chunking and metric analysis. Use when the user wants to estimate audit effort, scope a codebase for review, calculate hours for a security engagement, or assess the size of a diff or full repository.
-argument-hint: "<scope file or base..head>"
+argument-hint: "<scope file or glob>"
 allowed-tools:
   - Read
   - Glob
   - Grep
-  - mcp__plugin_auditor-addon_auditor-addon__peek
-  - mcp__plugin_auditor-addon_auditor-addon__metrics
-  - mcp__plugin_auditor-addon_auditor-addon__diff_metrics
-  - mcp__plugin_auditor-addon_auditor-addon__diff
-  - mcp__plugin_auditor-addon_auditor-addon__call_chains
+  - Bash
 ---
 
 # Estimator
@@ -28,6 +24,12 @@ CHECKPOINT RULES:
 - STOP and wait for user response before proceeding
 - If you analyze multiple chunks without confirmation, STOP and return to last checkpoint
 </workflow>
+
+---
+
+## CLI Binary
+
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
 
 ---
 
@@ -175,12 +177,12 @@ For each chunk, note which path patterns are likely in-scope vs out-of-scope:
 
 **Step 1 — Prepare:**
 - Identify files in the chunk
-- **Batch `peek` calls** for ambiguous files
-- **Skip `peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
+- **Batch `aud peek` calls** for ambiguous files
+- **Skip `aud peek`** when path makes category obvious (e.g., `tests/`, `*_test.*`, `generated/`)
 
 **Step 2 — Categorize:**
 - Assign each file a category (see File Categories reference)
-- If `peek` is insufficient, read up to 200 lines to categorize
+- If `aud peek` is insufficient, read up to 200 lines to categorize
 
 **Step 3 — Determine Scope:**
 - Apply scope defaults (see Scope Defaults reference)
@@ -210,7 +212,7 @@ Include:
 **Goal:** Calculate metrics and estimate audit effort for all confirmed in-scope files.
 
 **Step 1 — Calculate:**
-- Call the `metrics` tool with all confirmed in-scope paths
+- Run `aud metrics` with all confirmed in-scope paths
 
 **Step 2 — Analyze:**
 - Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
@@ -248,21 +250,23 @@ Reason: <justification>
 **Per-Chunk Steps:**
 
 **Step 1 — Calculate Diff Metrics:**
-- Call `diff_metrics` with `base`, `head`, and this chunk's paths
-- If no changes in chunk → skip to next chunk
-- Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
+- Run `aud diff-metrics <base> <head> -- <chunk-paths>` (add `--no-tests` if test code should be excluded)
+- If no rows returned for the chunk → skip to next chunk
+- Review `nloc_added`, `nloc_removed`, `complexity_added`, `complexity_per_100`, `comment_density`, `estimated_hours`, and `changed_functions`
+- Unsupported extensions are omitted automatically; deleted files have zero effort
 
 **Step 2 — Analyze Changes:**
-- Use `diff` with `output: 'signatures'` for structural overview
-- Use `diff` with `output: 'full'` when actual code context is needed
-- Use judgment: signatures alone are often insufficient for meaningful understanding
+- Use `git diff <base>..<head> -- <file>` for the actual diff
+- Run `aud call-chains <chunk-paths>` (no `--root`) and grep the output for each name from `changed_functions` to see which entry-point chains reach the modified code
+- Optionally: `aud call-chains --root=<changed-name>` to see what a changed function reaches downstream
+- Use judgment: scan the diff for added/removed functions, changed logic, new entry points
 
 **Step 3 — Classify & Adjust:**
 For each changed file, determine scope and adjust estimates. Assume **no prior auditor context**.
 
 **Scope:** Apply categories and scope defaults (see references).
 
-**Context burden:** Use `call_chains` to see where touched functions appear in call chains:
+**Context burden:** From the call-chains output above, assess how each changed function sits in the graph:
 - *Isolated* (leaf node, minimal callers, self-contained) → no adjustment
 - *Integrated* (multiple paths, shared state, affects invariants) → increase estimate
 - *Escalate*: If paths are insufficient, read unchanged files to understand context surface
@@ -271,8 +275,8 @@ For each changed file, determine scope and adjust estimates. Assume **no prior a
 
 **Step 4 — Report:**
 Present summary table:
-| File | Category | Scope | Approach | NLoC | Comment Density | CC | Adjusted Hours |
-|------|----------|-------|----------|------|-----------------|-----|----------------|
+| File | Category | Scope | Approach | nloc_added | nloc_removed | complexity_added | comment_density | Adjusted Hours |
+|------|----------|-------|----------|------------|--------------|------------------|-----------------|----------------|
 
 - **Approach:** `full` (added files, audit entire file) or `diff` (modified files, audit changes only)
 
@@ -337,10 +341,14 @@ Then produce the chosen format.
 
 **4. Detailed Table (in-scope files only):**
 
+Full scope:
 | Chunk | File Path | Category | NLoC | Comment Density | Complexity | Estimated Hours |
 |-------|-----------|----------|------|-----------------|------------|-----------------|
 
-- Diff scope: Add **Approach** column (`full` for added files, `diff` for modified)
+Diff scope:
+| Chunk | File Path | Category | Approach | nloc_added | nloc_removed | complexity_added | Estimated Hours |
+|-------|-----------|----------|----------|------------|--------------|------------------|-----------------|
+
 - Use adjusted estimates from METRICS (full) or DIFF-TRIAGE (diff)
 
 **5. Adjustments Summary:**
@@ -353,9 +361,8 @@ Reason: <justification>
 ```
 
 **6. Totals:**
-- Total NLoC (diff NLoC for diff scope)
-- Total Estimated Hours
-- Total Estimated Days
+- Full scope: Total NLoC, Total Estimated Hours, Total Estimated Days
+- Diff scope: Total nloc_added, Total nloc_removed, Total Estimated Hours, Total Estimated Days
 
 **7. Required Domain Expertise:**
 - Languages and ecosystems (e.g. Solidity/EVM, Rust/Substrate)

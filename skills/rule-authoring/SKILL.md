@@ -1,202 +1,256 @@
 ---
 name: rule-authoring
-description: Writing SAiST static analysis rules — both shipped rules in the auditor-addon repo and custom per-engagement rules in audit workspaces. Use when the user wants to create a new detection rule, add a security check, implement a code smell detector, turn a confirmed finding into a reusable rule, or extend the rule set. Covers rule types (shallow, deep, MapRule), the trait system, language scoping, finding kinds, custom rules, and testing patterns.
+description: Writing SAiST static analysis rules in Lua — both shipped rules in the auditor-addon repo and custom per-engagement rules in audit workspaces. Use when the user wants to create a new detection rule, add a security check, implement a code smell detector, turn a confirmed finding into a reusable rule, or extend the rule set. Covers rule types (scope/deep/map), the Lua API, language scoping, finding kinds, custom rules, and testing patterns.
 argument-hint: "<rule idea or vulnerability pattern>"
 ---
 
 # Rule Authoring
 
-Rules live in two places:
+Rules are `.lua` files. Two deployment modes:
 
-- **Shipped rules** (`src/static/rules/`): part of auditor-addon, bundled into the server at build time. IDs use standard prefixes: `SOL-`, `GEN-`, `MAP-`. Adding a new shipped rule requires two files: the rule itself and an import in `src/static/rules/index.ts`.
-- **Custom rules** (any `.ts` or `.js` file): per-engagement rules in the audit workspace. IDs **must** use the `CUSTOM-` prefix. Loaded at runtime via `customRulePaths` on `sast_run_rules`. TypeScript files are compiled on-the-fly by tsx — no build step needed.
+- **Shipped rules** (`rules/`): bundled with the tool. IDs use language prefixes: `SOL-` (Solidity), `GEN-` (generic/multi-language). Run automatically on `aud run` for applicable languages.
+- **Adhoc rules** (any `.lua` file or inline string): per-engagement rules. Load at runtime via `--rule-path=<file>` or `--rule-inline=<lua_code>`.
 
-Both use the same interfaces. Each rule is a single `.ts` file that default-exports a `Rule` or `MapRule` object.
+Both use the exact same Lua interface.
+
+## CLI Binary
+
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
 
 ## Choosing a Rule Type
 
-### Shallow Rule (`Rule` without `deep`)
+### Scope Rule (`type = "scope"`)
 
-Walks every AST node in every file. Use for patterns detectable within a single function or file without following call edges.
+Walks every AST node across all files. Use for patterns detectable within a single function or file without following call edges. Examples: missing visibility, division before multiplication, dangerous opcode usage.
 
-```typescript
-enter(node: Node, ctx: RuleContext): void   // pre-order DFS
-exit(node: Node, ctx: RuleContext): void    // post-order DFS
-finalize(ctx: RuleContext): FindingInstance[]
-reset(): void
-```
+### Deep Rule (`type = "deep"`)
 
-**Use when:** The pattern is visible in a single function body — node type checks, operator patterns, modifier presence. Examples: SOL-011 (div before mul), SOL-006 (floating pragma), SOL-023 (malformed modifier).
+Same visitor pattern but the walker follows call edges across function boundaries. `ctx.depth` increments at each function transition. Use for patterns spanning multiple functions (e.g., external call followed by state write in caller). Requires `max_depth`.
 
-### Deep Rule (`Rule` with `deep: { maxDepth: N }`)
+### Map Rule (`type = "map"`)
 
-Same interface but the walker follows call edges across function boundaries. `depth` increments at each function transition, not each AST level.
-
-**Use when:** The pattern spans multiple functions — e.g. external call in callee followed by state write in caller. Example: SOL-002 (reentrancy, `deep: { maxDepth: 6 }`).
-
-### MapRule
-
-Runs once against the completed `SymbolMap` after all files are processed. No AST traversal — operates on `SymbolEntry` metadata.
-
-```typescript
-check(symbolMap: SymbolMap, ctx: RuleContext): FindingInstance[]
-```
-
-**Use when:** The detection requires cross-function or cross-file reasoning over the symbol table — caller counts, visibility analysis, state variable usage patterns. Examples: MAP-001 (broad visibility), MAP-002 (unused function), SOL-017 (variable could be constant).
+Runs once after the full graph is built. No AST traversal — queries the symbol graph directly. Use for cross-function or cross-file reasoning: caller counts, visibility analysis, unused functions, state variable patterns. Defines `check()` instead of `enter()`/`exit()`.
 
 ## Rule Structure
 
-```typescript
-import { SupportedLanguage } from "../../engine/types.js";
-import type { Rule, FindingInstance, RuleContext } from "../../engine/types.js";
-import type { Node } from "web-tree-sitter";
+### Visitor Rule (scope or deep)
 
-function createRule(): Rule {
-    let findings: FindingInstance[] = [];
-
-    return {
-        id: 'SOL-NNN',
-        severity: 'medium',              // critical | high | medium | low | info
-        title: 'Short label',
-        description: 'What it detects and why it matters.',
-        kind: 'smell',                   // issue | smell | pointer
-        appliesTo: {
-            languages: [SupportedLanguage.Solidity],
-            domains: ['on-chain'],       // optional: 'on-chain' | 'off-chain'
-        },
-
-        enter(node: Node, ctx: RuleContext) {
-            // pattern detection logic
-        },
-
-        finalize() { return findings; },
-        reset() { findings = []; },
-    };
+```lua
+rule = {
+    id = "SOL-002",
+    name = "reentrancy",
+    severity = "critical",   -- critical | high | medium | low | info
+    confidence = "smell",    -- issue | smell | pointer
+    type = "deep",           -- "scope" or "deep"
+    max_depth = 5,           -- deep only
+    description = "Detects state changes after external calls",
+    languages = {"solidity"}, -- nil or omitted = all languages
 }
 
-export default createRule();
+-- Module-level state persists across the entire walk (all files)
+local seen_external_call = false
+
+-- Per-kind hooks: define `enter_<node_type>` / `exit_<node_type>` for the
+-- tree-sitter node kinds you care about. The walker only invokes hooks that
+-- exist, so rules only pay the Lua call cost for nodes they actually handle.
+function enter_function_definition(node, ctx)
+    -- node = { kind, line, file, name, handle }
+    -- ctx  = { depth, current_file, current_node }
+    seen_external_call = false   -- reset per-function state
+end
+
+function enter_call_expression(node, ctx)
+    -- Heuristic: any call is treated as potentially external.
+    if not seen_external_call then
+        seen_external_call = true
+    end
+end
+
+local function report_write(node, ctx)
+    if not seen_external_call then return end
+    report.hit({
+        file = ctx.current_file,
+        line = node.line,
+        node_text = ast.text(node.handle) or "",
+    })
+end
+
+function enter_assignment_expression(node, ctx)           report_write(node, ctx) end
+function enter_augmented_assignment_expression(node, ctx) report_write(node, ctx) end
+
+-- Optional: `exit_<kind>` fires bottom-up when leaving a subtree.
+-- Optional: `finalize()` fires once after all files have been walked; use for
+--           findings that depend on state accumulated across the entire walk.
 ```
 
-## The Trait System (`ctx.trait`)
+### Map Rule
 
-Rules are language-agnostic through `ctx.trait` — the `LanguageAdapter` for the current language. Use trait methods instead of hardcoding node types:
+```lua
+rule = {
+    id = "SOL-022",
+    name = "broad-visibility",
+    severity = "info",
+    confidence = "pointer",
+    type = "map",
+    description = "Detects functions with broader visibility than needed",
+}
 
-| Trait method | Returns | Use for |
-|---|---|---|
-| `isFunctionDef(node)` | boolean | Detecting function boundaries |
-| `isExternalCall(node)` | boolean | External/cross-contract calls |
-| `isStateWrite(node)` | boolean | Storage mutations |
-| `isStateRead(node)` | boolean | Storage reads |
-| `isPublicFn(node)` | boolean | Public/external visibility |
-| `isEmitStatement(node)` | boolean | Event emissions |
-| `getFunctionName(node)` | string? | Extracting function name |
-| `getCallTarget(node)` | string? | Extracting call target |
+function check()
+    local findings = {}
+    local functions = graph.get_nodes_by_kind("callable")
+    for _, fn in ipairs(functions) do
+        local vis = graph.get_property(fn.id, "visibility")
+        if vis == "public" then
+            local callers = graph.get_incoming_edges(fn.id, "call")
+            if #callers == 0 then
+                table.insert(findings, {
+                    file = fn.file,
+                    line = fn.line,
+                    node_text = fn.name,
+                })
+            end
+        end
+    end
+    return findings
+end
+```
 
-**When to use traits vs direct node types:** Use traits for concepts that exist across languages (function def, state write, external call). Use direct `node.type` checks for language-specific syntax (`modifier_definition`, `pragma_directive`).
+## Hook Lifecycle
+
+### Visitor rules (scope / deep)
+
+1. **`enter_<kind>(node, ctx)`** — called top-down when entering a node of the given tree-sitter kind. Define one per kind you care about (e.g., `enter_function_definition`, `enter_call_expression`).
+2. **`exit_<kind>(node, ctx)`** — called bottom-up when leaving a node of that kind. Use for cleanup or patterns that need to know when a subtree is fully visited.
+3. **`finalize()`** — called once after all files have been walked. Use for emitting findings that depend on state accumulated across the entire walk (e.g., counting patterns across files, then reporting only if a threshold is met).
+
+All hooks are optional — define only what the rule needs. The walker validates every `enter_*` / `exit_*` function name at load time against the declared languages' tree-sitter vocabulary; typos (e.g., `enter_function_defintion`) raise a rule-load error with a "did you mean" suggestion.
+
+A generic `enter(node, ctx)` / `exit(node, ctx)` is also still accepted and fires on every node — only use it when the rule genuinely needs to react to every kind. Per-kind hooks are dramatically faster because the walker skips nodes with no matching hook entirely.
+
+### Map rules
+
+1. **`check()`** — called once after the full symbol graph is built. Query the graph, return a findings table.
+
+## Lua API
+
+The Lua rule API has three namespaces: `graph.*` (symbol-graph queries), `ast.*` (tree-sitter access), and `report.*` (findings + diagnostics).
+
+**Always run `aud api` to see the current reference.** Every function registered in the Lua runtime appears with its signature and a one-line description. The output is generated from the same registry the runtime uses, so it cannot drift from the actual API.
+
+```bash
+aud api
+```
+
+Use `aud api` before writing a rule to pick the right function, and when upgrading an existing rule to see what's new.
+
+### Discovering per-language vocabulary
+
+`graph.language_info()` returns the valid argument vocabulary for the current language:
+
+```lua
+local info = graph.language_info()
+-- info.language    — e.g. "solidity"
+-- info.node_kinds  — valid graph.get_nodes_by_kind() arguments
+-- info.ref_kinds   — valid ref_kind filters for get_outgoing_edges / get_refs
+-- info.properties  — valid graph.get_property() keys (language-specific)
+```
+
+Passing an invalid kind or property key emits a diagnostic warning and returns an empty result.
+
+### Graph minimalism
+
+The symbol graph is deliberately small: only **files, containers, and callables** are nodes; only **import, call, inheritance, and using_for** are refs. State variables, modifiers, events, custom errors, structs, and enums are **not** in the graph — they live in the AST.
+
+To query them, use the AST bridge or scope lookups:
+
+```lua
+-- Scan a function body for event emits (AST).
+-- Graph-query results (fn here) carry `id` but no handle; convert via ast.node(id).
+local h = ast.node(fn.id)
+for _, emit in ipairs(ast.find(h, "emit_statement")) do ... end
+
+-- Walk an inheritance chain looking for a state variable by name (graph + AST)
+local var = graph.find_in_scope(container.id, "balances", "state_variable_declaration")
+if graph.exists_in_scope(container.id, "owner", "state_variable_declaration") then ... end
+```
+
+`graph.find_in_scope` / `exists_in_scope` walk the C3-linearized MRO of a container and look for a direct AST child of the given tree-sitter type whose `name` field matches.
+
+### AST bridge notes
+
+`node.handle` in `enter()`/`exit()` is an `ast_handle`. Prefer `ast.type()` checks over `ast.text()` — type strings are interned (fast); text copies from Zig to Lua GC (slow for large nodes).
+
+### Reporting
+
+Visitor rules call `report.hit()` inline. Map rules return a findings table from `check()`. Rule metadata (`id`, `name`, `severity`, `description`) is attached automatically — do not repeat it per hit.
+
+Use `report.warn()` to surface non-fatal issues during rule execution (e.g., unexpected graph state, skipped checks). Warnings appear in the `diagnostics` output section, separate from findings.
 
 ## Language Scoping
 
-### Naming Convention
-
-- **SOL-NNN**: Solidity-specific rules
-- **GEN-NNN**: Multi-language rules (no single-language filter)
-- **MAP-NNN**: MapRules (post-processing over SymbolMap)
-
-### `appliesTo` — always explicit
-
-**Shipped rules** use the `SupportedLanguage` enum (available via the relative import `../../engine/types.js`):
-```typescript
-appliesTo: {
-    languages: [SupportedLanguage.Solidity, SupportedLanguage.Cairo],
-    domains: ['on-chain'],           // optional
-    inheritanceModels: ['classical'], // optional
-}
+```lua
+languages = {"solidity"}           -- single language
+languages = {"solidity", "cairo"}  -- multi-language
+-- omit or nil                     -- all languages
 ```
 
-**Custom rules** use string literals instead — no runtime import of `SupportedLanguage` needed:
-```typescript
-appliesTo: {
-    languages: ['solidity', 'cairo'] as any,
-    domains: ['on-chain'],
-}
+Naming convention:
+- **SOL-NNN** — Solidity-specific
+- **GEN-NNN** — multi-language (no filter)
+
+Only list languages whose grammar you have verified against the vendor grammars in `vendor/grammars/`.
+
+## Grammar Reference
+
+Compact per-language node-type references live in `skills/rule-authoring/grammars/<lang>.md`. Each lists every named tree-sitter node type with its field names — the same strings used in `ast.type()` and `ast.child_by_field()`. Regenerate after adding a grammar:
+
+```bash
+python3 scripts/gen-grammar-refs.py          # all languages
+python3 scripts/gen-grammar-refs.py solidity  # one language
 ```
 
-Never use empty `appliesTo: {}` — that matches everything. List supported languages explicitly. Only include languages whose grammar you have verified.
+**When writing a rule**, read the target language's grammar file first to find the correct node type names and field names before writing any `ast.*` calls. Hidden/inline grammar rules (prefixed `_` in tree-sitter) do not appear — their fields surface on the parent node.
 
-> For Solidity-specific node types, field names, and expression-unwrapping patterns, see [references/solidity-ast.md](references/solidity-ast.md).
+## Confidence
 
-## Finding Kinds
+Each rule declares `confidence` to signal detection reliability. This is orthogonal to `severity` (which rates how bad the finding is).
 
-| Kind | When to use |
-|---|---|
-| `issue` | High confidence — confirmed defect pattern |
-| `smell` | Medium confidence — likely problem, anti-pattern |
-| `pointer` | Low confidence — structural pattern historically linked to bugs |
+| Value | Meaning | When to use |
+|---|---|---|
+| `issue` | 100% accurate, zero FPs | Syntactically deterministic — the pattern is either present or not (e.g., missing SPDX, floating pragma) |
+| `smell` | Real antipattern, FPs possible | Rule catches a genuine problem but can't see all context (e.g., reentrancy — guards may exist outside AST scope) |
+| `pointer` | Location for investigation | Pattern flags a spot worth examining but isn't inherently a defect (e.g., broad visibility, double state read) |
 
-**Design principle:** All three kinds must have a **syntactic** anchor — a structural AST pattern. If detection requires understanding what a variable *means* (name-matching heuristics like "fee", "onBehalf"), it belongs to the agent, not a rule.
+Default is `"smell"` if omitted. Bias toward lower confidence — prefer surprise true positives over surprise false positives.
 
-Acceptable vocabulary: well-known library functions (`mulFloor`, `mulDiv`), standards (`TYPEHASH` for EIP-712), language keywords. Not acceptable: arbitrary naming conventions.
+CLI filter: `--confidence=issue,smell` runs only rules at those confidence levels.
 
-## Custom Rules (Per-Engagement)
+**Design principle:** All rules must have a **syntactic** anchor — a structural AST pattern. If detection requires understanding what a variable *means* (name-matching heuristics like "fee", "onBehalf"), it belongs to the agent, not a rule.
 
-Custom rules let auditors codify a pattern found during an audit and immediately test it against the codebase. The flywheel:
+## Inline Adhoc Rules (Agent Use)
 
-1. **Find an issue** during manual review or agent analysis
-2. **Recognize it's a pattern** — could it appear elsewhere in this codebase, or in future audits?
-3. **Write a custom rule** in the audit workspace (e.g. `./rules/CUSTOM-001-unbounded-loop.ts`)
-4. **Test against the known instance** — the rule should flag the exact location where you found the issue
-5. **Run against the full codebase** — discover other instances of the same pattern
-6. **Promote if reusable** — if the pattern is general enough, move it to shipped rules with a standard ID
+For quick one-off scans, use `--rule-inline` to avoid writing a file:
 
-### Custom Rule Example
-
-```typescript
-// ./rules/CUSTOM-001-unbounded-loop.ts
-// These imports are optional — only needed for IDE type hints, erased at runtime by tsx
-import type { Rule, FindingInstance, RuleContext } from "auditor-addon";
-import type { Node } from "web-tree-sitter";
-
-function createRule(): Rule {
-    let findings: FindingInstance[] = [];
-    return {
-        id: 'CUSTOM-001',  // MUST use CUSTOM- prefix
-        severity: 'high',
-        title: 'Unbounded loop over user-controlled array',
-        description: 'A for-loop iterates over a storage array with no upper bound. An attacker can grow the array to cause out-of-gas reverts.',
-        kind: 'smell',
-        appliesTo: { languages: ['solidity'] as any },  // string literal, not SupportedLanguage enum
-        enter(node: Node, ctx: RuleContext) { /* ... */ },
-        finalize() { return findings; },
-        reset() { findings = []; },
-    };
-}
-export default createRule();
+```bash
+aud run "src/**/*.sol" --rule-inline='
+rule = {id="X",name="assembly-use",severity="medium",type="scope",languages={"solidity"}}
+function enter_assembly_statement(node, ctx)
+  report.hit({file=ctx.current_file, line=node.line, node_text=""})
+end'
 ```
-
-### Running Custom Rules
-
-```
-sast_run_rules({
-  scanId: "abc123",
-  customRulePaths: ["./rules/CUSTOM-001-unbounded-loop.ts"],
-})
-```
-
-Both `.ts` and `.js` paths are accepted. Custom rules run alongside shipped rules. Use `ruleIds` filter to isolate custom rules if needed.
-
-### Adding a Shipped Rule
-
-When promoting a custom rule to a shipped rule:
-1. Move the file to `src/static/rules/` with a standard ID (`SOL-`, `GEN-`, `MAP-`)
-2. Add an import to `src/static/rules/index.ts` and append it to the `shippedRules` array
-3. Add tests in `tests/languages/<lang>/rules/<RULE-ID>.test.ts`
 
 ## Testing
 
-One test file per rule: `tests/languages/<lang>/rules/<RULE-ID>.test.ts`
+Test a shipped or custom rule by running it against a fixture file:
 
-Helpers in `tests/languages/<lang>/rules/helpers.ts`: `buildContext(sources)` → `{ ctx, symbolMap }`, `runRule(ctx, file, rule)`, `runMapRule(ctx, symbolMap, rule)`, `runDeepRuleOnFunction(ctx, symbolMap, funcLabel, rule)`.
+```bash
+aud run tests/solidity/fixtures/Vault.sol --rule-path=./rules/SOL-002-reentrancy.lua --json
+```
 
-Each rule needs a positive case (flags the pattern) and a negative case (safe variant). Multi-language rules: one test file per affected language.
+Every rule needs a positive case (the pattern is present and flagged) and a negative case (the safe variant produces no findings). For shipped rules, add Zig integration tests in `tests/<lang>/integration_test.zig`.
 
-Run: `npx vitest run tests/languages/<lang>/rules/<RULE-ID>`
+### Adding a Shipped Rule
+
+1. Add the `.lua` file to `rules/` with a standard ID prefix
+2. Register it in `src/rules/shipped.zig`
+3. Add test cases in `tests/<lang>/integration_test.zig`

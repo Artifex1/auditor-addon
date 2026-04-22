@@ -1,100 +1,89 @@
 ---
 name: sast-pipeline
-description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full init → resolve gaps → run rules flow.
+description: Running the SAiST (Static AI-assisted Security Testing) pipeline against a codebase. Use when the user wants to run static analysis rules, detect code smells, find vulnerability patterns, or scan code with the built-in rule engine. Covers the full gaps → resolve → run flow using the `aud` CLI.
 argument-hint: "<files or scope>"
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
 ---
 
 # SAiST Pipeline
 
-Three-phase static analysis: **init** → **resolve gaps** → **run rules**.
+Three-phase static analysis: **gaps** → **resolve** → **run rules**.
 
-## Phase 1: Init Scan
+## CLI Binary
 
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
+
+## Scope
+
+When the user provides specific files or a file list as input to this skill, use those exact files as the scope for all commands. Do NOT broaden to glob patterns — the user's scope is intentional, and broad globs pull in out-of-scope files that create irrelevant gaps and noisy findings.
+
+```bash
+# User provides: contracts/src/Vault.sol contracts/src/Token.sol
+aud gaps contracts/src/Vault.sol contracts/src/Token.sol
+
+# NOT: aud gaps "contracts/src/**/*.sol"
 ```
-sast_init_scan({
-  files: ["src/**/*.sol"],
-  languages: ["solidity"],
-  context: {
-    domainOverrides: { "rust": "on-chain" },  // e.g. Anchor/CosmWasm
-    framework: "anchor"
-  }
-})
+
+Only use glob patterns when the user explicitly asks for a broad scan (e.g., "scan all Solidity files").
+
+## Phase 1: Gaps Scan
+
+Run `aud gaps <files...>` to build the symbol graph and emit all unresolved references. Use `aud gaps --help` for filtering options (by priority, kind, etc.).
+
+Gaps only cover four reference kinds: `import`, `call`, `inheritance`, and `using_for`. State-variable, modifier, event, and custom-error references live in the AST, not the graph — rules query them via `ast.find` or `graph.find_in_scope`, so missing ones don't appear in `aud gaps`.
+
+Gaps are grouped by priority:
+- `high` — in call chains from public entry points
+- `medium` — have public callers
+- `low` — internal, unlikely to affect rule accuracy
+
+Clean (no gaps) → skip to Phase 3. Otherwise proceed to Phase 2.
+
+## Phase 2: Resolve Gaps
+
+Review gaps and resolve what you can. Create a CSV file:
+
+```csv
+ref_id,target_file,target_line,target_name
+a4f2e81b,src/Ownable.sol,15,onlyOwner
+b7c3d012,src/Ownable.sol,3,Ownable
 ```
-
-Builds `SymbolMap` (functions, state variables, call edges, modifiers, state reads/writes). Computes **hotspots** (functions in the most call chains). Detects **gaps** — callees the static pass cannot resolve:
-
-- `unresolved_callee`: target not found in scope
-- `interface_dispatch`: call through interface (concrete impl unknown)
-- `external_library`: target exists but out-of-scope
-
-Returns `scanId`, gaps (prioritized high/medium/low by hotspot proximity), hotspots. Status is `needs_resolution` if gaps exist, `ready` if none.
-
-## Phase 2: Resolve Gaps (optional)
-
-Review gaps and resolve what you can. Each gap has `id`, `type`, `qualifiedName`, `callSite`, `codeSnippet`, `priority`.
 
 **Triage:**
-- **high** (in hotspots): read code, determine writesState/callsExternal
-- **medium** (public callers): resolve if affecting rule accuracy
-- **low** (internal): often safe to skip
+- **high**: always resolve
+- **medium**: resolve if they touch public entry points or affect rule accuracy
+- **low**: safe to skip
 
-```
-sast_resolve_gaps({
-  scanId: "abc123",
-  resolutions: [{
-    gapId: "deadbeef1234",
-    facts: { writesState: ["balances"], callsExternal: false },
-    resolvedBy: "agent",
-    confidence: "medium"
-  }]
-})
-```
+**How to resolve a gap:** Use only basic file operations — Read, Glob, Grep. No scripts.
+1. Grep the codebase for the target name (function, contract, modifier, type)
+2. Read the candidate file to confirm it's the right definition
+3. Note the file path, line number, and name — add a row to the CSV
 
-Skip entirely if gap count is zero or all low priority.
+Use `aud peek` on candidate files to quickly scan signatures without reading full source.
+
+**Iterate:** After resolving a batch, re-run `aud gaps <files...> --resolutions=resolutions.csv` to confirm progress. Resolve more if high/medium gaps remain. Repeat until only low-priority or genuinely unresolvable gaps are left.
+
+Resolution target files do NOT need to be in the original scope — `aud` automatically parses them into the graph when applying the CSV. Findings and gaps still only report on scoped files.
 
 ## Phase 3: Run Rules
 
-```
-sast_run_rules({
-  scanId: "abc123",
-  includeSeverity: ["critical", "high", "medium"],
-  includeKind: ["issue", "smell"],
-})
-```
+Run `aud run <files...> --resolutions=resolutions.csv` (omit `--resolutions` if Phase 1 was clean). Use `aud run --help` for options (specific rules, adhoc rule files, confidence filters, etc.).
 
-**Filters:** `ruleIds` (specific IDs), `includeSeverity`, `includeKind` (`issue`, `smell`, `pointer`).
+Findings are tagged with a confidence kind:
+- `issue` — high confidence, confirmed defect
+- `smell` — medium confidence, likely problem
+- `pointer` — low confidence, suspicious pattern
 
-## Finding Kinds
+## Custom Rules (Per-Engagement)
 
-| Kind | Confidence | Meaning |
-|---|---|---|
-| `issue` | high | Confirmed defect — must fix |
-| `smell` | medium | Likely problem — investigate |
-| `pointer` | low | Suspicious pattern — verify manually |
+Custom rules are `.lua` files (see `rule-authoring` skill for authoring details). The flywheel:
 
-**Pointer rules** flag syntactic patterns (rounding in branch conditions, few fields in EIP-712 hashes, inconsistent guard-vs-assignment) that have historically led to vulnerabilities. Expect false positives.
-
-## Custom Rules
-
-Besides shipped rules, the pipeline supports per-engagement custom rules. Pass file paths via `customRulePaths`:
-
-```
-sast_run_rules({
-  scanId: "abc123",
-  customRulePaths: ["./rules/CUSTOM-001-unbounded-loop.ts"],
-})
-```
-
-Both `.ts` and `.js` paths are accepted. TypeScript files are compiled on-the-fly by tsx — no build step needed. Custom rule IDs **must** use the `CUSTOM-` prefix. Use the rule-authoring skill to create them.
-
-**Flywheel:** Find an issue → recognize it's a pattern → write a custom rule → test it flags the known instance → run it against the full codebase to find more.
-
-## Typical Workflow
-
-1. Init scan with all in-scope files
-2. If gaps > 0 and high priority: read relevant code, resolve
-3. Run rules with `includeKind: ["issue", "smell"]`
-4. Validate findings against code at reported locations
-5. Optionally run `includeKind: ["pointer"]` for lower-confidence flags
-6. If a confirmed finding is a repeatable pattern, write a custom rule (rule-authoring skill) and re-scan
-7. Write up confirmed findings with the scribe skill
+1. Find an issue during manual review
+2. Recognize it's a repeatable pattern
+3. Write a custom rule (see `aud run --help` for `--rule-path` usage)
+4. Test against the known instance
+5. Run against the full codebase to discover other instances

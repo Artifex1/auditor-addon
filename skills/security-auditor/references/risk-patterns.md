@@ -14,6 +14,7 @@
 - **Unenforced Safety Mechanisms**: Verify that safety-critical state (flags, circuit breakers, pause states) is read and enforced in the paths it should gate, not just written.
 - **Override/Extension Mismatch**: When components extend, inherit, or wrap base behavior, verify that overrides preserve ALL security properties of the base — both explicit guards (require, revert, access control) AND implicit structural properties (storage key schemes, ordering assumptions, aggregation granularity).
 - **Implicit Structural Guarantees**: Security properties enforced by data structure design (composite keys, ordering constraints, slot isolation) rather than explicit checks. These are invisible to grep-for-require analysis and are the first casualties of optimization refactors.
+- **Protective Trap**: Safety mechanisms that block user actions (circuit breakers, slippage checks, withdrawal limits) can worsen the situation they aim to prevent. For each protective revert, ask: in the failure case it guards against, is the user better off with the action blocked or executed?
 
 ## High Severity Risk Patterns
 - **Library Surface**: Treat helper libraries and internal functions as critical protocol surface area, not just utilities.

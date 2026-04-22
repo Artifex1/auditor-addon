@@ -4,12 +4,15 @@
 
 ### *The LLM Multi Tool for Code Auditing*
 
-[![MCP](https://img.shields.io/badge/MCP-Compatible-blue?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTIgMkw0IDZWMTJDNCAxNi40MiA3LjU4IDIwIDEyIDIyQzE2LjQyIDIwIDIwIDE2LjQyIDIwIDEyVjZMMTIgMloiIGZpbGw9IndoaXRlIi8+PC9zdmc+)](https://modelcontextprotocol.io)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Zig](https://img.shields.io/badge/Zig-0.15+-F7A41D?logo=zig&logoColor=white)](https://ziglang.org/)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-6B48FF?logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code)
+[![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-Extension-4285F4?logo=google&logoColor=white)](https://github.com/google-gemini/gemini-cli)
+[![Cursor](https://img.shields.io/badge/Cursor-Compatible-000000?logo=cursor&logoColor=white)](https://cursor.sh)
+[![Windsurf](https://img.shields.io/badge/Windsurf-Compatible-0B100F?logo=windsurf&logoColor=white)](https://codeium.com/windsurf)
+[![Codex](https://img.shields.io/badge/OpenAI_Codex-Compatible-412991?logo=openai&logoColor=white)](https://openai.com/codex)
 
-**A Gemini CLI Extension and Claude Code Plugin with Skills and Tools for code estimation, security auditing, and professional report writing.**
+**Skills and a CLI for code estimation, security auditing, and professional report writing. Works with any AI coding environment.**
 
 </div>
 
@@ -25,7 +28,7 @@ Skills are structured workflows that guide the AI through multi-step processes. 
 | 🧠 **design-challenger** | Challenge overcomplicated designs | Propose simplifications with explicit trade-offs |
 | 📝 **scribe** | Report writing and finding generation | Professional issue descriptions, report introductions |
 | 🔬 **sast-pipeline** | Run the SAiST static analysis pipeline | Init scan → Resolve gaps → Run rules (shipped + custom) |
-| ✏️ **rule-authoring** | Author SAiST detection rules | Shallow, deep, and MapRule types with testing patterns |
+| ✏️ **rule-authoring** | Author SAiST detection rules | Scope, deep, and map rule types with testing patterns |
 
 ### How Skills Work
 
@@ -33,6 +36,7 @@ Skills provide complete workflows that the AI follows autonomously. When invoked
 
 > [!NOTE]
 > **Model Performance**: Skills perform differently across AI models. Depending on your needs, you may want to adjust the model for optimal results:
+> 
 > - **Speed**: Lighter models (e.g., Claude Haiku, Gemini Flash) execute faster but may miss subtle issues
 > - **Reasoning Effort**: More capable models (e.g., Claude Sonnet/Opus, Gemini Pro) provide deeper analysis and better edge case detection
 > - **Thoroughness**: Higher-tier models tend to be more comprehensive in their exploration and validation
@@ -42,73 +46,64 @@ Skills provide complete workflows that the AI follows autonomously. When invoked
 
 ---
 
-## 🧰 Tools
+## 🧰 CLI Tools
 
-Tools provide structured code analysis through Tree-sitter AST parsing. They support glob patterns for analyzing multiple files at once. Skills use these tools automatically as part of their workflows.
+The `aud` CLI provides structured code analysis through tree-sitter AST parsing. All commands support glob patterns for analyzing multiple files at once (e.g., `"src/**/*.sol"`). Skills invoke these commands automatically as part of their workflows. Output uses TOON by default; pass `--json` for JSON.
 
-### 👀 `peek`
+### 👀 `aud peek`
 
 Extracts function and method signatures from source files without reading full implementations. The **estimator** skill uses peek to quickly understand a codebase's API surface, what functions exist, their parameters, visibility, and modifiers. This is ideal for initial exploration and building a mental map of unfamiliar code, without the need to read full files.
 
-### 📏 `metrics`
+### 📏 `aud metrics`
 
-The metrics tool calculates code metrics:
+Calculates code metrics:
 
 - **Normalized Lines of Code (nLOC)**: Total lines minus blank lines, comment-only lines, and multi-line constructs normalized to single lines (e.g., a function signature spanning 3 lines counts as 1).
-- **Lines with Comments**: Count of lines containing comments, including inline comments.
 - **Comment Density**: Percentage of lines that have/are comments, indicating documentation coverage.
 - **Cognitive Complexity**: Measures control flow complexity by counting branches (if, for, while, etc.) weighted by nesting depth. Deeply nested logic scores higher than flat code.
-- **Estimated Hours**: Review time estimate based on nLOC, adjusted by complexity (penalty for high, benefit for low) and comment density (benefit for well-documented code).
+- **Estimated Hours**: Review time estimate based on nLOC and a per-language base rate.
 
-The **estimator** skill uses this tool to calculate how long it takes to perform a security audit.
+The **estimator** skill uses this command to calculate how long it takes to perform a security audit.
 
-### 📊 `diff_metrics`
+### 📈 `aud diff-metrics`
 
-Calculates metrics for code changes between two git refs (commits, branches, or tags). Useful for estimating incremental audit effort when reviewing pull requests or comparing versions.
+Metrics restricted to lines changed between two git refs. Shells out to `git diff -U0 -M` to extract added/removed line ranges per file, then parses each changed file with tree-sitter and computes the same metrics as `aud metrics` — restricted to added lines for `nloc_added` and `complexity_added`, and to removed lines for `nloc_removed`.
 
-- **Added/Removed Lines**: Tracks line changes per file
-- **Diff nLOC**: Lines of code added (excluding blanks and comments)
-- **Diff Complexity**: Sum of nesting depths for changed lines (deeply nested changes score higher)
-- **Estimated Hours**: Review time for the diff, using the same estimation formula as `metrics`
+Complexity follows SPEC-CLI §2.2 semantics: a new branch node adds `1 + branching_ancestors` (including pre-existing ancestors). Non-branch added lines contribute zero complexity.
 
-Deleted files are considered "free" (zero effort) since they reduce attack surface.
+Each row also emits `changed_functions` — the names of head-tree callables whose bodies overlap ≥1 *surviving* added line (blank/comment/test-only changes don't list the function). Feed these straight into `aud call-chains --root=<name>` for reach analysis.
 
-### 🔍 `diff`
+The **estimator** skill uses this command for incremental audit scoping (sizing a PR before review).
 
-Returns the actual diff content between two git refs, with two output modes:
+### 🔗 `aud gaps`
 
-- **`full`**: Raw unified diff per file - useful for deep inspection during security audits
-- **`signatures`**: Function-level changes (added/modified/removed) - useful for understanding structural changes
+Builds a symbol graph (containers, callables, variables, events, modifiers, edges) from source files and outputs unresolved **edge gaps** — references the static pass cannot resolve (unresolved callees, interface dispatch, external libraries). Gaps are prioritized by edge kind (high/medium/low) for agent triage.
 
-The signatures mode compares function signatures between base and head versions:
+Supports `--resolutions=<file>` to apply a CSV of manually resolved gaps, promoting them to concrete edges.
 
-- **Added**: Functions that exist only in head (new code to review)
-- **Modified**: Functions that exist in both but contain changed lines
-- **Removed**: Functions that existed in base but are gone (verify intentional, check for lost validation)
+### ⛓️ `aud call-chains`
 
-### ⛓️ `call_chains`
+Traces call chains from root functions (callables with no incoming call edges) through the full call graph, grouped by root and sorted longest-first. The **security-auditor** skill uses this to understand how execution flows through a system and to identify attack surfaces.
 
-Traces call chains from root functions (functions nothing else calls) through the full call graph, grouped by root and sorted longest-first. The **security-auditor** skill uses this to understand how execution flows through a system and to identify attack surfaces. A hotspot summary highlights functions appearing across the most chains, giving an immediate prioritization signal for where to focus the audit.
+Supports `--root=<name>` to start from specific functions, and `--max-depth=<n>` to limit traversal depth.
 
-### 🔬 SAiST — Static AI-assisted Security Testing
+### 📊 `aud graph`
 
-SAiST is a three-phase static analysis pipeline: **init** → **resolve gaps** → **run rules**.
+Builds and dumps the full symbol graph — all nodes (files, containers, callables, variables, modifiers, events) and edges (contains, calls, reads, writes, has_modifier, inherits, emits, imports). Useful for inspecting the graph structure directly.
 
-#### `sast_init_scan`
+### 🔬 `aud run` — Rules Engine
 
-Initializes a scan by building a symbol map (functions, state variables, call edges, modifiers, state reads/writes), computing hotspots, and detecting gaps — callees the static pass cannot resolve (unresolved targets, interface dispatch, external libraries). Returns a `scanId` for subsequent phases.
+Builds the symbol graph and runs Lua-based detection rules against it. Rules are either shipped (built-in) or custom (`.lua` files).
 
-#### `sast_resolve_gaps`
+- `--rule=<ID>` — run specific shipped rule(s) only
+- `--rule-path=<path>` — run an adhoc rule from a `.lua` file
+- `--rule-inline=<lua>` — run an adhoc rule from an inline Lua string
 
-Resolves gaps identified during init by providing facts the static pass could not determine (e.g., `writesState`, `callsExternal`). Gaps are prioritized by hotspot proximity (high/medium/low). Skip if no gaps or all low priority.
+Findings include rule metadata, confidence, location, and optional execution paths for deep rules. Supports filtering by confidence level (issue, smell, pointer).
 
-#### `sast_run_rules`
+### ℹ️ `aud info`
 
-Runs shipped and custom rules against the enriched symbol map. Supports filtering by `ruleIds`, `includeSeverity` (critical/high/medium/low/info), and `includeKind` (issue/smell/pointer). Findings include rule metadata, location, and optional execution paths for deep rules.
-
-#### `rules_info`
-
-Lists all available SAiST rules with their metadata (id, title, description, severity, kind, languages). Supports filtering by `languages`, `severity`, and `kind`. Use to discover the rule catalog before running scans or to interpret finding IDs in results.
+Lists language config details (container types, callable types, variable types, visibility extraction, builtin filters, metrics config). Useful for understanding what the parser sees for a given language.
 
 ### 🌐 Supported Languages
 
@@ -138,72 +133,36 @@ claude
 ### Via Gemini CLI Extension
 
 ```bash
-# Install the MCP server
-gemini extensions install <this repository URL>
-
-# Verify installation
-gemini extensions list
+gemini extensions install <repository-url>
 ```
 
 ### Other AI Coding Environments (Cursor, Codex, Windsurf, etc.)
 
-#### Skills Only
-
-Skills can be installed standalone using the [skills CLI](https://skills.sh/). This gives you the workflow prompts (security-auditor, estimator, threat-modeling, etc.) without the MCP tools.
+Skills can be installed using the [skills CLI](https://skills.sh/). This includes the `aud` CLI — pre-built binaries for all platforms are shipped with the `auditor-addon-cli` skill:
 
 ```bash
-npx skills add Artifex1/auditor-addon
+npx skills add <repository-url>
 ```
 
-> [!NOTE]
-> Some skills are designed to work with the MCP tools. Without the tools, these skills will not be fully functional.
+The AI can invoke `aud` directly via the skill path. For manual use, see the `auditor-addon-cli` skill's SKILL.md for instructions on adding `aud` to your PATH.
 
-#### Skills + MCP Tools
+### Building from Source
 
-For the full experience (skills + tools like `peek`, `metrics`, `call_chains`, SAiST), run the MCP server locally and register it with your environment:
-
-```bash
-# 1. Clone the repository
-git clone <repository-url>
-cd auditor-addon
-
-# 2. Start the MCP server (pre-built, no install needed)
-node dist/mcp/server.js
-```
-
-Then add the server to your environment's MCP configuration. For example, in Cursor's `.cursor/mcp.json` or a generic `mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "auditor-addon": {
-      "command": "node",
-      "args": ["/absolute/path/to/auditor-addon/dist/mcp/server.js"]
-    }
-  }
-}
-```
-
-**Optional:** Place the context file (`CLAUDE.md` or `GEMINI.md`) in your project root or follow your environment's instructions for loading system prompts — this gives the AI the tools reference and usage guidance.
-
-### Local Development Setup
+Requires [Zig 0.15+](https://ziglang.org/download/).
 
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd auditor-addon
 
-# Install dependencies
-pnpm install
-
-# Build the project
-pnpm build
+# Native build
+zig build
 
 # Run tests
-pnpm test
+zig build test
 
-# Watch mode for development
-pnpm test:watch
+# Cross-compile all platforms (macOS/Linux/Windows × arm64/x86_64)
+./scripts/build-all.sh --release
 ```
 
 ---
@@ -212,25 +171,26 @@ pnpm test:watch
 
 ### Core Principles
 
-- 🧩 Modular: Clear separation between MCP protocol, engine, and language adapters
-- 🔌 Extensible: Easy to add new languages via `BaseAdapter` inheritance
-- 🔄 DRY: Common logic shared via `BaseAdapter` class
-- ✅ Tested: Tests for all language adapters
+- 🧩 Modular: Clear separation between CLI, pipeline, language configs, and output
+- 🔌 Extensible: Add new languages via declarative `LanguageConfig` structs
+- ⚡ Fast: Single Zig binary, zero runtime dependencies, tree-sitter grammars compiled in
+- 🔬 Rules in Lua: Detection rules are authored in Lua, loaded at runtime
 
 ### Technology Stack
 
-- **Runtime**: ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript&logoColor=white)
-- **AST Engine**: [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Fast, incremental parsing for various languages
-- **Output Format**: [TOON](https://github.com/toon-format/toon) - Token-Oriented Object Notation
-- **Protocol**: [MCP](https://modelcontextprotocol.io) - Model Context Protocol
-- **Testing**: ![Vitest](https://img.shields.io/badge/Vitest-Latest-729B1B?logo=vitest&logoColor=white)
+- **Language**: ![Zig](https://img.shields.io/badge/Zig-0.15+-F7A41D?logo=zig&logoColor=white) — single binary, cross-compiles to all platforms
+- **AST Engine**: [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) — grammars compiled into the binary
+- **Rules Engine**: [Lua](https://www.lua.org/) — embedded via ziglua
+- **Output Format**: [TOON](https://github.com/toon-format/toon) — Token-Oriented Object Notation (or JSON)
+- **CLI Parsing**: [zig-clap](https://github.com/Hejsil/zig-clap)
 
 ### Key Project Files
 
 - [`.claude-plugin/`](./.claude-plugin/): 🔌 Claude Code plugin configuration
 - [`CLAUDE.md`](./CLAUDE.md): 🤖 Claude Code plugin context guide
-- [`GEMINI.md`](./GEMINI.md): 🤖 Gemini CLI extension context guide with workflow instructions
+- [`GEMINI.md`](./GEMINI.md): 🤖 Gemini CLI extension context guide
 - [`gemini-extension.json`](./gemini-extension.json): ⚙️ Gemini CLI extension configuration
 - [`skills/`](./skills/): 🎯 Skill definitions and protocols
-- [`src/languages/`](./src/languages/): 🔧 Language adapter implementations
-- [`commands/`](./commands/): 📋 Command alias definitions for Gemini CLI
+- [`src/`](./src/): 🔧 Zig source (pipeline, language configs, output, CLI)
+- [`vendor/grammars/`](./vendor/grammars/): 🌳 Tree-sitter grammar sources
+- [`skills/auditor-addon-cli/bin/`](./skills/auditor-addon-cli/bin/): 📦 Pre-built binaries + platform dispatcher

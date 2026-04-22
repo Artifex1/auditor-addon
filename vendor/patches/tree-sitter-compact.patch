@@ -1,0 +1,24 @@
+diff --git a/grammar.js b/grammar.js
+index 2ecf189..patch --- a/grammar.js
++++ b/grammar.js
+@@ -36,12 +36,14 @@
+
+   extras: ($) => [
+     /[\s\n]+/,
+-    $.comment, // Add comments as extras
++    $.comment,
++    $.block_comment,
+   ],
+
+   rules: {
+     // Compact (program)
+     //
+     // program → pelt … pelt eof
+     source_file: ($) => repeat($._pelt),
+
+     // Comment rule
+-    comment: ($) => token(seq("//", /[^\n]*/)),
++    comment: ($) => token(seq("//", /[^\n]*/)),
++    block_comment: ($) => token(seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")),
+
+     // Program-element (pelt)

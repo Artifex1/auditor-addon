@@ -13,22 +13,8 @@ pub const config = cfg.LanguageConfig{
         } },
     },
 
-    .variables = &.{
-        .{ .ts_type = "const_decl", .name_field = "name", .type_field = "type" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "call_expr", .function_field = "func_name" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null, // Move emit is event::emit(...) — qualified call, not a dedicated node
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment", .target_field = "left" },
-    },
-    .write_call_methods = &.{},
 
     .imports = .{ .ts_type = "use_decl", .path_field = "path" },
     .inheritance_strategy = .flat,

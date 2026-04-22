@@ -49,8 +49,7 @@ pub const Pipeline = struct {
         const parser = ts.Parser.create();
         try parser.setLanguage(lang_config.language.grammarFn()());
 
-        var g = graph.SymbolGraph.init(allocator);
-        g.inheritance_strategy = lang_config.inheritance_strategy;
+        const g = graph.SymbolGraph.init(allocator);
 
         return .{
             .graph = g,
@@ -240,46 +239,6 @@ pub const Pipeline = struct {
             }
         }
 
-        // Check variables
-        for (lc.variables) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                try self.processVariable(node, source, file_path, mapping);
-                return;
-            }
-        }
-
-        // Check modifiers
-        for (lc.modifiers) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                try self.processModifier(node, source, file_path, mapping);
-                return;
-            }
-        }
-
-        // Check events
-        for (lc.events) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                try self.processEvent(node, source, file_path, mapping);
-                return;
-            }
-        }
-
-        // Check custom errors
-        for (lc.errors) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                try self.processError(node, source, file_path, mapping);
-                return;
-            }
-        }
-
-        // Check type defs (structs, enums)
-        for (lc.type_defs) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                try self.processTypeDef(node, source, file_path, mapping);
-                return;
-            }
-        }
-
         // Check call expressions
         if (std.mem.eql(u8, kind, lc.call_expression.ts_type)) {
             try self.processCallExpression(node, source, file_path);
@@ -294,42 +253,12 @@ pub const Pipeline = struct {
             }
         }
 
-        // Check modifier invocations
-        if (lc.modifier_invocation) |mi| {
-            if (std.mem.eql(u8, kind, mi.ts_type)) {
-                try self.processModifierInvocation(node, source, file_path, mi);
-                return;
-            }
-        }
-
-        // Check emit expressions
-        if (lc.emit_expression) |em| {
-            if (std.mem.eql(u8, kind, em.ts_type)) {
-                try self.processEmit(node, source, file_path, em);
-                return;
-            }
-        }
-
-        // Check write expressions
-        for (lc.write_expressions) |wp| {
-            if (std.mem.eql(u8, kind, wp.ts_type)) {
-                try self.processWrite(node, source, file_path, wp);
-                return;
-            }
-        }
-
         // Check imports
         if (lc.imports) |imp| {
             if (std.mem.eql(u8, kind, imp.ts_type)) {
                 try self.processImport(node, source, file_path, imp);
                 return;
             }
-        }
-
-        // Check identifiers for state_read candidates
-        if (std.mem.eql(u8, kind, lc.identifier_type)) {
-            try self.processStateRead(node, source, file_path);
-            return;
         }
 
         // Language-specific walk hook
@@ -432,147 +361,6 @@ pub const Pipeline = struct {
         }
     }
 
-    fn processVariable(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.VariableMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        const line = node.startPoint().row + 1;
-        const id = graph.nodeId(name, file_path, line);
-        const container_id = self.currentContainer();
-        const qualified = try self.buildQualifiedName(name);
-
-        const gn = try self.graph.addNode(.{
-            .id = id,
-            .kind = .variable,
-            .language_kind = node.kind(),
-            .name = name,
-            .qualified_name = qualified,
-            .container = container_id,
-            .language = self.lang_config.language,
-            .ast_node = node,
-            .locator = self.makeLocator(node, file_path),
-        });
-
-        try self.extractProperties(node, source, mapping.properties, gn);
-
-        if (gn.properties.get("visibility")) |vis| {
-            gn.visibility = vis;
-        }
-
-        if (container_id) |cid| {
-            try self.graph.addContains(cid, id);
-        }
-    }
-
-    fn processModifier(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ModifierMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        const line = node.startPoint().row + 1;
-        const id = graph.nodeId(name, file_path, line);
-        const container_id = self.currentContainer();
-        const qualified = try self.buildQualifiedName(name);
-
-        const gn = try self.graph.addNode(.{
-            .id = id,
-            .kind = .modifier,
-            .language_kind = node.kind(),
-            .name = name,
-            .qualified_name = qualified,
-            .container = container_id,
-            .language = self.lang_config.language,
-            .ast_node = node,
-            .locator = self.makeLocator(node, file_path),
-        });
-
-        try self.extractProperties(node, source, mapping.properties, gn);
-
-        if (container_id) |cid| {
-            try self.graph.addContains(cid, id);
-        }
-
-        // Push modifier onto scope stack (§4.1)
-        if (mapping.body_field) |bf| {
-            if (node.childByFieldName(bf)) |_| {
-                try self.scope_stack.append(self.allocator, .{ .id = id, .name = name, .kind = .modifier });
-            }
-        }
-    }
-
-    fn processEvent(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.EventMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        const line = node.startPoint().row + 1;
-        const id = graph.nodeId(name, file_path, line);
-        const container_id = self.currentContainer();
-        const qualified = try self.buildQualifiedName(name);
-
-        const gn = try self.graph.addNode(.{
-            .id = id,
-            .kind = .event,
-            .language_kind = node.kind(),
-            .name = name,
-            .qualified_name = qualified,
-            .container = container_id,
-            .language = self.lang_config.language,
-            .ast_node = node,
-            .locator = self.makeLocator(node, file_path),
-        });
-
-        try self.extractProperties(node, source, mapping.properties, gn);
-
-        if (container_id) |cid| {
-            try self.graph.addContains(cid, id);
-        }
-    }
-
-    fn processError(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.SimpleMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        const line = node.startPoint().row + 1;
-        const id = graph.nodeId(name, file_path, line);
-        const container_id = self.currentContainer();
-        const qualified = try self.buildQualifiedName(name);
-
-        const gn = try self.graph.addNode(.{
-            .id = id,
-            .kind = .custom_error,
-            .language_kind = node.kind(),
-            .name = name,
-            .qualified_name = qualified,
-            .container = container_id,
-            .language = self.lang_config.language,
-            .ast_node = node,
-            .locator = self.makeLocator(node, file_path),
-        });
-
-        try self.extractProperties(node, source, mapping.properties, gn);
-
-        if (container_id) |cid| {
-            try self.graph.addContains(cid, id);
-        }
-    }
-
-    fn processTypeDef(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.SimpleMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        const line = node.startPoint().row + 1;
-        const id = graph.nodeId(name, file_path, line);
-        const container_id = self.currentContainer();
-        const qualified = try self.buildQualifiedName(name);
-
-        const gn = try self.graph.addNode(.{
-            .id = id,
-            .kind = .type_def,
-            .language_kind = node.kind(),
-            .name = name,
-            .qualified_name = qualified,
-            .container = container_id,
-            .language = self.lang_config.language,
-            .ast_node = node,
-            .locator = self.makeLocator(node, file_path),
-        });
-
-        try self.extractProperties(node, source, mapping.properties, gn);
-
-        if (container_id) |cid| {
-            try self.graph.addContains(cid, id);
-        }
-    }
-
     // ── Reference Processors ─────────────────────────────────────────
 
     fn processCallExpression(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8) !void {
@@ -585,14 +373,6 @@ pub const Pipeline = struct {
         // Filter builtins
         if (self.isBuiltin(target_name, callee_node, source)) return;
 
-        // Check if this is a write-call (e.g., items.push(x))
-        if (self.isWriteCallMethod(target_name)) {
-            // Record as state_write
-            const receiver_name = self.extractReceiverName(callee_node, source) orelse return;
-            try self.addReference(receiver_name, .state_write, node, file_path);
-            return;
-        }
-
         try self.addReference(target_name, .call, node, file_path);
     }
 
@@ -600,46 +380,6 @@ pub const Pipeline = struct {
         const name_node = node.childByFieldName(mapping.name_field) orelse return;
         const target = self.extractIdentifierText(name_node, source) orelse return;
         try self.addReference(target, .inheritance, node, file_path);
-    }
-
-    fn processModifierInvocation(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ModifierInvocationMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        try self.addReference(name, .modifier_use, node, file_path);
-    }
-
-    fn processEmit(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.EmitMapping) !void {
-        const name = self.nodeText(node, source, mapping.name_field) orelse return;
-        try self.addReference(name, .event_emit, node, file_path);
-    }
-
-    fn processWrite(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, wp: cfg.WritePattern) !void {
-        const target_node = node.childByFieldName(wp.target_field) orelse return;
-
-        // Unwrap to root identifier (§4.2)
-        const root_name = cfg.unwrap(target_node, source, self.lang_config, .receiver) orelse return;
-        try self.addReference(root_name, .state_write, node, file_path);
-
-        // Also record the read side for augmented assignments
-        // (e.g., `totalSupply += amount` reads both `totalSupply` and `amount`)
-    }
-
-    fn processStateRead(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8) !void {
-        // Only inside a callable/modifier scope (state_read is callable → variable)
-        if (self.scope_stack.items.len == 0) return;
-        const top = self.scope_stack.items[self.scope_stack.items.len - 1];
-        if (top.kind != .callable and top.kind != .modifier) return;
-
-        const name = source[node.startByte()..node.endByte()];
-
-        // Filter builtins
-        for (self.lang_config.builtin_receivers) |b| {
-            if (std.mem.eql(u8, name, b)) return;
-        }
-        for (self.lang_config.builtin_functions) |b| {
-            if (std.mem.eql(u8, name, b)) return;
-        }
-
-        try self.addReference(name, .state_read, node, file_path);
     }
 
     fn processImport(self: *Pipeline, node: ts.Node, source: []const u8, file_path: []const u8, mapping: cfg.ImportMapping) !void {
@@ -656,8 +396,6 @@ pub const Pipeline = struct {
             .target_name = import_path,
             .site = self.makeLocator(node, file_path),
             .kind = .import,
-            .targets = .empty,
-            .resolved = false,
         });
     }
 
@@ -666,14 +404,13 @@ pub const Pipeline = struct {
     fn expandImports(self: *Pipeline, queue: *std.ArrayList([]const u8)) !void {
         // Process import refs: resolve paths, queue new files
         for (self.graph.refs.items) |*ref| {
-            if (ref.kind != .import or ref.resolved) continue;
+            if (ref.kind != .import or ref.isFinalized()) continue;
 
             // Try to resolve import path to file on disk
             if (self.resolveImportPath(ref.target_name, ref.site.file)) |resolved_path| {
                 // Add target to the ref
                 const target_id = graph.nodeId(resolved_path, resolved_path, 1);
                 try ref.addTarget(self.allocator, target_id);
-                ref.resolved = true;
 
                 // Queue file for walking
                 if (!self.walked_files.contains(resolved_path)) {
@@ -707,29 +444,25 @@ pub const Pipeline = struct {
 
         // Step 1: Resolve imports and inheritance refs
         for (self.graph.refs.items) |*ref| {
-            if (ref.resolved) continue;
+            if (ref.isFinalized()) continue;
             switch (ref.kind) {
                 .import => {
                     // Unresolved import → gap
-                    ref.gap = .high;
-                    ref.resolved = true;
+                    ref.markGap(self.allocator, .high);
                 },
                 .inheritance => {
-                    // Try to resolve inheritance
                     if (self.graph.lookupContainerByName(ref.target_name)) |parent_node| {
                         try ref.addTarget(self.allocator, parent_node.id);
                     } else {
-                        ref.gap = .high;
+                        ref.markGap(self.allocator, .high);
                     }
-                    ref.resolved = true;
                 },
                 .using_for => {
                     if (self.graph.lookupContainerByName(ref.target_name)) |lib_node| {
                         try ref.addTarget(self.allocator, lib_node.id);
                     } else {
-                        ref.gap = .high;
+                        ref.markGap(self.allocator, .high);
                     }
-                    ref.resolved = true;
                 },
                 else => {},
             }
@@ -737,17 +470,17 @@ pub const Pipeline = struct {
 
         // Step 2: Resolve all other references
         for (self.graph.refs.items) |*ref| {
-            if (ref.resolved) continue;
+            if (ref.isFinalized()) continue;
 
             // Language-specific resolve hook runs first
             if (self.lang_config.resolve_hook) |hook| {
                 hook(ref, &self.graph, self.lang_config, self.allocator);
-                if (ref.resolved) continue;
+                if (ref.isFinalized()) continue;
             }
 
             // Derive container from the scope node
             const container_id = self.graph.containerOf(ref.from) orelse {
-                ref.resolved = true;
+                ref.markClassified(self.allocator);
                 continue;
             };
 
@@ -756,46 +489,12 @@ pub const Pipeline = struct {
                     if (self.graph.resolveInScope(container_id, ref.target_name, .callable)) |result| {
                         try ref.addTarget(self.allocator, result.node.id);
                         ref.target_kind = .internal;
-                        if (result.ambiguous) ref.gap = .low;
-                    } else if (self.graph.resolveInScope(container_id, ref.target_name, .custom_error)) |result| {
-                        try ref.addTarget(self.allocator, result.node.id);
-                        ref.target_kind = .internal;
+                        if (result.ambiguous) ref.markAmbiguous();
                     } else {
-                        ref.gap = .medium;
+                        ref.markGap(self.allocator, .medium);
                     }
-                    ref.resolved = true;
                 },
-                .state_read => {
-                    // §4.1: state_read → target or drop (no gap)
-                    if (self.graph.resolveInScope(container_id, ref.target_name, .variable)) |result| {
-                        try ref.addTarget(self.allocator, result.node.id);
-                    }
-                    // else: drop — likely a local or parameter
-                    ref.resolved = true;
-                },
-                .state_write => {
-                    // §4.1: state_write → target or drop (no gap)
-                    if (self.graph.resolveInScope(container_id, ref.target_name, .variable)) |result| {
-                        try ref.addTarget(self.allocator, result.node.id);
-                    }
-                    ref.resolved = true;
-                },
-                .modifier_use => {
-                    if (self.graph.resolveInScope(container_id, ref.target_name, .modifier)) |result| {
-                        try ref.addTarget(self.allocator, result.node.id);
-                    } else {
-                        ref.gap = .high;
-                    }
-                    ref.resolved = true;
-                },
-                .event_emit => {
-                    // §4.1: event_emit → target or drop (no gap)
-                    if (self.graph.resolveInScope(container_id, ref.target_name, .event)) |result| {
-                        try ref.addTarget(self.allocator, result.node.id);
-                    }
-                    ref.resolved = true;
-                },
-                else => {}, // import/inheritance handled in step 1
+                else => {}, // import/inheritance/using_for handled in step 1
             }
         }
 
@@ -928,10 +627,6 @@ pub const Pipeline = struct {
         return null;
     }
 
-    fn extractReceiverName(self: *const Pipeline, callee_node: ts.Node, source: []const u8) ?[]const u8 {
-        return cfg.unwrap(callee_node, source, self.lang_config, .receiver);
-    }
-
     fn extractIdentifierText(self: *const Pipeline, node: ts.Node, source: []const u8) ?[]const u8 {
         // Walk down to find the identifier
         if (std.mem.eql(u8, node.kind(), self.lang_config.identifier_type)) {
@@ -957,13 +652,6 @@ pub const Pipeline = struct {
         return false;
     }
 
-    fn isWriteCallMethod(self: *const Pipeline, callee_name: []const u8) bool {
-        for (self.lang_config.write_call_methods) |wcm| {
-            if (std.mem.eql(u8, callee_name, wcm)) return true;
-        }
-        return false;
-    }
-
     fn makeLocator(self: *const Pipeline, node: ts.Node, file_path: []const u8) graph.SourceLocator {
         _ = self;
         return .{
@@ -983,8 +671,6 @@ pub const Pipeline = struct {
             .target_name = target_name,
             .site = self.makeLocator(node, file_path),
             .kind = kind,
-            .targets = .empty,
-            .resolved = false,
             .ast_node = node,
         });
     }
@@ -1018,20 +704,6 @@ pub const Pipeline = struct {
 
         // Check callables
         for (self.lang_config.callables) |mapping| {
-            if (std.mem.eql(u8, kind, mapping.ts_type)) {
-                if (mapping.body_field) |bf| {
-                    if (ast.childByFieldName(bf)) |body| {
-                        if (node.endByte() >= body.endByte()) {
-                            _ = self.scope_stack.pop();
-                        }
-                    }
-                }
-                return;
-            }
-        }
-
-        // Check modifiers
-        for (self.lang_config.modifiers) |mapping| {
             if (std.mem.eql(u8, kind, mapping.ts_type)) {
                 if (mapping.body_field) |bf| {
                     if (ast.childByFieldName(bf)) |body| {

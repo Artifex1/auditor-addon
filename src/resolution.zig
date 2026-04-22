@@ -168,8 +168,9 @@ fn diagnoseCsvLine(line: []const u8) ParseErrorReason {
 /// Apply resolutions to the graph:
 /// - For each resolution: look up reference by ref_id
 /// - Compute target node ID from (target_name, target_file, target_line)
-/// - If ref found and has gap: add target, clear gap
-/// - If ref not found or ref.gap is null: stale (warning)
+/// - If ref is in a reportable state (.gap or .ambiguous): clear provisional
+///   state and add target(s) → `.resolved`
+/// - If ref not found or already cleanly resolved/classified: stale (warning)
 /// - If target not found: broken (error)
 pub fn applyResolutions(
     g: *graph.SymbolGraph,
@@ -198,9 +199,14 @@ pub fn applyResolutions(
 
         const first_time = !seen_refs.contains(res.ref_id);
 
-        // First row must target a ref with a gap annotation.
-        // Subsequent rows for the same ref are additional dispatch targets.
-        if (first_time and ref.gap == null) {
+        // First row must target a ref in a state the agent is allowed to override:
+        // .gap (truly unresolved) or .ambiguous (provisional low-confidence).
+        // .resolved/.classified/.pending are considered stale.
+        const overridable = switch (ref.resolution) {
+            .gap, .ambiguous => true,
+            .resolved, .classified, .pending => false,
+        };
+        if (first_time and !overridable) {
             try diag.stale.append(diag.allocator, .{
                 .row = pr.csv_row,
                 .ref_id = res.ref_id,
@@ -228,17 +234,15 @@ pub fn applyResolutions(
             continue;
         }
 
-        // First resolution for this ref: clear any provisional targets from static
-        // analysis. The agent's answer replaces the default.
+        // First resolution for this ref: clear provisional state. The agent's
+        // answer replaces any static-analysis default.
         if (first_time) {
-            ref.targets.clearRetainingCapacity();
-            ref.gap = null;
+            ref.clearResolution(g.allocator);
             try seen_refs.put(diag.allocator, res.ref_id, {});
         }
 
-        // Add target (first or additional dispatch target)
+        // Add target (addTarget promotes .pending → .resolved)
         try ref.addTarget(g.allocator, target_id);
-        ref.resolved = true;
         diag.resolved_count += 1;
     }
 }
@@ -322,7 +326,7 @@ test "apply resolutions: provisional ref gets targets replaced" {
         .language = .solidity,
     });
 
-    // Create a provisional ref (has a default target + gap)
+    // Create a provisional ref (ambiguous — has a default target with low confidence)
     const rid = graph.refId("src/Vault.sol", 100, 120, .call);
     var provisional_targets: std.ArrayListUnmanaged(u64) = .empty;
     try provisional_targets.append(std.testing.allocator, 999); // provisional default
@@ -332,10 +336,8 @@ test "apply resolutions: provisional ref gets targets replaced" {
         .kind = .call,
         .target_name = "call",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
-        .targets = provisional_targets,
+        .resolution = .{ .ambiguous = provisional_targets },
         .target_kind = .external,
-        .gap = .low,
-        .resolved = true,
     });
 
     var csv_buf: [256]u8 = undefined;
@@ -353,9 +355,9 @@ test "apply resolutions: provisional ref gets targets replaced" {
     // The old provisional target (999) should be replaced, not appended to
     try g.buildSiteIndex();
     const ref = g.lookupRef(rid).?;
-    try std.testing.expectEqual(@as(usize, 1), ref.targets.items.len);
+    try std.testing.expectEqual(@as(usize, 1), ref.targets().len);
     try std.testing.expectEqual(new_target_id, ref.firstTarget().?);
-    try std.testing.expect(ref.gap == null);
+    try std.testing.expect(ref.gapPriority() == null);
 }
 
 test "apply resolutions: multi-row dispatch (two targets for same ref)" {
@@ -375,9 +377,7 @@ test "apply resolutions: multi-row dispatch (two targets for same ref)" {
         .kind = .call,
         .target_name = "withdraw",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // Two CSV rows for the same ref_id → multi-dispatch
@@ -395,8 +395,8 @@ test "apply resolutions: multi-row dispatch (two targets for same ref)" {
 
     try g.buildSiteIndex();
     const ref = g.lookupRef(rid).?;
-    try std.testing.expectEqual(@as(usize, 2), ref.targets.items.len);
-    try std.testing.expect(ref.gap == null);
+    try std.testing.expectEqual(@as(usize, 2), ref.targets().len);
+    try std.testing.expect(ref.gapPriority() == null);
 }
 
 test "apply resolutions: nested call_expressions with same start_byte resolve independently" {
@@ -419,9 +419,7 @@ test "apply resolutions: nested call_expressions with same start_byte resolve in
         .kind = .call,
         .target_name = "IERC20",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 115, .line = 77, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // Outer ref: ...balanceOf(address(this)) — start=100, end=150
@@ -432,9 +430,7 @@ test "apply resolutions: nested call_expressions with same start_byte resolve in
         .kind = .call,
         .target_name = "balanceOf",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 150, .line = 77, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // CSV with both resolutions — distinct ref_ids
@@ -456,8 +452,8 @@ test "apply resolutions: nested call_expressions with same start_byte resolve in
     try g.buildSiteIndex();
     const inner = g.lookupRef(rid_inner).?;
     const outer = g.lookupRef(rid_outer).?;
-    try std.testing.expect(inner.gap == null);
-    try std.testing.expect(outer.gap == null);
+    try std.testing.expect(inner.gapPriority() == null);
+    try std.testing.expect(outer.gapPriority() == null);
     try std.testing.expectEqual(ierc20_id, inner.firstTarget().?);
     try std.testing.expectEqual(balance_id, outer.firstTarget().?);
 }
@@ -473,9 +469,7 @@ test "apply resolutions: broken target (node not found)" {
         .kind = .call,
         .target_name = "missing",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     });
 
     var csv_buf: [256]u8 = undefined;
@@ -496,7 +490,7 @@ test "apply resolutions: broken target (node not found)" {
     // Gap should still be set (resolution failed)
     try g.buildSiteIndex();
     const ref = g.lookupRef(rid).?;
-    try std.testing.expect(ref.gap != null);
+    try std.testing.expect(ref.gapPriority() != null);
     try std.testing.expect(!ref.hasTargets());
 }
 
@@ -514,9 +508,7 @@ test "apply resolutions: succeeds after pre-parsing target file into graph" {
         .kind = .call,
         .target_name = "onlyOwner",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 120, .line = 10, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // 2. Target node from dependency file (simulates pre-parse of resolution target)
@@ -549,7 +541,7 @@ test "apply resolutions: succeeds after pre-parsing target file into graph" {
     // Ref should now have the target and no gap
     try g.buildSiteIndex();
     const ref = g.lookupRef(rid).?;
-    try std.testing.expect(ref.gap == null);
+    try std.testing.expect(ref.gapPriority() == null);
     try std.testing.expect(ref.hasTargets());
     try std.testing.expectEqual(target_id, ref.firstTarget().?);
 }
@@ -567,9 +559,7 @@ test "apply resolutions: scoped_files excludes dependency gaps from count" {
         .kind = .call,
         .target_name = "transfer",
         .site = .{ .file = "src/Vault.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // Gap in dependency file (from pre-parsed resolution target)
@@ -579,9 +569,7 @@ test "apply resolutions: scoped_files excludes dependency gaps from count" {
         .kind = .call,
         .target_name = "context",
         .site = .{ .file = "deps/Ownable.sol", .start_byte = 30, .end_byte = 40, .line = 8, .column = 0 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     });
 
     // Without scope: 2 gaps
@@ -623,9 +611,7 @@ test "apply resolutions: import gap resolves to file node" {
         .kind = .import,
         .target_name = "@openzeppelin/contracts/token/ERC20/IERC20.sol",
         .site = .{ .file = "src/Vault.sol", .start_byte = 20, .end_byte = 80, .line = 4, .column = 0 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     });
 
     // CSV: agent provides the resolved file path — target_name can be anything
@@ -650,6 +636,6 @@ test "apply resolutions: import gap resolves to file node" {
     // Import gap cleared, target is the file node
     try g.buildSiteIndex();
     const ref = g.lookupRef(rid).?;
-    try std.testing.expect(ref.gap == null);
+    try std.testing.expect(ref.gapPriority() == null);
     try std.testing.expectEqual(file_node_id, ref.firstTarget().?);
 }

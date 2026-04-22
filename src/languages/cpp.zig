@@ -15,25 +15,8 @@ pub const config = cfg.LanguageConfig{
         } },
     },
 
-    .variables = &.{
-        .{ .ts_type = "field_declaration", .name_field = "declarator", .type_field = "type" },
-        .{ .ts_type = "declaration", .name_field = "declarator", .type_field = "type" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-        .{ .ts_type = "compound_assignment_expr", .target_field = "left" },
-        .{ .ts_type = "update_expression", .target_field = "argument" },
-    },
-    .write_call_methods = &.{ "push_back", "pop_back", "push_front", "pop_front", "insert", "erase", "clear", "emplace", "emplace_back" },
 
     .imports = .{ .ts_type = "preproc_include", .path_field = "path" },
     .inheritance_strategy = .flat,

@@ -133,7 +133,7 @@ fn dfs(
     // Collect all callee targets from refs
     var has_callees = false;
     for (refs) |ref| {
-        for (ref.targets.items) |target| {
+        for (ref.targets()) |target| {
             if (g.lookupNode(target)) |callee_node| {
                 has_callees = true;
                 try dfs(g, callee_node.id, callee_node.name, path, visited, chains, max_depth, depth + 1, allocator);
@@ -193,8 +193,7 @@ test "findRoots: callable with no incoming calls is root" {
         .kind = .call,
         .target_name = "B",
         .site = .{ .file = "test.sol", .start_byte = 10, .end_byte = 20, .line = 2, .column = 0 },
-        .targets = targets,
-        .resolved = true,
+        .resolution = .{ .resolved = targets },
     });
 
     const roots = try findRoots(&g, null, std.testing.allocator);

@@ -18,19 +18,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "arrow_function", .name_field = null, .body_field = "body" },
     },
 
-    .variables = &.{},
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-        .{ .ts_type = "augmented_assignment_expression", .target_field = "left" },
-    },
 
     .imports = .{ .ts_type = "import_statement", .path_field = "source" },
     .inheritance_strategy = .flat,

@@ -11,46 +11,48 @@ rule = {
 function check()
     local findings = {}
 
-    -- Collect all custom error names
-    local errors = graph.get_nodes_by_kind("custom_error")
+    local errors = ast.find_all("error_declaration")
     if #errors == 0 then return findings end
 
-    local error_names = {}
-    for _, err in ipairs(errors) do
-        error_names[err.name] = err
-    end
-
-    -- Scan all callables for revert statements and call expressions using these errors
-    for _, fn in ipairs(graph.get_nodes_by_kind("callable")) do
-        local fn_h = ast.node(fn.id)
-        if not fn_h then goto next_fn end
-
-        -- Check revert statements
-        for _, rv_h in ipairs(ast.find(fn_h, "revert_statement")) do
-            local err_node = ast.child_by_field(rv_h, "error")
-            if err_node then
-                local name = ast.text(err_node)
-                if name then error_names[name] = nil end
+    -- Collect defined errors by name (first locator wins on name collisions).
+    local unused = {}
+    for _, err_h in ipairs(errors) do
+        local name_h = ast.child_by_field(err_h, "name")
+        if name_h then
+            local name = ast.text(name_h)
+            if name and unused[name] == nil then
+                unused[name] = {
+                    file = ast.file(err_h) or "",
+                    line = ast.start_line(err_h) or 0,
+                }
             end
         end
-
-        -- Check call expressions (covers patterns like: if (...) CustomError())
-        for _, call_h in ipairs(ast.find(fn_h, "call_expression")) do
-            local func = ast.child_by_field(call_h, "function")
-            if func then
-                local name = ast.text(func)
-                if name then error_names[name] = nil end
-            end
-        end
-
-        ::next_fn::
     end
 
-    -- Report remaining unused errors
-    for name, err in pairs(error_names) do
+    if next(unused) == nil then return findings end
+
+    -- Clear errors referenced via `revert ErrName(...);`
+    for _, rv_h in ipairs(ast.find_all("revert_statement")) do
+        local err_node = ast.child_by_field(rv_h, "error")
+        if err_node then
+            local name = ast.text(err_node)
+            if name then unused[name] = nil end
+        end
+    end
+
+    -- Clear errors referenced via call expression (e.g., `if (x) CustomError();`).
+    for _, call_h in ipairs(ast.find_all("call_expression")) do
+        local func = ast.child_by_field(call_h, "function")
+        if func then
+            local name = ast.text(func)
+            if name then unused[name] = nil end
+        end
+    end
+
+    for name, loc in pairs(unused) do
         table.insert(findings, {
-            file = err.file,
-            line = err.line,
+            file = loc.file,
+            line = loc.line,
             node_text = name,
         })
     end

@@ -13,24 +13,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "method_declaration", .name_field = "name", .body_field = "body" },
     },
 
-    .variables = &.{
-        .{ .ts_type = "var_declaration", .name_field = "name" },
-        .{ .ts_type = "const_declaration", .name_field = "name" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_statement", .target_field = "left" },
-        .{ .ts_type = "short_var_declaration", .target_field = "left" },
-    },
-    .write_call_methods = &.{ "append", "delete" },
 
     .imports = .{ .ts_type = "import_declaration", .path_field = "path" },
     .inheritance_strategy = .flat,

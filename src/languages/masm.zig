@@ -10,18 +10,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "entrypoint", .name_field = null, .body_field = "body" },
     },
 
-    .variables = &.{},
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "invoke", .function_field = "target" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{},
-    .write_call_methods = &.{},
 
     .imports = null,
     .inheritance_strategy = .flat,

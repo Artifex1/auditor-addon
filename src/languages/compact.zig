@@ -15,22 +15,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "edecl", .name_field = "id", .body_field = null },
     },
 
-    .variables = &.{
-        .{ .ts_type = "ldecl", .name_field = "name", .type_field = "type" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "function_call_term", .function_field = "fun" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment", .target_field = "left" },
-    },
-    .write_call_methods = &.{},
 
     .imports = .{ .ts_type = "idecl", .path_field = "id" },
     .inheritance_strategy = .flat,

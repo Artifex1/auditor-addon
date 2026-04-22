@@ -37,7 +37,7 @@ fn hasNodeNamed(g: *const graph.SymbolGraph, name: []const u8, kind: graph.NodeK
 
 fn hasRefWithTarget(g: *const graph.SymbolGraph, from_name: []const u8, target_name: []const u8) bool {
     for (g.refs.items) |ref| {
-        if (!ref.resolved or !ref.hasTargets()) continue;
+        if (!ref.hasTargets()) continue;
         if (!std.mem.eql(u8, ref.target_name, target_name)) continue;
         if (g.lookupNode(ref.from)) |from_node| {
             if (std.mem.eql(u8, from_node.name, from_name)) return true;

@@ -34,6 +34,8 @@ Only use glob patterns when the user explicitly asks for a broad scan (e.g., "sc
 
 Run `aud gaps <files...>` to build the symbol graph and emit all unresolved references. Use `aud gaps --help` for filtering options (by priority, kind, etc.).
 
+Gaps only cover four reference kinds: `import`, `call`, `inheritance`, and `using_for`. State-variable, modifier, event, and custom-error references live in the AST, not the graph — rules query them via `ast.find` or `graph.find_in_scope`, so missing ones don't appear in `aud gaps`.
+
 Gaps are grouped by priority:
 - `high` — in call chains from public entry points
 - `medium` — have public callers

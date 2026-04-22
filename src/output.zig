@@ -41,7 +41,7 @@ pub fn writeToonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
     try writer.print("gaps[{d}]{{ref_id,from_name,target_name,kind,file,line,priority}}:\n", .{gap_count});
 
     for (g.refs.items) |ref| {
-        if (ref.gap) |priority| {
+        if (ref.gapPriority()) |priority| {
             if (!g.isRefInScope(ref)) continue;
             const from_name = if (g.lookupNode(ref.from)) |node| node.name else "";
             try writer.print("  {x},{s},{s},{s},{s},{d},{s}\n", .{
@@ -93,13 +93,13 @@ pub fn writeToonGraph(g: *const graph.SymbolGraph, writer: Writer) !void {
             @tagName(ref.kind),
             ref.target_name,
         });
-        for (ref.targets.items, 0..) |target, i| {
+        for (ref.targets(), 0..) |target, i| {
             if (i > 0) try writer.writeAll(",");
             try writer.print("{x}", .{target});
         }
         try writer.print("],{d},{s}\n", .{
             ref.site.line,
-            if (ref.gap) |priority| @tagName(priority) else "",
+            if (ref.gapPriority()) |priority| @tagName(priority) else "",
         });
     }
 }
@@ -214,7 +214,7 @@ pub fn writeJsonGaps(g: *const graph.SymbolGraph, writer: Writer) !void {
     try writer.writeAll("{\"gaps\":[");
     var first = true;
     for (g.refs.items) |ref| {
-        if (ref.gap) |priority| {
+        if (ref.gapPriority()) |priority| {
             if (!g.isRefInScope(ref)) continue;
             if (!first) try writer.writeAll(",");
             first = false;
@@ -289,12 +289,12 @@ pub fn writeJsonGraph(g: *const graph.SymbolGraph, writer: Writer) !void {
         try writer.writeAll("\"target_name\":");
         try writeJsonString(writer, ref.target_name);
         try writer.writeAll(",\"targets\":[");
-        for (ref.targets.items, 0..) |target, i| {
+        for (ref.targets(), 0..) |target, i| {
             if (i > 0) try writer.writeAll(",");
             try writer.print("\"{x}\"", .{target});
         }
         try writer.print("],\"site_line\":{d}", .{ref.site.line});
-        if (ref.gap) |priority| {
+        if (ref.gapPriority()) |priority| {
             try writer.print(",\"gap\":\"{s}\"", .{@tagName(priority)});
         }
         try writer.writeByte('}');
@@ -474,8 +474,7 @@ fn makeTestRef(id: u64, from: u64, target_name: []const u8, kind: graph.RefKind,
         .kind = kind,
         .target_name = target_name,
         .site = .{ .file = file, .start_byte = 0, .end_byte = 0, .line = line, .column = 0 },
-        .targets = .empty,
-        .gap = gap,
+        .resolution = if (gap) |p| .{ .gap = p } else .pending,
     };
 }
 
@@ -551,7 +550,7 @@ test "writeToonGaps formats gap rows from refs" {
     });
 
     // Add a ref with gap set
-    try g.addRef(makeTestRef(0xabc, 0x123, "onlyOwner", .modifier_use, "src/Vault.sol", 10, .high));
+    try g.addRef(makeTestRef(0xabc, 0x123, "SomeLib", .inheritance, "src/Vault.sol", 10, .high));
 
     // Add a ref without gap (should be excluded)
     try g.addRef(makeTestRef(0xdef, 0x123, "deposit", .call, "src/Vault.sol", 20, null));
@@ -563,8 +562,8 @@ test "writeToonGaps formats gap rows from refs" {
 
     const out = buf[0..w.end];
     try std.testing.expect(std.mem.indexOf(u8, out, "gaps[1]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "onlyOwner") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "modifier_use") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "SomeLib") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "inheritance") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "high") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "withdraw") != null);
     // non-gap ref should not appear

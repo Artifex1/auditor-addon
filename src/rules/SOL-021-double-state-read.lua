@@ -8,35 +8,45 @@ rule = {
     description = "Reading the same state variable twice in a function wastes gas (each SLOAD costs ~2100 gas). Cache in a local variable instead.",
 }
 
+local function is_bytecode_constant(var_h)
+    for _, ch in ipairs(ast.children(var_h)) do
+        local t = ast.type(ch)
+        if t == "immutable" or t == "constant" then return true end
+    end
+    return false
+end
+
 function check()
     local findings = {}
 
     for _, fn in ipairs(graph.get_nodes_by_kind("callable")) do
-        local reads = graph.get_outgoing_edges(fn.id, "state_read")
-        local seen = {}  -- { [target_id] = first_edge }
+        local fn_h = ast.node(fn.id)
+        if not fn_h then goto next_fn end
 
-        for _, edge in ipairs(reads) do
-            if edge.to then
-                -- Skip immutable/constant (bytecode constants, no SLOAD)
-                local mut = graph.get_property(edge.to, "mutability")
-                local con = graph.get_property(edge.to, "constant")
-                if mut or con then goto continue_edge end
+        local container = graph.get_parent(fn.id)
+        if not container then goto next_fn end
 
-                if seen[edge.to] then
-                    local var = graph.get_node(edge.to)
-                    if var then
+        local seen = {}  -- name -> true (first read recorded)
+
+        for _, id_h in ipairs(ast.find(fn_h, "identifier")) do
+            local name = ast.text(id_h)
+            if name then
+                local var_h = graph.find_in_scope(container.id, name, "state_variable_declaration")
+                if var_h and not is_bytecode_constant(var_h) then
+                    if seen[name] then
                         table.insert(findings, {
                             file = fn.file,
-                            line = edge.call_site_line,
-                            node_text = var.name,
+                            line = ast.start_line(id_h) or 0,
+                            node_text = name,
                         })
+                    else
+                        seen[name] = true
                     end
-                else
-                    seen[edge.to] = edge
                 end
             end
-            ::continue_edge::
         end
+
+        ::next_fn::
     end
 
     return findings

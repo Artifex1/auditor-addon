@@ -15,22 +15,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "function_signature_item", .name_field = "name", .body_field = null },
     },
 
-    .variables = &.{
-        .{ .ts_type = "const_item", .name_field = "name", .type_field = "type" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-    },
-    .write_call_methods = &.{},
 
     .imports = .{ .ts_type = "use_declaration", .path_field = "argument" },
     .inheritance_strategy = .flat,

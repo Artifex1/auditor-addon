@@ -28,6 +28,7 @@ const SubCommand = enum {
     @"call-chains",
     graph,
     info,
+    api,
     help,
 };
 
@@ -81,6 +82,7 @@ pub fn main() !void {
         .@"call-chains" => try cmdCallChains(allocator, &iter),
         .graph => try cmdGraph(allocator, &iter),
         .info => try cmdInfo(&iter),
+        .api => try cmdApi(),
         .help => try printMainHelp(),
     }
 }
@@ -99,6 +101,7 @@ fn printMainHelp() !void {
         \\  call-chains   Map caller->callee chains from entry points
         \\  graph         Build symbol graph, dump nodes and edges
         \\  info          List language config (node types, properties)
+        \\  api           Print the Lua rule API reference (graph.*, ast.*, report.*)
         \\  help          Show this help
         \\
         \\File arguments accept glob patterns: "src/**/*.sol"
@@ -810,16 +813,6 @@ fn cmdInfo(iter: anytype) !void {
         try wr.print("  {s} (name: {s})\n", .{ c.ts_type, c.name_field orelse "(anonymous)" });
     }
 
-    try wr.print("variables[{d}]:\n", .{lc.variables.len});
-    for (lc.variables) |v| {
-        try wr.print("  {s} (name: {s})\n", .{ v.ts_type, v.name_field });
-    }
-
-    try wr.print("events[{d}]:\n", .{lc.events.len});
-    for (lc.events) |e| {
-        try wr.print("  {s} (name: {s})\n", .{ e.ts_type, e.name_field });
-    }
-
     try wr.print("builtin_functions[{d}]: ", .{lc.builtin_functions.len});
     for (lc.builtin_functions, 0..) |bf, i| {
         if (i > 0) try wr.writeAll(", ");
@@ -833,6 +826,26 @@ fn cmdInfo(iter: anytype) !void {
         lc.metrics.comment_types.len,
     });
     try wr.flush();
+}
+
+fn cmdApi() !void {
+    var buf: [16384]u8 = undefined;
+    var w = std.fs.File.stdout().writer(&buf);
+    const wr = &w.interface;
+
+    try printApiNamespace(wr, "graph", &lua_adapter.graph_api);
+    try printApiNamespace(wr, "ast", &lua_adapter.ast_api);
+    try printApiNamespace(wr, "report", &lua_adapter.report_api);
+
+    try wr.flush();
+}
+
+fn printApiNamespace(wr: anytype, name: []const u8, bindings: []const lua_adapter.ApiBinding) !void {
+    try wr.print("{s}.*[{d}]:\n", .{ name, bindings.len });
+    for (bindings) |b| {
+        try wr.print("  {s}{s}\n    {s}\n", .{ b.name, b.signature, b.doc });
+    }
+    try wr.writeAll("\n");
 }
 
 // ── Shared Helpers ────────────────────────────────────────────────────

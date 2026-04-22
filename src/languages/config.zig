@@ -104,32 +104,6 @@ pub const CallableMapping = struct {
     properties: []const PropertyExtractor = &.{},
 };
 
-pub const VariableMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-    type_field: ?[]const u8 = null,
-    properties: []const PropertyExtractor = &.{},
-};
-
-pub const ModifierMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-    body_field: ?[]const u8 = null,
-    properties: []const PropertyExtractor = &.{},
-};
-
-pub const EventMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-    properties: []const PropertyExtractor = &.{},
-};
-
-pub const SimpleMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-    properties: []const PropertyExtractor = &.{},
-};
-
 pub const PropertyExtractor = struct {
     key: []const u8,
     child_type: []const u8,
@@ -148,21 +122,6 @@ pub const InheritanceMapping = struct {
 pub const ImportMapping = struct {
     ts_type: []const u8,
     path_field: []const u8,
-};
-
-pub const ModifierInvocationMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-};
-
-pub const EmitMapping = struct {
-    ts_type: []const u8,
-    name_field: []const u8,
-};
-
-pub const WritePattern = struct {
-    ts_type: []const u8,
-    target_field: []const u8,
 };
 
 /// Which extraction site this rule applies to.
@@ -264,8 +223,6 @@ pub const WalkContext = struct {
                 .column = self.node.startPoint().column,
             },
             .kind = kind,
-            .targets = .empty,
-            .resolved = false,
             .ast_node = self.node,
         });
     }
@@ -275,24 +232,24 @@ pub const WalkHookFn = *const fn (ctx: WalkContext) anyerror!void;
 
 pub const ResolveHookFn = *const fn (ref: *graph.Reference, g: *const graph.SymbolGraph, lang_config: *const LanguageConfig, allocator: std.mem.Allocator) void;
 
+/// Hooks that produce extra AST nodes to traverse when `walkDeep` enters a
+/// callable. Used for modifier-like constructs where code executes around a
+/// callable's body. Caller owns the returned slice (freed with `allocator`).
+/// `pre_enter_hook`: nodes walked BEFORE the callable's body (e.g. modifier
+/// prefix code, in declaration order — outermost first).
+/// `post_enter_hook`: nodes walked AFTER the callable's body (e.g. modifier
+/// suffix code, in REVERSE declaration order — innermost wraps closest).
+pub const CallableEnterHookFn = *const fn (callable_id: u64, g: *const graph.SymbolGraph, allocator: std.mem.Allocator) anyerror![]ts.Node;
+
 pub const LanguageConfig = struct {
     language: Language,
 
     // Node extraction
     containers: []const ContainerMapping,
     callables: []const CallableMapping,
-    variables: []const VariableMapping,
-    modifiers: []const ModifierMapping,
-    events: []const EventMapping,
-    errors: []const SimpleMapping = &.{},
-    type_defs: []const SimpleMapping = &.{},
     // Reference detection
     call_expression: CallExpressionMapping,
     inheritance: ?InheritanceMapping = null,
-    modifier_invocation: ?ModifierInvocationMapping = null,
-    emit_expression: ?EmitMapping = null,
-    write_expressions: []const WritePattern,
-    write_call_methods: []const []const u8 = &.{},
 
     // Import extraction
     imports: ?ImportMapping = null,
@@ -314,6 +271,11 @@ pub const LanguageConfig = struct {
 
     // Language-specific resolve hook (§4.1) — called before default resolution
     resolve_hook: ?ResolveHookFn = null,
+
+    // Callable-entry hooks (walkDeep only) — supply modifier-like prefix/suffix
+    // AST nodes to traverse around a callable body. Null = no hook.
+    pre_enter_hook: ?CallableEnterHookFn = null,
+    post_enter_hook: ?CallableEnterHookFn = null,
 
     // Metrics
     metrics: MetricsConfig,

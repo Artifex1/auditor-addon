@@ -10,16 +10,26 @@ rule = {
 
 function check()
     local findings = {}
-    local variables = graph.get_nodes_by_kind("variable")
 
-    for _, v in ipairs(variables) do
-        -- visibility is nil when no visibility child was found in the declaration
-        if not v.visibility then
-            table.insert(findings, {
-                file = v.file,
-                line = v.line,
-                node_text = v.name,
-            })
+    for _, c in ipairs(graph.get_nodes_by_kind("container")) do
+        for _, var_h in ipairs(ast.find_in_container(c.id, "state_variable_declaration")) do
+            local has_visibility = false
+            for _, ch in ipairs(ast.named_children(var_h)) do
+                if ast.type(ch) == "visibility" then
+                    has_visibility = true
+                    break
+                end
+            end
+
+            if not has_visibility then
+                local name_h = ast.child_by_field(var_h, "name")
+                local name = name_h and ast.text(name_h) or ""
+                table.insert(findings, {
+                    file = ast.file(var_h) or "",
+                    line = ast.start_line(var_h) or 0,
+                    node_text = name,
+                })
+            end
         end
     end
 

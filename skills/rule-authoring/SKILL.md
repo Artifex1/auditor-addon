@@ -47,7 +47,7 @@ rule = {
 local seen_external_call = false
 
 function enter(node, ctx)
-    -- node = { kind, line, file, name, handle, start_byte }
+    -- node = { kind, line, file, name, handle }
     -- ctx  = { depth, current_file, current_node }
 
     -- Reset per-function state at function boundaries
@@ -55,11 +55,10 @@ function enter(node, ctx)
         seen_external_call = false
     end
 
+    -- Heuristic: any call is treated as potentially external.
+    -- Emits pointer-confidence findings; a follow-up pass can filter internal calls.
     if not seen_external_call and node.kind == "call_expression" then
-        local ref = graph.get_ref_at(ctx.current_file, node.start_byte)
-        if ref and ref.target_kind == "external" then
-            seen_external_call = true
-        end
+        seen_external_call = true
     end
 
     if seen_external_call then
@@ -129,75 +128,54 @@ All three are optional — define only what the rule needs. Most rules only need
 
 ## Lua API
 
-### Graph Queries (`graph.*`)
+The Lua rule API has three namespaces: `graph.*` (symbol-graph queries), `ast.*` (tree-sitter access), and `report.*` (findings + diagnostics).
 
-```
-graph.get_nodes_by_kind(kind)              -> [{id, kind, name, qualified_name, visibility}]
-graph.get_node(id)                         -> {id, kind, name, qualified_name, visibility, ...}
-graph.get_property(id, key)                -> string | nil
-graph.get_children(id)                     -> [node]  (from contains edges)
-graph.get_parent(id)                       -> node | nil
-graph.language_info()                      -> {language, node_kinds, ref_kinds, properties}
+**Always run `aud api` to see the current reference.** Every function registered in the Lua runtime appears with its signature and a one-line description. The output is generated from the same registry the runtime uses, so it cannot drift from the actual API.
 
-graph.get_outgoing_edges(id, ?ref_kind)    -> [{to, kind, target_name, call_site_line, target_kind}]
-graph.get_incoming_edges(id, ?ref_kind)    -> [{from, kind, target_name, call_site_line, target_kind}]
-graph.get_callers(id)                      -> [node]
-graph.get_callees(id)                      -> [node]
-
-graph.get_refs(id, ?ref_kind)              -> [{ref_id, from, kind, target_name, targets, gap, site_line}]
-graph.get_ref_at(file, start_byte)         -> ref | nil   (O(1) site lookup)
-graph.get_gaps(?ref_kind)                  -> [{ref_id, from, kind, target_name, gap, site_line}]
+```bash
+aud api
 ```
 
-**Discovering the API vocabulary:** Call `graph.language_info()` to inspect what's available for the current language:
+Use `aud api` before writing a rule to pick the right function, and when upgrading an existing rule to see what's new.
+
+### Discovering per-language vocabulary
+
+`graph.language_info()` returns the valid argument vocabulary for the current language:
 
 ```lua
 local info = graph.language_info()
--- info.language    = "solidity"
--- info.node_kinds  = {"file", "container", "callable", "variable", "modifier", "event", "custom_error"}
--- info.ref_kinds   = {"import", "call", "inheritance", "state_read", "state_write", "modifier_use", "event_emit"}
--- info.properties  = {"visibility", "mutability", "override", "virtual", "constant"}  (language-specific)
+-- info.language    — e.g. "solidity"
+-- info.node_kinds  — valid graph.get_nodes_by_kind() arguments
+-- info.ref_kinds   — valid ref_kind filters for get_outgoing_edges / get_refs
+-- info.properties  — valid graph.get_property() keys (language-specific)
 ```
 
-Use `node_kinds` for valid `graph.get_nodes_by_kind()` arguments, `ref_kinds` for `graph.get_outgoing_edges()`/`graph.get_refs()` kind filters, and `properties` for valid `graph.get_property()` keys. Passing an invalid kind emits a diagnostic warning and returns an empty table.
+Passing an invalid kind or property key emits a diagnostic warning and returns an empty result.
 
-### AST Bridge (`ast.*`)
+### Graph minimalism
 
-For pattern-level rules that need raw tree-sitter access. Works identically for all grammars.
+The symbol graph is deliberately small: only **files, containers, and callables** are nodes; only **import, call, inheritance, and using_for** are refs. State variables, modifiers, events, custom errors, structs, and enums are **not** in the graph — they live in the AST.
 
+To query them, use the AST bridge or scope lookups:
+
+```lua
+-- Scan a function body for event emits (AST).
+-- Graph-query results (fn here) carry `id` but no handle; convert via ast.node(id).
+local h = ast.node(fn.id)
+for _, emit in ipairs(ast.find(h, "emit_statement")) do ... end
+
+-- Walk an inheritance chain looking for a state variable by name (graph + AST)
+local var = graph.find_in_scope(container.id, "balances", "state_variable_declaration")
+if graph.exists_in_scope(container.id, "owner", "state_variable_declaration") then ... end
 ```
-ast.node(graph_node_id)           -> ast_handle
-ast.children(handle)              -> [ast_handle]
-ast.named_children(handle)        -> [ast_handle]  (skip anonymous nodes)
-ast.child(handle, index)          -> ast_handle | nil
-ast.child_by_field(handle, name)  -> ast_handle | nil
-ast.parent(handle)                -> ast_handle | nil
-ast.next_sibling(handle)          -> ast_handle | nil
-ast.prev_sibling(handle)          -> ast_handle | nil
-ast.type(handle)                  -> string  (tree-sitter node type)
-ast.text(handle)                  -> string  (source text)
-ast.find(handle, type_name)       -> [ast_handle]  (recursive descendant search)
-ast.start_line(handle)            -> number
-ast.end_line(handle)              -> number
-ast.start_byte(handle)            -> number
-ast.end_byte(handle)              -> number
-ast.is_named(handle)              -> boolean
-```
+
+`graph.find_in_scope` / `exists_in_scope` walk the C3-linearized MRO of a container and look for a direct AST child of the given tree-sitter type whose `name` field matches.
+
+### AST bridge notes
 
 `node.handle` in `enter()`/`exit()` is an `ast_handle`. Prefer `ast.type()` checks over `ast.text()` — type strings are interned (fast); text copies from Zig to Lua GC (slow for large nodes).
 
-### Reporting (`report.*`)
-
-```
-report.hit(opts)
-    opts = {
-        file:       string,   -- ctx.current_file
-        line:       number,   -- node.line
-        node_text:  string,   -- optional, source text for context
-    }
-
-report.warn(message)             -- emit a diagnostic warning (appears in diagnostics output section)
-```
+### Reporting
 
 Visitor rules call `report.hit()` inline. Map rules return a findings table from `check()`. Rule metadata (`id`, `name`, `severity`, `description`) is attached automatically — do not repeat it per hit.
 

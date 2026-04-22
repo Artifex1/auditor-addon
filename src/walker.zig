@@ -1,6 +1,7 @@
 const std = @import("std");
 const ts = @import("tree-sitter");
 const graph = @import("graph.zig");
+const cfg = @import("languages/config.zig");
 
 // ── SPEC.md §5 — Walker ──────────────────────────────────────────────
 //
@@ -84,8 +85,7 @@ pub fn walkDeep(
     g: *const graph.SymbolGraph,
     callback: WalkCallback,
     max_depth: u32,
-    call_expression_type: []const u8,
-    modifier_invocation_type: ?[]const u8,
+    lang_config: *const cfg.LanguageConfig,
     allocator: std.mem.Allocator,
 ) !void {
     var it = g.nodes.iterator();
@@ -113,7 +113,7 @@ pub fn walkDeep(
             .current_node = node.id,
         };
 
-        try walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, call_expression_type, modifier_invocation_type, &visited, &call_stack, allocator);
+        try walkAstNodeDeep(g, ast_root, ctx, callback, max_depth, 0, lang_config, &visited, &call_stack, allocator);
     }
 
     if (callback.finalize_fn) |finalize| finalize();
@@ -127,8 +127,7 @@ fn walkAstNodeDeep(
     callback: WalkCallback,
     max_depth: u32,
     depth: u32,
-    call_expression_type: []const u8,
-    modifier_invocation_type: ?[]const u8,
+    lang_config: *const cfg.LanguageConfig,
     visited: *std.AutoHashMapUnmanaged(u64, void),
     call_stack: *std.ArrayListUnmanaged(u64),
     allocator: std.mem.Allocator,
@@ -137,25 +136,44 @@ fn walkAstNodeDeep(
 
     callback.enter_fn(node, updated_ctx);
 
+    // If entering a callable body, fetch pre/post AST fragments from language hooks.
+    const entered_callable_id: ?u64 = blk: {
+        if (updated_ctx.current_node == ctx.current_node) break :blk null;
+        const gn = g.lookupNode(updated_ctx.current_node) orelse break :blk null;
+        break :blk if (gn.kind == .callable) gn.id else null;
+    };
+
+    var prefix_nodes: []ts.Node = &.{};
+    var suffix_nodes: []ts.Node = &.{};
+    defer if (prefix_nodes.len > 0) allocator.free(prefix_nodes);
+    defer if (suffix_nodes.len > 0) allocator.free(suffix_nodes);
+
+    if (entered_callable_id) |cid| {
+        if (lang_config.pre_enter_hook) |hook| {
+            prefix_nodes = hook(cid, g, allocator) catch &.{};
+        }
+        if (lang_config.post_enter_hook) |hook| {
+            suffix_nodes = hook(cid, g, allocator) catch &.{};
+        }
+    }
+
+    for (prefix_nodes) |pre_node| {
+        try walkAstNodeDeep(g, pre_node, updated_ctx, callback, max_depth, depth, lang_config, visited, call_stack, allocator);
+    }
+
+    const call_type = lang_config.call_expression.ts_type;
+
     var i: u32 = 0;
     while (i < node.childCount()) : (i += 1) {
         const child = node.child(i) orelse continue;
         const child_kind = child.kind();
 
         if (depth < max_depth) {
-            // Follow resolved call references when encountering a call expression
-            // or a modifier invocation — both use site-based ref lookup.
-            const ref_kind: ?graph.RefKind = if (std.mem.eql(u8, child_kind, call_expression_type))
-                .call
-            else if (modifier_invocation_type != null and std.mem.eql(u8, child_kind, modifier_invocation_type.?))
-                .modifier_use
-            else
-                null;
-
-            if (ref_kind) |rk| {
-                const rid = graph.refId(updated_ctx.current_file, child.startByte(), child.endByte(), rk);
+            // Follow resolved call references when encountering a call expression.
+            if (std.mem.eql(u8, child_kind, call_type)) {
+                const rid = graph.refId(updated_ctx.current_file, child.startByte(), child.endByte(), .call);
                 if (g.lookupRef(rid)) |ref| {
-                    for (ref.targets.items) |target| {
+                    for (ref.targets()) |target| {
                         if (visited.contains(target)) continue;
                         if (g.lookupNode(target)) |callee| {
                             if (callee.ast_node) |callee_ast| {
@@ -169,9 +187,10 @@ fn walkAstNodeDeep(
                                     .current_node = callee.id,
                                 };
 
-                                try walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, call_expression_type, modifier_invocation_type, visited, call_stack, allocator);
+                                try walkAstNodeDeep(g, callee_ast, deep_ctx, callback, max_depth, depth + 1, lang_config, visited, call_stack, allocator);
 
                                 _ = call_stack.pop();
+                                _ = visited.remove(callee.id);
                             }
                         }
                     }
@@ -179,7 +198,11 @@ fn walkAstNodeDeep(
             }
         }
 
-        try walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, call_expression_type, modifier_invocation_type, visited, call_stack, allocator);
+        try walkAstNodeDeep(g, child, updated_ctx, callback, max_depth, depth, lang_config, visited, call_stack, allocator);
+    }
+
+    for (suffix_nodes) |post_node| {
+        try walkAstNodeDeep(g, post_node, updated_ctx, callback, max_depth, depth, lang_config, visited, call_stack, allocator);
     }
 
     callback.exit_fn(node, updated_ctx);
@@ -195,7 +218,7 @@ fn updateContext(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext) W
     while (it.next()) |entry| {
         const gn = entry.value_ptr.*;
         switch (gn.kind) {
-            .callable, .container, .modifier => {
+            .callable, .container => {
                 if (gn.ast_node) |gn_ast| {
                     if (gn_ast.startByte() == start_byte) {
                         return .{
@@ -214,8 +237,6 @@ fn updateContext(g: *const graph.SymbolGraph, node: ts.Node, ctx: WalkContext) W
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
-
-const cfg = @import("languages/config.zig");
 
 fn findNodeByKind(tree: *const ts.Tree, kind_name: []const u8) ?ts.Node {
     var cursor = tree.walk();

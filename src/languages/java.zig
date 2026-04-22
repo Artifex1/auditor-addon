@@ -18,25 +18,8 @@ pub const config = cfg.LanguageConfig{
         } },
     },
 
-    .variables = &.{
-        .{ .ts_type = "field_declaration", .name_field = "declarator", .type_field = "type", .properties = &.{
-            .{ .key = "visibility", .child_type = "modifiers" },
-        } },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "method_invocation", .function_field = "name" },
     .inheritance = .{ .ts_type = "superclass", .name_field = "type" },
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-        .{ .ts_type = "update_expression", .target_field = "operand" },
-    },
-    .write_call_methods = &.{ "add", "put", "set", "remove", "clear", "push", "offer", "poll" },
 
     .imports = .{ .ts_type = "import_declaration", .path_field = "name" },
     .inheritance_strategy = .flat,

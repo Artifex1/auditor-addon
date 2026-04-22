@@ -1,6 +1,7 @@
 const std = @import("std");
 const ts = @import("tree-sitter");
 const graph = @import("graph.zig");
+const cfg = @import("languages/config.zig");
 
 // ── SPEC.md §7 — AST Handle Management ───────────────────────────────
 //
@@ -47,8 +48,8 @@ pub const AstBridge = struct {
     // ── SPEC.md §6.4 — ast.* API implementations ────────────────────
 
     /// ast.node(graph_node_id) -> handle
-    pub fn nodeFromGraph(self: *AstBridge, g: *const graph.SymbolGraph, node_id: u64) !?u32 {
-        const gn = g.lookupNode(node_id) orelse return null;
+    pub fn nodeFromGraph(self: *AstBridge, node_id: u64) !?u32 {
+        const gn = self.g.lookupNode(node_id) orelse return null;
         const ast_node = gn.ast_node orelse return null;
         return try self.pushNode(ast_node);
     }
@@ -138,6 +139,32 @@ pub const AstBridge = struct {
         return try result.toOwnedSlice(self.allocator);
     }
 
+    /// ast.find_in_container(container_id, type_name) -> []handle
+    /// Recursively scans the container's body subtree. For `.container` nodes,
+    /// narrows to the body_field child; for files or missing body, scans the
+    /// stored AST node directly. Used to enumerate declarations (state vars,
+    /// events, errors, structs, enums, modifiers) without graph indexing.
+    pub fn findInContainer(self: *AstBridge, container_id: u64, type_name: []const u8) ![]u32 {
+        const gn = self.g.lookupNode(container_id) orelse return &.{};
+        const ast = gn.ast_node orelse return &.{};
+        const search_root = graph.containerBodyRoot(gn, ast);
+        var result: std.ArrayList(u32) = .empty;
+        try self.findDescendantsRecursive(search_root, type_name, &result);
+        return try result.toOwnedSlice(self.allocator);
+    }
+
+    /// ast.find_all(type_name) -> []handle
+    /// Recursively scans every parsed tree's root node.
+    pub fn findAll(self: *AstBridge, type_name: []const u8) ![]u32 {
+        var result: std.ArrayList(u32) = .empty;
+        const tree_map = self.g.trees orelse return &.{};
+        var it = tree_map.iterator();
+        while (it.next()) |entry| {
+            try self.findDescendantsRecursive(entry.value_ptr.*.rootNode(), type_name, &result);
+        }
+        return try result.toOwnedSlice(self.allocator);
+    }
+
     fn findDescendantsRecursive(self: *AstBridge, node: ts.Node, type_name: []const u8, result: *std.ArrayList(u32)) !void {
         var i: u32 = 0;
         while (i < node.childCount()) : (i += 1) {
@@ -163,28 +190,20 @@ pub const AstBridge = struct {
         return node.endPoint().row + 1;
     }
 
-    /// ast.start_byte(handle) -> u32
-    pub fn startByte(self: *const AstBridge, handle: u32) ?u32 {
-        const node = self.getNode(handle) orelse return null;
-        return node.startByte();
-    }
-
-    /// ast.end_byte(handle) -> u32
-    pub fn endByte(self: *const AstBridge, handle: u32) ?u32 {
-        const node = self.getNode(handle) orelse return null;
-        return node.endByte();
-    }
-
     /// ast.is_named(handle) -> bool
     pub fn isNamed(self: *const AstBridge, handle: u32) ?bool {
         const node = self.getNode(handle) orelse return null;
         return node.isNamed();
     }
+
+    /// ast.file(handle) -> ?string — path of the file the node belongs to.
+    pub fn fileOf(self: *const AstBridge, handle: u32) ?[]const u8 {
+        const node = self.getNode(handle) orelse return null;
+        return self.g.fileForNode(node);
+    }
 };
 
 // ── Tests ──────────────────────────────────────────────────────────────
-
-const cfg = @import("languages/config.zig");
 
 test "pushNode and getNode round-trip" {
     const allocator = std.testing.allocator;

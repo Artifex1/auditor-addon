@@ -8,11 +8,6 @@ pub const NodeKind = enum {
     file,
     container,
     callable,
-    variable,
-    modifier,
-    event,
-    custom_error,
-    type_def,
 };
 
 // ── §2.4 Reference Types ─────────────────────────────────────────────
@@ -22,10 +17,6 @@ pub const RefKind = enum {
     call,
     inheritance,
     using_for, // using X for Y — library attachment directive
-    state_read,
-    state_write,
-    modifier_use,
-    event_emit,
 };
 
 pub const CallTargetKind = enum {
@@ -42,6 +33,22 @@ pub const Priority = enum {
     low,
 };
 
+/// Resolution state of a reference. Single source of truth for "did the
+/// resolver classify this edge, and if so, how?"
+///
+///   .pending     — resolver hasn't run (or didn't touch this ref)
+///   .resolved    — N>=1 confident targets, no gap
+///   .ambiguous   — N>=1 targets, low-confidence (implicit .low gap priority)
+///   .gap         — 0 targets, reportable gap at given priority
+///   .classified  — 0 targets, deliberately not tracked (type constructor, etc.)
+pub const Resolution = union(enum) {
+    pending,
+    resolved: std.ArrayListUnmanaged(u64),
+    ambiguous: std.ArrayListUnmanaged(u64),
+    gap: Priority,
+    classified,
+};
+
 pub const Reference = struct {
     id: u64, // hash(file, start_byte, end_byte, kind)
     from: u64, // enclosing scope node (callable or container)
@@ -49,29 +56,94 @@ pub const Reference = struct {
     target_name: []const u8,
     site: SourceLocator,
 
-    // Resolution: 0..N target node IDs
-    targets: std.ArrayListUnmanaged(u64),
+    resolution: Resolution = .pending,
     target_kind: ?CallTargetKind = null,
-
-    // Gap signal (orthogonal to targets)
-    gap: ?Priority = null,
-    resolved: bool = false,
 
     // AST node for the reference site (e.g., the call_expression node).
     // Enables resolve hooks to inspect syntax (e.g., detect super.foo() qualifier).
     ast_node: ?ts.Node = null,
 
+    pub fn targets(self: *const Reference) []const u64 {
+        return switch (self.resolution) {
+            .resolved, .ambiguous => |list| list.items,
+            else => &.{},
+        };
+    }
+
     pub fn hasTargets(self: *const Reference) bool {
-        return self.targets.items.len > 0;
+        return self.targets().len > 0;
     }
 
     pub fn firstTarget(self: *const Reference) ?u64 {
-        if (self.targets.items.len > 0) return self.targets.items[0];
-        return null;
+        const t = self.targets();
+        return if (t.len > 0) t[0] else null;
     }
 
+    /// Priority at which this ref should be reported as a gap, or null if not
+    /// reportable. `.ambiguous` variants report at `.low` implicitly.
+    pub fn gapPriority(self: *const Reference) ?Priority {
+        return switch (self.resolution) {
+            .gap => |p| p,
+            .ambiguous => .low,
+            else => null,
+        };
+    }
+
+    pub fn isFinalized(self: *const Reference) bool {
+        return self.resolution != .pending;
+    }
+
+    /// Append a target. Promotes `.pending` → `.resolved` with a new list.
+    /// On `.resolved` or `.ambiguous`, appends to the existing list.
+    /// Invalid from `.gap` / `.classified` — resolvers must not finalize-then-retarget.
     pub fn addTarget(self: *Reference, allocator: std.mem.Allocator, target_id: u64) !void {
-        try self.targets.append(allocator, target_id);
+        switch (self.resolution) {
+            .pending => {
+                var list: std.ArrayListUnmanaged(u64) = .empty;
+                try list.append(allocator, target_id);
+                self.resolution = .{ .resolved = list };
+            },
+            .resolved => |*list| try list.append(allocator, target_id),
+            .ambiguous => |*list| try list.append(allocator, target_id),
+            .gap, .classified => unreachable,
+        }
+    }
+
+    /// Flip `.resolved` → `.ambiguous` in place (keeps the target list).
+    pub fn markAmbiguous(self: *Reference) void {
+        switch (self.resolution) {
+            .resolved => |list| self.resolution = .{ .ambiguous = list },
+            .ambiguous => {},
+            else => unreachable,
+        }
+    }
+
+    /// Drop any accumulated targets and set state to `.gap`.
+    pub fn markGap(self: *Reference, allocator: std.mem.Allocator, priority: Priority) void {
+        self.clearResolution(allocator);
+        self.resolution = .{ .gap = priority };
+    }
+
+    /// Drop any accumulated targets and set state to `.classified`.
+    pub fn markClassified(self: *Reference, allocator: std.mem.Allocator) void {
+        self.clearResolution(allocator);
+        self.resolution = .classified;
+    }
+
+    /// Reset to `.pending`, freeing any target list.
+    pub fn clearResolution(self: *Reference, allocator: std.mem.Allocator) void {
+        switch (self.resolution) {
+            .resolved, .ambiguous => |*list| list.deinit(allocator),
+            else => {},
+        }
+        self.resolution = .pending;
+    }
+
+    pub fn deinit(self: *Reference, allocator: std.mem.Allocator) void {
+        switch (self.resolution) {
+            .resolved, .ambiguous => |*list| list.deinit(allocator),
+            else => {},
+        }
     }
 };
 
@@ -125,6 +197,20 @@ pub fn refId(file: []const u8, start_byte: u32, end_byte: u32, kind: RefKind) u6
     return hasher.final();
 }
 
+/// Resolve the subtree root to search inside a container node: follow the
+/// language config's `body_field` when present, otherwise the raw AST.
+/// Non-container nodes return their AST unchanged.
+pub fn containerBodyRoot(gn: *const GraphNode, ast: ts.Node) ts.Node {
+    if (gn.kind != .container) return ast;
+    const lc = config.getConfig(gn.language);
+    for (lc.containers) |cm| {
+        if (!std.mem.eql(u8, cm.ts_type, gn.language_kind)) continue;
+        if (cm.body_field) |bf| return ast.childByFieldName(bf) orelse ast;
+        return ast;
+    }
+    return ast;
+}
+
 // ── §2.6 Symbol Graph ────────────────────────────────────────────────
 
 pub const SymbolGraph = struct {
@@ -149,9 +235,6 @@ pub const SymbolGraph = struct {
     // Non-owning pointer to parsed trees keyed by file path — for tree→file lookup in nodeText.
     trees: ?*const std.StringHashMapUnmanaged(*ts.Tree) = null,
 
-    // Inheritance strategy — controls how resolveInScope walks parent chains.
-    inheritance_strategy: config.InheritanceStrategy = .flat,
-
     pub fn init(backing_allocator: std.mem.Allocator) SymbolGraph {
         return .{
             .allocator = backing_allocator,
@@ -174,7 +257,7 @@ pub const SymbolGraph = struct {
 
         // Free target lists inside references
         for (self.refs.items) |*r| {
-            r.targets.deinit(self.allocator);
+            r.deinit(self.allocator);
         }
         self.refs.deinit(self.allocator);
 
@@ -326,7 +409,7 @@ pub const SymbolGraph = struct {
         var result: std.ArrayListUnmanaged(Reference) = .empty;
         errdefer result.deinit(allocator);
         for (self.refs.items) |ref| {
-            if (ref.from == from_id and ref.resolved and ref.hasTargets()) {
+            if (ref.from == from_id and ref.hasTargets()) {
                 if (kind_filter) |k| {
                     if (ref.kind != k) continue;
                 }
@@ -337,7 +420,7 @@ pub const SymbolGraph = struct {
     }
 
     /// Get all references from a node (resolved or not), optionally filtered by kind.
-    /// Unlike getOutgoingRefs, does not require ref.resolved — use for import dedup etc.
+    /// Unlike getOutgoingRefs, does not require targets — use for import dedup etc.
     pub fn getAllRefsFrom(self: *const SymbolGraph, from_id: u64, kind_filter: ?RefKind, allocator: std.mem.Allocator) ![]const Reference {
         var result: std.ArrayListUnmanaged(Reference) = .empty;
         errdefer result.deinit(allocator);
@@ -356,11 +439,11 @@ pub const SymbolGraph = struct {
         var result: std.ArrayListUnmanaged(Reference) = .empty;
         errdefer result.deinit(allocator);
         for (self.refs.items) |ref| {
-            if (!ref.resolved or !ref.hasTargets()) continue;
+            if (!ref.hasTargets()) continue;
             if (kind_filter) |k| {
                 if (ref.kind != k) continue;
             }
-            for (ref.targets.items) |target| {
+            for (ref.targets()) |target| {
                 if (target == target_id) {
                     try result.append(allocator, ref);
                     break;
@@ -373,9 +456,9 @@ pub const SymbolGraph = struct {
     /// Check if a node has any incoming references of a given kind.
     pub fn hasIncomingRefs(self: *const SymbolGraph, target_id: u64, kind_filter: RefKind) bool {
         for (self.refs.items) |ref| {
-            if (!ref.resolved or !ref.hasTargets()) continue;
+            if (!ref.hasTargets()) continue;
             if (ref.kind != kind_filter) continue;
-            for (ref.targets.items) |target| {
+            for (ref.targets()) |target| {
                 if (target == target_id) return true;
             }
         }
@@ -388,8 +471,8 @@ pub const SymbolGraph = struct {
         var result: std.ArrayListUnmanaged(u64) = .empty;
         errdefer result.deinit(allocator);
         for (self.refs.items) |ref| {
-            if (ref.from == container_id and ref.kind == .inheritance and ref.resolved and ref.hasTargets()) {
-                for (ref.targets.items) |target| {
+            if (ref.from == container_id and ref.kind == .inheritance and ref.hasTargets()) {
+                for (ref.targets()) |target| {
                     try result.append(allocator, target);
                 }
             }
@@ -414,7 +497,7 @@ pub const SymbolGraph = struct {
     pub fn gapCount(self: *const SymbolGraph) u32 {
         var count: u32 = 0;
         for (self.refs.items) |ref| {
-            if (ref.gap == null) continue;
+            if (ref.gapPriority() == null) continue;
             if (self.scoped_files) |scope| {
                 if (!scope.contains(ref.site.file)) continue;
             }
@@ -431,27 +514,40 @@ pub const SymbolGraph = struct {
 
     // ── Source Text ──────────────────────────────────────────────────
 
-    /// Get text for a tree-sitter node by slicing the source buffer for its file.
-    /// Identifies the correct file via tree-pointer matching against the trees map.
-    pub fn nodeText(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
-        const srcs = self.sources orelse return null;
+    /// Find the file path whose parsed tree owns this node (O(n) over files).
+    /// Returns null if no trees map is attached or the node's tree isn't tracked.
+    pub fn fileForNode(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
         const tree_map = self.trees orelse return null;
         var it = tree_map.iterator();
         while (it.next()) |entry| {
             if (@intFromPtr(entry.value_ptr.*) == @intFromPtr(node.tree)) {
-                const source = srcs.get(entry.key_ptr.*) orelse return null;
-                const start = node.startByte();
-                const end = node.endByte();
-                if (end <= source.len) return source[start..end];
-                return null;
+                return entry.key_ptr.*;
             }
         }
         return null;
     }
 
+    /// Get text for a tree-sitter node by slicing the source buffer for its file.
+    pub fn nodeText(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
+        const srcs = self.sources orelse return null;
+        const file = self.fileForNode(node) orelse return null;
+        const source = srcs.get(file) orelse return null;
+        const start = node.startByte();
+        const end = node.endByte();
+        if (end > source.len) return null;
+        return source[start..end];
+    }
+
     /// Look up the source text for a file by path.
     pub fn sourceForFile(self: *const SymbolGraph, file: []const u8) ?[]const u8 {
         const srcs = self.sources orelse return null;
+        return srcs.get(file);
+    }
+
+    /// Look up the source text for a ts.Node by matching its tree pointer.
+    pub fn sourceForNode(self: *const SymbolGraph, node: ts.Node) ?[]const u8 {
+        const srcs = self.sources orelse return null;
+        const file = self.fileForNode(node) orelse return null;
         return srcs.get(file);
     }
 
@@ -493,8 +589,7 @@ pub const SymbolGraph = struct {
             for (self.refs.items) |ref| {
                 if (ref.kind != .using_for) continue;
                 if (ref.from != cid) continue;
-                if (!ref.resolved) continue;
-                for (ref.targets.items) |lib_id| {
+                for (ref.targets()) |lib_id| {
                     const gop = try seen.getOrPut(allocator, lib_id);
                     if (!gop.found_existing) try result.append(allocator, lib_id);
                 }
@@ -509,8 +604,65 @@ pub const SymbolGraph = struct {
         return self.resolveInParents(container_id, name, expected_kind);
     }
 
+    // ── AST-Scoped Lookup (§graph-minimalism) ────────────────────────
+    // Name+type lookup over the container's body AST (not the graph).
+    // Walks the full C3 MRO chain so inherited declarations resolve too.
+    // Used for types the minimal graph no longer indexes: variables,
+    // events, errors, modifiers, struct/enum declarations.
+
+    /// First matching AST node of `ts_type` with `name` field = `name` in
+    /// the container's body or any ancestor's body (via MRO). Null if none.
+    pub fn findInScope(
+        self: *const SymbolGraph,
+        container_id: u64,
+        name: []const u8,
+        ts_type: []const u8,
+    ) ?ts.Node {
+        var mro = self.computeC3Mro(container_id) catch return null;
+        defer mro.deinit(self.allocator);
+        for (mro.items) |cid| {
+            if (self.scanContainerBody(cid, ts_type, name)) |found| return found;
+        }
+        return null;
+    }
+
+    /// Existence variant of `findInScope`.
+    pub fn existsInScope(
+        self: *const SymbolGraph,
+        container_id: u64,
+        name: []const u8,
+        ts_type: []const u8,
+    ) bool {
+        return self.findInScope(container_id, name, ts_type) != null;
+    }
+
+    /// Scan one container's body for a direct child of `ts_type` whose `name`
+    /// field text equals `name`. No MRO walk.
+    fn scanContainerBody(
+        self: *const SymbolGraph,
+        container_id: u64,
+        ts_type: []const u8,
+        name: []const u8,
+    ) ?ts.Node {
+        const gn = self.lookupNode(container_id) orelse return null;
+        const ast = gn.ast_node orelse return null;
+        const search_root = containerBodyRoot(gn, ast);
+
+        var i: u32 = 0;
+        while (i < search_root.namedChildCount()) : (i += 1) {
+            const child = search_root.namedChild(i) orelse continue;
+            if (!std.mem.eql(u8, child.kind(), ts_type)) continue;
+            const name_node = child.childByFieldName("name") orelse continue;
+            const text = self.nodeText(name_node) orelse continue;
+            if (std.mem.eql(u8, text, name)) return child;
+        }
+        return null;
+    }
+
     fn resolveInParents(self: *const SymbolGraph, container_id: u64, name: []const u8, expected_kind: NodeKind) ?ResolveResult {
-        switch (self.inheritance_strategy) {
+        const gn = self.lookupNode(container_id) orelse return null;
+        const strategy = config.getConfig(gn.language).inheritance_strategy;
+        switch (strategy) {
             .c3_linearization => return self.resolveC3(container_id, name, expected_kind),
             .single_chain => return self.resolveSingleChain(container_id, name, expected_kind),
             .flat => return null,
@@ -672,7 +824,7 @@ test "refId differs for nested calls with same start_byte" {
 
 test "refId differs for different kinds at same span" {
     const id1 = refId("src/Vault.sol", 100, 150, .call);
-    const id2 = refId("src/Vault.sol", 100, 150, .state_write);
+    const id2 = refId("src/Vault.sol", 100, 150, .inheritance);
     try std.testing.expect(id1 != id2);
 }
 
@@ -747,41 +899,39 @@ test "Reference lifecycle: pending → resolved with target" {
         .kind = .call,
         .target_name = "withdraw",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
-        .targets = .empty,
     };
+    defer ref.deinit(std.testing.allocator);
 
     // Starts pending
-    try std.testing.expect(!ref.resolved);
+    try std.testing.expect(!ref.isFinalized());
     try std.testing.expect(!ref.hasTargets());
 
     // Resolve with target
     try ref.addTarget(std.testing.allocator, 42);
-    ref.resolved = true;
-    defer ref.targets.deinit(std.testing.allocator);
 
-    try std.testing.expect(ref.resolved);
+    try std.testing.expect(ref.isFinalized());
     try std.testing.expect(ref.hasTargets());
     try std.testing.expectEqual(@as(u64, 42), ref.firstTarget().?);
+    try std.testing.expect(ref.gapPriority() == null);
 }
 
 test "Reference lifecycle: pending → gap" {
-    const ref = Reference{
+    var ref = Reference{
         .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
         .target_name = "onlyOwner",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     };
+    defer ref.deinit(std.testing.allocator);
 
-    try std.testing.expect(ref.resolved);
+    try std.testing.expect(ref.isFinalized());
     try std.testing.expect(!ref.hasTargets());
-    try std.testing.expectEqual(Priority.high, ref.gap.?);
+    try std.testing.expectEqual(Priority.high, ref.gapPriority().?);
 }
 
-test "Reference lifecycle: provisional (target + gap)" {
+test "Reference lifecycle: ambiguous (target + low-priority gap)" {
     var g = SymbolGraph.init(std.testing.allocator);
     defer g.deinit();
 
@@ -789,19 +939,19 @@ test "Reference lifecycle: provisional (target + gap)" {
         .id = refId("test.sol", 50, 70, .call),
         .from = 1,
         .kind = .call,
-        .target_name = "call",
+        .target_name = "method",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
-        .targets = .empty,
-        .target_kind = .external,
-        .gap = .low,
-        .resolved = true,
+        .target_kind = .cross_module,
     };
-    defer ref.targets.deinit(std.testing.allocator);
+    defer ref.deinit(std.testing.allocator);
 
-    // Has gap AND could have a target
-    try std.testing.expect(ref.resolved);
-    try std.testing.expect(ref.gap != null);
-    try std.testing.expectEqual(CallTargetKind.external, ref.target_kind.?);
+    try ref.addTarget(std.testing.allocator, 42);
+    ref.markAmbiguous();
+
+    try std.testing.expect(ref.isFinalized());
+    try std.testing.expect(ref.hasTargets());
+    try std.testing.expectEqual(Priority.low, ref.gapPriority().?);
+    try std.testing.expectEqual(CallTargetKind.cross_module, ref.target_kind.?);
 }
 
 test "Reference multi-target (dynamic dispatch)" {
@@ -811,18 +961,16 @@ test "Reference multi-target (dynamic dispatch)" {
         .kind = .call,
         .target_name = "withdraw",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
-        .targets = .empty,
-        .gap = .low,
-        .resolved = true,
     };
-    defer ref.targets.deinit(std.testing.allocator);
+    defer ref.deinit(std.testing.allocator);
 
     try ref.addTarget(std.testing.allocator, 100);
     try ref.addTarget(std.testing.allocator, 200);
+    ref.markAmbiguous();
 
-    try std.testing.expectEqual(@as(usize, 2), ref.targets.items.len);
-    try std.testing.expectEqual(@as(u64, 100), ref.targets.items[0]);
-    try std.testing.expectEqual(@as(u64, 200), ref.targets.items[1]);
+    try std.testing.expectEqual(@as(usize, 2), ref.targets().len);
+    try std.testing.expectEqual(@as(u64, 100), ref.targets()[0]);
+    try std.testing.expectEqual(@as(u64, 200), ref.targets()[1]);
 }
 
 test "SymbolGraph addRef and site_index lookup" {
@@ -836,8 +984,7 @@ test "SymbolGraph addRef and site_index lookup" {
         .kind = .call,
         .target_name = "withdraw",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 70, .line = 5, .column = 4 },
-        .targets = .empty,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     try g.buildSiteIndex();
@@ -865,9 +1012,7 @@ test "nested call_expressions at same start_byte are both reachable in site_inde
         .kind = .call,
         .target_name = "IERC20",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 115, .line = 77, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // Outer call: IERC20(asset()).balanceOf(address(this)) — start=100, end=150
@@ -878,9 +1023,7 @@ test "nested call_expressions at same start_byte are both reachable in site_inde
         .kind = .call,
         .target_name = "balanceOf",
         .site = .{ .file = "src/Vault.sol", .start_byte = 100, .end_byte = 150, .line = 77, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     try std.testing.expect(rid_inner != rid_outer);
@@ -909,21 +1052,19 @@ test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = ref1_targets,
-        .resolved = true,
+        .resolution = .{ .resolved = ref1_targets },
     });
 
-    // Resolved write ref with target
+    // Resolved inheritance ref with target
     var ref2_targets: std.ArrayListUnmanaged(u64) = .empty;
     try ref2_targets.append(std.testing.allocator, 20);
     try g.addRef(.{
-        .id = refId("test.sol", 70, 80, .state_write),
+        .id = refId("test.sol", 70, 80, .inheritance),
         .from = 1,
-        .kind = .state_write,
-        .target_name = "balance",
+        .kind = .inheritance,
+        .target_name = "Parent",
         .site = .{ .file = "test.sol", .start_byte = 70, .end_byte = 80, .line = 7, .column = 0 },
-        .targets = ref2_targets,
-        .resolved = true,
+        .resolution = .{ .resolved = ref2_targets },
     });
 
     // Unresolved gap (no targets)
@@ -933,9 +1074,7 @@ test "SymbolGraph getOutgoingRefs filters by kind and resolved" {
         .kind = .call,
         .target_name = "bar",
         .site = .{ .file = "test.sol", .start_byte = 90, .end_byte = 100, .line = 9, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
 
     // All outgoing from node 1
@@ -963,8 +1102,7 @@ test "SymbolGraph getIncomingRefs" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = targets,
-        .resolved = true,
+        .resolution = .{ .resolved = targets },
     });
 
     const incoming = try g.getIncomingRefs(10, .call, std.testing.allocator);
@@ -991,12 +1129,11 @@ test "SymbolGraph hasIncomingRefs" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = targets,
-        .resolved = true,
+        .resolution = .{ .resolved = targets },
     });
 
     try std.testing.expect(g.hasIncomingRefs(10, .call));
-    try std.testing.expect(!g.hasIncomingRefs(10, .state_write));
+    try std.testing.expect(!g.hasIncomingRefs(10, .inheritance));
     try std.testing.expect(!g.hasIncomingRefs(999, .call));
 }
 
@@ -1013,8 +1150,7 @@ test "SymbolGraph getResolvedInheritanceTargets preserves order" {
         .kind = .inheritance,
         .target_name = "A",
         .site = .{ .file = "test.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
-        .targets = t1,
-        .resolved = true,
+        .resolution = .{ .resolved = t1 },
     });
 
     var t2: std.ArrayListUnmanaged(u64) = .empty;
@@ -1025,8 +1161,7 @@ test "SymbolGraph getResolvedInheritanceTargets preserves order" {
         .kind = .inheritance,
         .target_name = "B",
         .site = .{ .file = "test.sol", .start_byte = 30, .end_byte = 40, .line = 1, .column = 20 },
-        .targets = t2,
-        .resolved = true,
+        .resolution = .{ .resolved = t2 },
     });
 
     const parents = try g.getResolvedInheritanceTargets(1, std.testing.allocator);
@@ -1047,35 +1182,30 @@ test "SymbolGraph gapCount counts refs with gap annotation" {
         .kind = .call,
         .target_name = "missing",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     });
 
-    // Resolved (no gap)
+    // Resolved (classified — e.g. struct constructor)
     try g.addRef(.{
         .id = refId("test.sol", 70, 80, .call),
         .from = 1,
         .kind = .call,
         .target_name = "found",
         .site = .{ .file = "test.sol", .start_byte = 70, .end_byte = 80, .line = 7, .column = 0 },
-        .targets = .empty,
-        .resolved = true,
+        .resolution = .classified,
     });
 
-    // Provisional (target + gap)
+    // External low-level call — gap=.low
     try g.addRef(.{
         .id = refId("test.sol", 90, 100, .call),
         .from = 1,
         .kind = .call,
         .target_name = "external",
         .site = .{ .file = "test.sol", .start_byte = 90, .end_byte = 100, .line = 9, .column = 0 },
-        .targets = .empty,
-        .gap = .low,
-        .resolved = true,
+        .resolution = .{ .gap = .low },
     });
 
-    try std.testing.expectEqual(@as(u32, 2), g.gapCount()); // gap + provisional
+    try std.testing.expectEqual(@as(u32, 2), g.gapCount()); // two gaps, classified doesn't count
     try std.testing.expectEqual(@as(u32, 3), g.refCount());
 }
 
@@ -1090,22 +1220,20 @@ test "SymbolGraph lookupRefMut allows mutation" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
+        .resolution = .{ .gap = .medium },
     });
 
     try g.buildSiteIndex();
 
-    // Mutate: add target and clear gap (simulating resolution)
+    // Mutate: resolve provisional gap by clearing and adding target
     if (g.lookupRefMut(rid)) |ref| {
+        ref.clearResolution(g.allocator);
         try ref.addTarget(g.allocator, 42);
-        ref.gap = null;
-        ref.resolved = true;
     }
 
     const ref = g.lookupRef(rid).?;
-    try std.testing.expect(ref.resolved);
-    try std.testing.expect(ref.gap == null);
+    try std.testing.expect(ref.isFinalized());
+    try std.testing.expect(ref.gapPriority() == null);
     try std.testing.expectEqual(@as(u64, 42), ref.firstTarget().?);
 }
 
@@ -1162,21 +1290,20 @@ test "lookupChildByName" {
     });
 
     _ = try g.addNode(.{
-        .id = nodeId("balance", "test.sol", 3),
-        .kind = .variable,
-        .language_kind = "state_variable_declaration",
-        .name = "balance",
-        .qualified_name = "Vault.balance",
+        .id = nodeId("deposit", "test.sol", 3),
+        .kind = .callable,
+        .language_kind = "function_definition",
+        .name = "deposit",
+        .qualified_name = "Vault.deposit",
         .container = cid,
         .language = .solidity,
     });
 
     // Find callable by name
     try std.testing.expect(g.lookupChildByName(cid, "withdraw", .callable) != null);
+    try std.testing.expect(g.lookupChildByName(cid, "deposit", .callable) != null);
     // Wrong kind
-    try std.testing.expect(g.lookupChildByName(cid, "withdraw", .variable) == null);
-    // Find variable by name
-    try std.testing.expect(g.lookupChildByName(cid, "balance", .variable) != null);
+    try std.testing.expect(g.lookupChildByName(cid, "withdraw", .container) == null);
     // Not found
     try std.testing.expect(g.lookupChildByName(cid, "missing", .callable) == null);
 }
@@ -1223,8 +1350,7 @@ test "SymbolGraph deinit cleans up all allocations" {
         .kind = .call,
         .target_name = "withdraw",
         .site = .{ .file = "test.sol", .start_byte = 50, .end_byte = 60, .line = 5, .column = 0 },
-        .targets = targets,
-        .resolved = true,
+        .resolution = .{ .resolved = targets },
     });
 
     try g.buildSiteIndex();
@@ -1284,9 +1410,7 @@ test "gapCount respects scoped_files" {
         .kind = .call,
         .target_name = "transfer",
         .site = .{ .file = "src/Scoped.sol", .start_byte = 10, .end_byte = 20, .line = 5, .column = 0 },
-        .targets = .empty,
-        .gap = .medium,
-        .resolved = true,
+        .resolution = .{ .gap = .medium },
     });
     try g.addRef(.{
         .id = refId("deps/Dep.sol", 10, 20, .call),
@@ -1294,9 +1418,7 @@ test "gapCount respects scoped_files" {
         .kind = .call,
         .target_name = "approve",
         .site = .{ .file = "deps/Dep.sol", .start_byte = 10, .end_byte = 20, .line = 3, .column = 0 },
-        .targets = .empty,
-        .gap = .high,
-        .resolved = true,
+        .resolution = .{ .gap = .high },
     });
 
     // Without scope: both counted
@@ -1321,10 +1443,98 @@ test "isRefInScope returns true when scope is null" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "any.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
-        .targets = .empty,
     };
 
     try std.testing.expect(g.isRefInScope(ref));
+}
+
+test "findInScope walks MRO and returns inherited AST nodes" {
+    const allocator = std.testing.allocator;
+
+    const source =
+        \\contract Base {
+        \\    event BaseEvent(uint);
+        \\    struct BaseStruct { uint x; }
+        \\}
+        \\contract Derived is Base {
+        \\    event DerivedEvent(uint);
+        \\}
+    ;
+    const parser = ts.Parser.create();
+    defer parser.destroy();
+    try parser.setLanguage(config.Language.solidity.grammarFn()());
+    const tree = parser.parseString(source, null) orelse return error.ParseFailed;
+    defer tree.destroy();
+
+    var sources: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer sources.deinit(allocator);
+    try sources.put(allocator, "t.sol", source);
+
+    var trees_map: std.StringHashMapUnmanaged(*ts.Tree) = .empty;
+    defer trees_map.deinit(allocator);
+    try trees_map.put(allocator, "t.sol", tree);
+
+    var g = SymbolGraph.init(allocator);
+    defer g.deinit();
+    g.sources = &sources;
+    g.trees = &trees_map;
+
+    // Locate contract_declaration AST nodes in order: Base, Derived.
+    const root = tree.rootNode();
+    var base_ast: ?ts.Node = null;
+    var derived_ast: ?ts.Node = null;
+    var i: u32 = 0;
+    while (i < root.namedChildCount()) : (i += 1) {
+        const child = root.namedChild(i) orelse continue;
+        if (!std.mem.eql(u8, child.kind(), "contract_declaration")) continue;
+        if (base_ast == null) base_ast = child else derived_ast = child;
+    }
+
+    const base_id: u64 = 1;
+    const derived_id: u64 = 2;
+    _ = try g.addNode(.{
+        .id = base_id,
+        .kind = .container,
+        .language_kind = "contract_declaration",
+        .name = "Base",
+        .qualified_name = "Base",
+        .language = .solidity,
+        .ast_node = base_ast.?,
+        .locator = .{ .file = "t.sol", .start_byte = 0, .end_byte = 0, .line = 1, .column = 0 },
+    });
+    _ = try g.addNode(.{
+        .id = derived_id,
+        .kind = .container,
+        .language_kind = "contract_declaration",
+        .name = "Derived",
+        .qualified_name = "Derived",
+        .language = .solidity,
+        .ast_node = derived_ast.?,
+        .locator = .{ .file = "t.sol", .start_byte = 0, .end_byte = 0, .line = 5, .column = 0 },
+    });
+
+    // Wire inheritance Derived → Base as a resolved ref (so C3 MRO walks it).
+    var targets: std.ArrayListUnmanaged(u64) = .empty;
+    try targets.append(allocator, base_id);
+    try g.addRef(.{
+        .id = refId("t.sol", 0, 0, .inheritance),
+        .from = derived_id,
+        .kind = .inheritance,
+        .target_name = "Base",
+        .site = .{ .file = "t.sol", .start_byte = 0, .end_byte = 0, .line = 5, .column = 0 },
+        .resolution = .{ .resolved = targets },
+    });
+
+    // Own scope: Derived has DerivedEvent.
+    try std.testing.expect(g.existsInScope(derived_id, "DerivedEvent", "event_definition"));
+    // Inherited: Derived sees BaseEvent through MRO.
+    try std.testing.expect(g.existsInScope(derived_id, "BaseEvent", "event_definition"));
+    // MRO also walks structs: BaseStruct is visible from Derived.
+    try std.testing.expect(g.existsInScope(derived_id, "BaseStruct", "struct_declaration"));
+    // Wrong ts_type: no match.
+    try std.testing.expect(!g.existsInScope(derived_id, "BaseEvent", "struct_declaration"));
+    // Unknown name: no match.
+    try std.testing.expect(!g.existsInScope(derived_id, "Nope", "event_definition"));
 }
 
 test "isRefInScope filters by scoped_files" {
@@ -1342,7 +1552,6 @@ test "isRefInScope filters by scoped_files" {
         .kind = .call,
         .target_name = "foo",
         .site = .{ .file = "src/In.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
-        .targets = .empty,
     };
     const out_of_scope = Reference{
         .id = refId("deps/Out.sol", 10, 20, .call),
@@ -1350,7 +1559,6 @@ test "isRefInScope filters by scoped_files" {
         .kind = .call,
         .target_name = "bar",
         .site = .{ .file = "deps/Out.sol", .start_byte = 10, .end_byte = 20, .line = 1, .column = 0 },
-        .targets = .empty,
     };
 
     try std.testing.expect(g.isRefInScope(in_scope));

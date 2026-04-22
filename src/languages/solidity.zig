@@ -23,39 +23,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "fallback_receive_definition", .name_field = null, .body_field = "body" },
     },
 
-    .variables = &.{
-        .{ .ts_type = "state_variable_declaration", .name_field = "name", .type_field = "type", .properties = &.{
-            .{ .key = "visibility", .child_type = "visibility" },
-            .{ .key = "mutability", .child_type = "immutable" },
-            .{ .key = "constant", .child_type = "constant" },
-        } },
-    },
-
-    .modifiers = &.{},
-    .events = &.{
-        .{ .ts_type = "event_definition", .name_field = "name" },
-    },
-
-    .errors = &.{
-        .{ .ts_type = "error_declaration", .name_field = "name" },
-    },
-
-    .type_defs = &.{
-        .{ .ts_type = "struct_declaration", .name_field = "name" },
-        .{ .ts_type = "enum_declaration", .name_field = "name" },
-    },
-
     .call_expression = .{ .ts_type = "call_expression", .function_field = "function" },
     .inheritance = .{ .ts_type = "inheritance_specifier", .name_field = "ancestor" },
-    .modifier_invocation = .{ .ts_type = "modifier_invocation", .name_field = "name" },
-    .emit_expression = .{ .ts_type = "emit_statement", .name_field = "name" },
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-        .{ .ts_type = "augmented_assignment_expression", .target_field = "left" },
-        .{ .ts_type = "delete_statement", .target_field = "expression" },
-    },
-    .write_call_methods = &.{ "push", "pop" },
 
     .imports = .{ .ts_type = "import_directive", .path_field = "source" },
 
@@ -79,6 +48,8 @@ pub const config = cfg.LanguageConfig{
 
     .walk_hook = &solidityWalkHook,
     .resolve_hook = &solidityResolveHook,
+    .pre_enter_hook = &solidityPreEnterHook,
+    .post_enter_hook = &solidityPostEnterHook,
 
     .metrics = .{
         .branching_types = &.{
@@ -158,7 +129,7 @@ const external_call_methods = [_][]const u8{ "call", "send", "transfer", "delega
 ///
 /// 1. External low-level calls (.call, .send, .transfer, .delegatecall, .staticcall)
 ///    → mark as external with low-priority gap.
-/// 2. Struct/enum constructors → resolve to type_def, no gap.
+/// 2. Struct/enum/error constructors → mark as internal via existsInScope, no gap.
 /// 3. Super-qualified calls (super.foo()) → resolve in parent containers only,
 ///    skipping the current contract to avoid resolving to the local override.
 /// 4. Using-for library calls (receiver.method()) → resolve method in any library
@@ -170,18 +141,20 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
     for (&external_call_methods) |ecm| {
         if (std.mem.eql(u8, ref.target_name, ecm)) {
             ref.target_kind = .external;
-            ref.gap = .low;
-            ref.resolved = true;
+            ref.markGap(allocator, .low);
             return;
         }
     }
 
-    // 2. Struct/enum constructor — resolves to type_def, no gap
+    // 2. Struct/enum/error constructor — type lives in scope, not a callgraph edge.
+    //    Covers `Foo(...)`, `Status.Open`, and `revert MyError(...)` patterns.
     if (g.containerOf(ref.from)) |cid| {
-        if (g.resolveInScope(cid, ref.target_name, .type_def)) |result| {
-            ref.addTarget(allocator, result.node.id) catch return;
+        if (g.existsInScope(cid, ref.target_name, "struct_declaration") or
+            g.existsInScope(cid, ref.target_name, "enum_declaration") or
+            g.existsInScope(cid, ref.target_name, "error_declaration"))
+        {
             ref.target_kind = .internal;
-            ref.resolved = true;
+            ref.markClassified(allocator);
             return;
         }
     }
@@ -198,11 +171,10 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
         if (g.resolveInParentsOnly(container_id, ref.target_name, .callable)) |result| {
             ref.addTarget(allocator, result.node.id) catch return;
             ref.target_kind = .internal;
-            if (result.ambiguous) ref.gap = .low;
+            if (result.ambiguous) ref.markAmbiguous();
         } else {
-            ref.gap = .medium;
+            ref.markGap(allocator, .medium);
         }
-        ref.resolved = true;
         return;
     }
 
@@ -225,10 +197,163 @@ fn solidityResolveHook(ref: *graph.Reference, g: *const graph.SymbolGraph, lang_
         }
     }
     if (found) {
-        ref.gap = .low; // provisionally resolved; receiver type not verified
-        ref.resolved = true;
+        // Provisionally resolved; receiver type not verified → low-confidence.
+        ref.markAmbiguous();
     }
     // else: fall through — default resolution handles it (medium gap)
+}
+
+// ── Deep-walker hooks: auxiliary scopes around a callable body ─────────
+//
+// Solidity function modifiers wrap the body: `function f() onlyOwner { ... }`.
+// Deep rules expect traversal order to match execution order, so the walker
+// needs access to the modifier body's "before `_`" statements (as prefix
+// scopes) and "after `_`" statements (as suffix scopes, in reverse modifier
+// order — innermost modifier's post-code runs first).
+//
+// tree-sitter-solidity does not model `_` as a dedicated placeholder node; it
+// parses `_;` as an `expression_statement` whose expression is an `identifier`
+// with text `"_"`. We locate it by walking the first-named-child chain down
+// from each statement. A modifier without a `_` placeholder is invalid
+// Solidity — both hooks contribute nothing for it.
+
+const ModifierSlice = enum { before, after };
+
+fn solidityPreEnterHook(
+    callable_id: u64,
+    g: *const graph.SymbolGraph,
+    allocator: std.mem.Allocator,
+) anyerror![]ts.Node {
+    return collectModifierSlices(callable_id, g, allocator, .before);
+}
+
+fn solidityPostEnterHook(
+    callable_id: u64,
+    g: *const graph.SymbolGraph,
+    allocator: std.mem.Allocator,
+) anyerror![]ts.Node {
+    return collectModifierSlices(callable_id, g, allocator, .after);
+}
+
+fn collectModifierSlices(
+    callable_id: u64,
+    g: *const graph.SymbolGraph,
+    allocator: std.mem.Allocator,
+    which: ModifierSlice,
+) ![]ts.Node {
+    const gn = g.lookupNode(callable_id) orelse return &.{};
+    const ast = gn.ast_node orelse return &.{};
+    const container_id = gn.container orelse return &.{};
+
+    var invocations: std.ArrayListUnmanaged(ts.Node) = .empty;
+    defer invocations.deinit(allocator);
+
+    var i: u32 = 0;
+    while (i < ast.namedChildCount()) : (i += 1) {
+        const child = ast.namedChild(i) orelse continue;
+        if (std.mem.eql(u8, child.kind(), "modifier_invocation")) {
+            try invocations.append(allocator, child);
+        }
+    }
+    if (invocations.items.len == 0) return &.{};
+
+    var result: std.ArrayListUnmanaged(ts.Node) = .empty;
+    errdefer result.deinit(allocator);
+
+    const count = invocations.items.len;
+    var idx: usize = 0;
+    while (idx < count) : (idx += 1) {
+        const inv = if (which == .after)
+            invocations.items[count - 1 - idx]
+        else
+            invocations.items[idx];
+
+        // tree-sitter-solidity: modifier_invocation = seq($._identifier_path, optional($._call_arguments))
+        // — no "name" field. Take the terminal identifier from the first named child.
+        const head = inv.namedChild(0) orelse continue;
+        const name_node = terminalIdentifier(head) orelse continue;
+        const name = g.nodeText(name_node) orelse continue;
+        const mod_ast = g.findInScope(container_id, name, "modifier_definition") orelse continue;
+        const body = mod_ast.childByFieldName("body") orelse continue;
+        const placeholder_idx = findUnderscorePlaceholder(body, g) orelse continue;
+
+        if (which == .before) {
+            var j: u32 = 0;
+            while (j < placeholder_idx) : (j += 1) {
+                if (body.namedChild(j)) |stmt| {
+                    try result.append(allocator, stmt);
+                }
+            }
+        } else {
+            var j: u32 = placeholder_idx + 1;
+            while (j < body.namedChildCount()) : (j += 1) {
+                if (body.namedChild(j)) |stmt| {
+                    try result.append(allocator, stmt);
+                }
+            }
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+/// Descend the first-named-child chain to reach a leaf identifier.
+/// Returns the node itself if already an identifier. Handles both bare
+/// `onlyOwner` and qualified `Lib.onlyOwner` forms (identifier_path wraps).
+fn terminalIdentifier(node: ts.Node) ?ts.Node {
+    var cur = node;
+    while (!std.mem.eql(u8, cur.kind(), "identifier")) {
+        if (cur.namedChildCount() == 0) return null;
+        cur = cur.namedChild(cur.namedChildCount() - 1) orelse return null;
+    }
+    return cur;
+}
+
+/// Locate the `_` placeholder statement in a modifier body.
+///
+/// tree-sitter-solidity parses `_;` with a very specific shape:
+///
+///   statement
+///     └─ expression_statement
+///          └─ expression
+///               └─ identifier "_"
+///
+/// Every statement in a `function_body` is wrapped in a `statement` node
+/// (grammar unification), and every expression inside an `expression_statement`
+/// is wrapped in an `expression` node. The placeholder is this exact shape —
+/// an expression statement whose single expression is a single bare identifier
+/// with text `"_"`. The child-count guards reject look-alikes like `_()`,
+/// `_ + 1`, or `foo._` — anything except the literal placeholder.
+fn findUnderscorePlaceholder(body: ts.Node, g: *const graph.SymbolGraph) ?u32 {
+    var j: u32 = 0;
+    while (j < body.namedChildCount()) : (j += 1) {
+        const stmt = body.namedChild(j) orelse continue;
+        if (isUnderscorePlaceholder(stmt, g)) return j;
+    }
+    return null;
+}
+
+fn isUnderscorePlaceholder(stmt_node: ts.Node, g: *const graph.SymbolGraph) bool {
+    // Unwrap the `statement` grammar wrapper.
+    const inner = if (std.mem.eql(u8, stmt_node.kind(), "statement"))
+        (if (stmt_node.namedChildCount() == 1) stmt_node.namedChild(0) orelse return false else return false)
+    else
+        stmt_node;
+    if (!std.mem.eql(u8, inner.kind(), "expression_statement")) return false;
+
+    // expression_statement holds exactly one named `expression` wrapper.
+    if (inner.namedChildCount() != 1) return false;
+    const expr = inner.namedChild(0) orelse return false;
+    if (!std.mem.eql(u8, expr.kind(), "expression")) return false;
+
+    // The expression wraps exactly one bare `identifier` — no operators,
+    // no arguments, no member access.
+    if (expr.namedChildCount() != 1) return false;
+    const id = expr.namedChild(0) orelse return false;
+    if (!std.mem.eql(u8, id.kind(), "identifier")) return false;
+
+    const text = g.nodeText(id) orelse return false;
+    return std.mem.eql(u8, text, "_");
 }
 
 const std = @import("std");

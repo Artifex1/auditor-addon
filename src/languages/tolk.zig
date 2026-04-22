@@ -9,23 +9,8 @@ pub const config = cfg.LanguageConfig{
         .{ .ts_type = "function_declaration", .name_field = "name", .body_field = "body" },
     },
 
-    .variables = &.{
-        .{ .ts_type = "global_var_declaration", .name_field = "name", .type_field = "type" },
-    },
-
-    .modifiers = &.{},
-    .events = &.{},
-
     .call_expression = .{ .ts_type = "function_call", .function_field = "callee" },
     .inheritance = null,
-    .modifier_invocation = null,
-    .emit_expression = null,
-
-    .write_expressions = &.{
-        .{ .ts_type = "assignment_expression", .target_field = "left" },
-        .{ .ts_type = "augmented_assignment_expression", .target_field = "left" },
-    },
-    .write_call_methods = &.{},
 
     .imports = .{ .ts_type = "import_directive", .path_field = "path" },
     .inheritance_strategy = .flat,

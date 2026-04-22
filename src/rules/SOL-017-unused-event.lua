@@ -11,40 +11,40 @@ rule = {
 function check()
     local findings = {}
 
-    local events = graph.get_nodes_by_kind("event")
+    local events = ast.find_all("event_definition")
     if #events == 0 then return findings end
 
-    -- First pass: check resolved graph edges (cross-file)
+    -- Collect defined events by name. Duplicates (same name in multiple scopes)
+    -- keep the first locator — any emit anywhere clears the flag.
     local unused = {}
-    for _, ev in ipairs(events) do
-        local incoming = graph.get_incoming_edges(ev.id, "event_emit")
-        if #incoming == 0 then
-            unused[ev.name] = ev
+    for _, ev_h in ipairs(events) do
+        local name_h = ast.child_by_field(ev_h, "name")
+        if name_h then
+            local name = ast.text(name_h)
+            if name and unused[name] == nil then
+                unused[name] = {
+                    file = ast.file(ev_h) or "",
+                    line = ast.start_line(ev_h) or 0,
+                }
+            end
         end
     end
 
     if next(unused) == nil then return findings end
 
-    -- Second pass: scan AST for emit statements (catches unresolved cases)
-    for _, fn in ipairs(graph.get_nodes_by_kind("callable")) do
-        local fn_h = ast.node(fn.id)
-        if not fn_h then goto next_fn end
-
-        for _, em_h in ipairs(ast.find(fn_h, "emit_statement")) do
-            local name_node = ast.child_by_field(em_h, "name")
-            if name_node then
-                local name = ast.text(name_node)
-                if name then unused[name] = nil end
-            end
+    -- Clear any event that is emitted somewhere (across all files).
+    for _, em_h in ipairs(ast.find_all("emit_statement")) do
+        local name_h = ast.child_by_field(em_h, "name")
+        if name_h then
+            local name = ast.text(name_h)
+            if name then unused[name] = nil end
         end
-
-        ::next_fn::
     end
 
-    for name, ev in pairs(unused) do
+    for name, loc in pairs(unused) do
         table.insert(findings, {
-            file = ev.file,
-            line = ev.line,
+            file = loc.file,
+            line = loc.line,
             node_text = name,
         })
     end

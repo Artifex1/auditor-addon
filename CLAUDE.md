@@ -17,6 +17,7 @@ aud <command> [options] <glob...>
 | `aud call-chains <glob...>` | Map caller->callee chains from entry points. |
 | `aud graph <glob...>` | Build symbol graph, dump nodes and edges. |
 | `aud info <language>` | List language config (node types, properties). |
+| `aud api` | Print the Lua rule API reference (graph.*, ast.*, report.*). |
 
 ### Common Options
 

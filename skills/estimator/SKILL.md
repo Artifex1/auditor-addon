@@ -27,6 +27,12 @@ CHECKPOINT RULES:
 
 ---
 
+## CLI Binary
+
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
+
+---
+
 <reference_definitions>
 ## Reference: Categories & Scope
 

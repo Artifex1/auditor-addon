@@ -13,6 +13,10 @@ Rules are `.lua` files. Two deployment modes:
 
 Both use the exact same Lua interface.
 
+## CLI Binary
+
+This skill requires the `auditor-addon-cli` skill for the `aud` binary. Before running any `aud` command, load that skill to determine the correct binary path.
+
 ## Choosing a Rule Type
 
 ### Scope Rule (`type = "scope"`)

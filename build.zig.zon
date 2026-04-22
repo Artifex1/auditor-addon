@@ -1,6 +1,6 @@
 .{
     .name = .auditor_addon,
-    .version = "0.0.0",
+    .version = "2.0.0",
     .fingerprint = 0x980b4431cf327b52,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{

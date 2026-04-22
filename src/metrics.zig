@@ -90,7 +90,8 @@ pub fn countBlankLines(source: []const u8) u32 {
 }
 
 /// Count lines spanned by nodes of given types.
-/// For each matching node: lines = count(\n in text) + 1
+/// Uses row-point diff so grammars that include a trailing newline in the
+/// node span (e.g. tree-sitter-rust `line_comment`) don't double-count.
 fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const []const u8, test_markers: []const config.TestMarker) u32 {
     var total: u32 = 0;
     var cursor = tree.walk();
@@ -104,8 +105,7 @@ fn countNodeLines(tree: *const ts.Tree, source: []const u8, node_types: []const 
             if (test_filter.isTestNode(node, source, test_markers)) {
                 descend = false;
             } else if (matchesAnyType(node.kind(), node_types)) {
-                const text = source[node.startByte()..node.endByte()];
-                total += countNewlines(text) + 1;
+                total += nodeRowSpan(node);
                 // Don't descend into matched nodes (avoid double-counting nested comments)
                 descend = false;
             }
@@ -225,6 +225,18 @@ fn countNewlines(text: []const u8) u32 {
         if (c == '\n') count += 1;
     }
     return count;
+}
+
+/// Number of source lines spanned by `node`, computed from its row points.
+/// If the node ends at column 0 of some row (i.e. its span includes a
+/// trailing newline, as tree-sitter-rust line_comment does), the final row
+/// is not counted. Otherwise the final row counts.
+fn nodeRowSpan(node: ts.Node) u32 {
+    const sp = node.startPoint();
+    const ep = node.endPoint();
+    if (ep.row <= sp.row) return 1;
+    const diff: u32 = @intCast(ep.row - sp.row);
+    return if (ep.column == 0) diff else diff + 1;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────

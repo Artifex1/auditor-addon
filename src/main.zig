@@ -9,6 +9,7 @@ pub const pipeline = @import("pipeline.zig");
 pub const output = @import("output.zig");
 pub const resolution = @import("resolution.zig");
 pub const metrics = @import("metrics.zig");
+pub const diff_metrics = @import("diff_metrics.zig");
 pub const peek = @import("peek.zig");
 pub const call_chains = @import("call_chains.zig");
 pub const lua_adapter = @import("lua_adapter.zig");
@@ -23,6 +24,7 @@ const shipped_rules = @import("rules/shipped.zig");
 const SubCommand = enum {
     peek,
     metrics,
+    @"diff-metrics",
     gaps,
     run,
     @"call-chains",
@@ -77,6 +79,7 @@ pub fn main() !void {
     switch (command) {
         .peek => try cmdPeek(allocator, &iter),
         .metrics => try cmdMetrics(allocator, &iter),
+        .@"diff-metrics" => try cmdDiffMetrics(allocator, &iter),
         .gaps => try cmdGaps(allocator, &iter),
         .run => try cmdRun(allocator, &iter),
         .@"call-chains" => try cmdCallChains(allocator, &iter),
@@ -96,6 +99,7 @@ fn printMainHelp() !void {
         \\Commands:
         \\  peek          Extract function signatures
         \\  metrics       Calculate code metrics (nLOC, complexity, effort)
+        \\  diff-metrics  Metrics restricted to lines added/removed between two git refs
         \\  gaps          Build symbol graph, output unresolved edge gaps
         \\  run           Build symbol graph, run rules, output findings
         \\  call-chains   Map caller->callee chains from entry points
@@ -122,6 +126,15 @@ const peek_params = clap.parseParamsComptime(
 );
 
 const metrics_params = clap.parseParamsComptime(
+    \\-h, --help                Display this help and exit.
+    \\    --language <str>      Force language (auto-detected from extension otherwise).
+    \\    --json                JSON output instead of TOON.
+    \\    --no-tests            Exclude test-annotated code from analysis.
+    \\<str>...
+    \\
+);
+
+const diff_metrics_params = clap.parseParamsComptime(
     \\-h, --help                Display this help and exit.
     \\    --language <str>      Force language (auto-detected from extension otherwise).
     \\    --json                JSON output instead of TOON.
@@ -330,6 +343,140 @@ fn cmdMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
         try output.writeJsonMetrics(all_metrics.items, &w.interface);
     } else {
         try output.writeToonMetrics(all_metrics.items, &w.interface);
+    }
+    try w.interface.flush();
+}
+
+fn cmdDiffMetrics(allocator: std.mem.Allocator, iter: anytype) !void {
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &diff_metrics_params, clap.parsers.default, iter, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        try diag.reportToFile(std.fs.File.stderr(), err);
+        return;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        try clap.helpToFile(std.fs.File.stderr(), clap.Help, &diff_metrics_params, .{});
+        return;
+    }
+
+    const use_json = res.args.json != 0;
+    const no_tests = res.args.@"no-tests" != 0;
+    const forced_lang = if (res.args.language) |l| std.meta.stringToEnum(cfg.Language, l) else null;
+
+    // Positionals: <base> <head> [<glob>...]
+    if (res.positionals[0].len < 2) {
+        try stderrPrint("aud diff-metrics: usage: aud diff-metrics <base> <head> [<glob>...]\n");
+        return;
+    }
+    const base = res.positionals[0][0];
+    const head = res.positionals[0][1];
+    const globs = res.positionals[0][2..];
+
+    // Arena for everything diff-metrics produces (source buffers, paths, output strings)
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+
+    const diff_files = diff_metrics.runGitDiff(allocator, aa, base, head, globs) catch |err| switch (err) {
+        error.GitDiffFailed => return,
+        else => return err,
+    };
+
+    var rows: std.ArrayList(output.DiffMetricsRow) = .empty;
+
+    for (diff_files) |df| {
+        // Build display path once
+        const display_path = if (df.status == .renamed and df.base_path != null)
+            try std.fmt.allocPrint(aa, "{s} -> {s}", .{ df.base_path.?, df.head_path })
+        else
+            df.head_path;
+
+        // Detect language from the head path (or base for deletions).
+        // Unsupported extensions are omitted entirely.
+        const lang_probe = if (df.status == .deleted) df.base_path.? else df.head_path;
+        const lang = forced_lang orelse detectLanguage(lang_probe) orelse continue;
+        const lang_config = cfg.getConfig(lang);
+        const test_markers: []const cfg.TestMarker = if (no_tests) lang_config.test_markers else &.{};
+
+        var nloc_added: u32 = 0;
+        var comment_lines_added: u32 = 0;
+        var complexity_added: u32 = 0;
+        var changed_fns: []const []const u8 = &.{};
+        var nloc_removed: u32 = 0;
+
+        // Added side — fetch head version and walk
+        if (df.status != .deleted and df.added_ranges.len > 0) {
+            if (try diff_metrics.gitShow(allocator, aa, head, df.head_path)) |head_source| {
+                const parser = ts.Parser.create();
+                defer parser.destroy();
+                parser.setLanguage(lang.grammarFn()()) catch continue;
+                if (parser.parseString(head_source, null)) |tree| {
+                    defer tree.destroy();
+                    const r = try diff_metrics.computeAddedMetrics(
+                        aa,
+                        tree,
+                        head_source,
+                        lang_config.metrics,
+                        lang_config,
+                        df.added_ranges,
+                        test_markers,
+                    );
+                    nloc_added = r.nloc;
+                    comment_lines_added = r.comment_lines;
+                    complexity_added = r.complexity;
+                    changed_fns = r.changed_functions;
+                }
+            }
+        }
+
+        // Removed side — fetch base version and walk (skip for added files: no base version)
+        if (df.status != .added and df.removed_ranges.len > 0) {
+            const base_lookup_path = df.base_path orelse df.head_path;
+            if (try diff_metrics.gitShow(allocator, aa, base, base_lookup_path)) |base_source| {
+                const parser = ts.Parser.create();
+                defer parser.destroy();
+                parser.setLanguage(lang.grammarFn()()) catch continue;
+                if (parser.parseString(base_source, null)) |tree| {
+                    defer tree.destroy();
+                    nloc_removed = try diff_metrics.computeRemovedNloc(
+                        aa,
+                        tree,
+                        base_source,
+                        lang_config.metrics,
+                        df.removed_ranges,
+                        test_markers,
+                    );
+                }
+            }
+        }
+
+        const complexity_per_100: u32 = if (nloc_added > 0) (complexity_added * 100) / nloc_added else 0;
+        const comment_density: u32 = if (nloc_added > 0) (comment_lines_added * 100) / nloc_added else 0;
+        const hours: f32 = @as(f32, @floatFromInt(nloc_added)) / @as(f32, @floatFromInt(lang_config.metrics.base_rate_per_day)) * 6.0;
+
+        try rows.append(aa, .{
+            .file = display_path,
+            .status = @tagName(df.status),
+            .nloc_added = nloc_added,
+            .nloc_removed = nloc_removed,
+            .complexity_added = complexity_added,
+            .complexity_per_100 = complexity_per_100,
+            .comment_density = comment_density,
+            .estimated_hours = hours,
+            .changed_functions = changed_fns,
+        });
+    }
+
+    var buf: [8192]u8 = undefined;
+    var w = std.fs.File.stdout().writer(&buf);
+    if (use_json) {
+        try output.writeJsonDiffMetrics(rows.items, &w.interface);
+    } else {
+        try output.writeToonDiffMetrics(rows.items, &w.interface);
     }
     try w.interface.flush();
 }
@@ -993,6 +1140,7 @@ comptime {
     _ = @import("output.zig");
     _ = @import("resolution.zig");
     _ = @import("metrics.zig");
+    _ = @import("diff_metrics.zig");
     _ = @import("peek.zig");
     _ = @import("call_chains.zig");
     _ = @import("pipeline.zig");

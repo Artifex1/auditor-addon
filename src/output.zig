@@ -198,6 +198,94 @@ pub fn writeToonMetrics(files: []const FileMetricsOutput, writer: Writer) !void 
     try writer.print("  days: {d:.2}\n", .{total_hours / 6.0});
 }
 
+// ── TOON: Diff Metrics ────────────────────────────────────────────────
+// SPEC-CLI.md §3
+
+pub const DiffMetricsRow = struct {
+    file: []const u8, // "old -> new" for renames; single path otherwise
+    status: []const u8, // added | modified | renamed | deleted
+    nloc_added: u32,
+    nloc_removed: u32,
+    complexity_added: u32,
+    complexity_per_100: u32,
+    comment_density: u32,
+    estimated_hours: f32,
+    changed_functions: []const []const u8,
+};
+
+pub fn writeToonDiffMetrics(rows: []const DiffMetricsRow, writer: Writer) !void {
+    try writer.print(
+        "files[{d}]{{file,status,nloc_added,nloc_removed,complexity_added,complexity_per_100,comment_density,estimated_hours,changed_functions}}:\n",
+        .{rows.len},
+    );
+
+    var total_nloc: u32 = 0;
+    var total_hours: f32 = 0;
+
+    for (rows) |r| {
+        try writer.print("  {s},{s},{d},{d},{d},{d},{d},{d:.2},", .{
+            r.file,
+            r.status,
+            r.nloc_added,
+            r.nloc_removed,
+            r.complexity_added,
+            r.complexity_per_100,
+            r.comment_density,
+            r.estimated_hours,
+        });
+        // changed_functions: "a|b|c" in a single TOON cell
+        for (r.changed_functions, 0..) |fn_name, i| {
+            if (i > 0) try writer.writeByte('|');
+            try writer.writeAll(fn_name);
+        }
+        try writer.writeByte('\n');
+        total_nloc += r.nloc_added;
+        total_hours += r.estimated_hours;
+    }
+
+    try writer.print("totals:\n", .{});
+    try writer.print("  nloc_added: {d}\n", .{total_nloc});
+    try writer.print("  hours: {d:.1}\n", .{total_hours});
+    try writer.print("  days: {d:.2}\n", .{total_hours / 6.0});
+}
+
+pub fn writeJsonDiffMetrics(rows: []const DiffMetricsRow, writer: Writer) !void {
+    try writer.writeAll("{\"files\":[");
+    for (rows, 0..) |r, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.writeAll("{\"file\":");
+        try writeJsonString(writer, r.file);
+        try writer.writeAll(",\"status\":");
+        try writeJsonString(writer, r.status);
+        try writer.print(",\"nloc_added\":{d},\"nloc_removed\":{d},\"complexity_added\":{d},\"complexity_per_100\":{d},\"comment_density\":{d},\"estimated_hours\":{d:.2}", .{
+            r.nloc_added,
+            r.nloc_removed,
+            r.complexity_added,
+            r.complexity_per_100,
+            r.comment_density,
+            r.estimated_hours,
+        });
+        try writer.writeAll(",\"changed_functions\":[");
+        for (r.changed_functions, 0..) |fn_name, j| {
+            if (j > 0) try writer.writeAll(",");
+            try writeJsonString(writer, fn_name);
+        }
+        try writer.writeAll("]}");
+    }
+
+    var total_nloc: u32 = 0;
+    var total_hours: f32 = 0;
+    for (rows) |r| {
+        total_nloc += r.nloc_added;
+        total_hours += r.estimated_hours;
+    }
+    try writer.print("],\"totals\":{{\"nloc_added\":{d},\"hours\":{d:.2},\"days\":{d:.2}}}}}\n", .{
+        total_nloc,
+        total_hours,
+        total_hours / 6.0,
+    });
+}
+
 // ── TOON: Peek Signatures ─────────────────────────────────────────────
 // SPEC-CLI.md §1
 

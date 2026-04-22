@@ -12,6 +12,7 @@ aud <command> [options] <glob...>
 | :--- | :--- |
 | `aud peek <glob...>` | Extract function signatures for quick overview. |
 | `aud metrics <glob...>` | Calculate nLOC, complexity, and effort estimates. |
+| `aud diff-metrics <base> <head> [<glob>...]` | Metrics restricted to lines changed between two git refs. |
 | `aud gaps <glob...>` | Build symbol graph, output unresolved edge gaps. |
 | `aud run <glob...>` | Build symbol graph, run rules, output findings. |
 | `aud call-chains <glob...>` | Map caller->callee chains from entry points. |

@@ -17,7 +17,6 @@ SEQUENCE:
 2. CHECKPOINT: user confirms "full-scope" or "diff-scope"
 3. IF full-scope: EXPLORE (per-chunk) → METRICS → REFLECT → REPORT
    IF diff-scope: DIFF-TRIAGE (per-chunk) → REFLECT → REPORT
-   NOTE: `aud diff` / `aud diff-metrics` are not yet implemented. Diff-scope uses `aud peek` and `aud metrics` on changed files as a substitute (full-file metrics, not diff-only).
 
 CHECKPOINT RULES:
 - Present findings using the phase's specified output format
@@ -245,14 +244,15 @@ Reason: <justification>
 **Per-Chunk Steps:**
 
 **Step 1 — Calculate Diff Metrics:**
-- Use `git diff <base>..<head> -- <paths>` to identify changed files in the chunk
-- If no changes in chunk → skip to next chunk
-- Run `aud metrics <changed-files>` on changed files (full-file metrics — `aud diff-metrics` not yet implemented)
-- Review NLoC, Comment Density, Cognitive Complexity (CC), and Estimated Hours
+- Run `aud diff-metrics <base> <head> -- <chunk-paths>` (add `--no-tests` if test code should be excluded)
+- If no rows returned for the chunk → skip to next chunk
+- Review `nloc_added`, `nloc_removed`, `complexity_added`, `complexity_per_100`, `comment_density`, `estimated_hours`, and `changed_functions`
+- Unsupported extensions are omitted automatically; deleted files have zero effort
 
 **Step 2 — Analyze Changes:**
 - Use `git diff <base>..<head> -- <file>` for the actual diff
-- Use `aud peek <changed-files>` for function signature overview of changed files
+- Run `aud call-chains <chunk-paths>` (no `--root`) and grep the output for each name from `changed_functions` to see which entry-point chains reach the modified code
+- Optionally: `aud call-chains --root=<changed-name>` to see what a changed function reaches downstream
 - Use judgment: scan the diff for added/removed functions, changed logic, new entry points
 
 **Step 3 — Classify & Adjust:**
@@ -260,7 +260,7 @@ For each changed file, determine scope and adjust estimates. Assume **no prior a
 
 **Scope:** Apply categories and scope defaults (see references).
 
-**Context burden:** Use `aud call-chains` to see where touched functions appear in call chains:
+**Context burden:** From the call-chains output above, assess how each changed function sits in the graph:
 - *Isolated* (leaf node, minimal callers, self-contained) → no adjustment
 - *Integrated* (multiple paths, shared state, affects invariants) → increase estimate
 - *Escalate*: If paths are insufficient, read unchanged files to understand context surface
@@ -269,8 +269,8 @@ For each changed file, determine scope and adjust estimates. Assume **no prior a
 
 **Step 4 — Report:**
 Present summary table:
-| File | Category | Scope | Approach | NLoC | Comment Density | CC | Adjusted Hours |
-|------|----------|-------|----------|------|-----------------|-----|----------------|
+| File | Category | Scope | Approach | nloc_added | nloc_removed | complexity_added | comment_density | Adjusted Hours |
+|------|----------|-------|----------|------------|--------------|------------------|-----------------|----------------|
 
 - **Approach:** `full` (added files, audit entire file) or `diff` (modified files, audit changes only)
 
@@ -335,10 +335,14 @@ Then produce the chosen format.
 
 **4. Detailed Table (in-scope files only):**
 
+Full scope:
 | Chunk | File Path | Category | NLoC | Comment Density | Complexity | Estimated Hours |
 |-------|-----------|----------|------|-----------------|------------|-----------------|
 
-- Diff scope: Add **Approach** column (`full` for added files, `diff` for modified)
+Diff scope:
+| Chunk | File Path | Category | Approach | nloc_added | nloc_removed | complexity_added | Estimated Hours |
+|-------|-----------|----------|----------|------------|--------------|------------------|-----------------|
+
 - Use adjusted estimates from METRICS (full) or DIFF-TRIAGE (diff)
 
 **5. Adjustments Summary:**
@@ -351,9 +355,8 @@ Reason: <justification>
 ```
 
 **6. Totals:**
-- Total NLoC (diff NLoC for diff scope)
-- Total Estimated Hours
-- Total Estimated Days
+- Full scope: Total NLoC, Total Estimated Hours, Total Estimated Days
+- Diff scope: Total nloc_added, Total nloc_removed, Total Estimated Hours, Total Estimated Days
 
 **7. Required Domain Expertise:**
 - Languages and ecosystems (e.g. Solidity/EVM, Rust/Substrate)

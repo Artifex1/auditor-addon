@@ -184,13 +184,117 @@ walked independently.
 
 ---
 
-## 3. Future Commands
+## 3. diff-metrics
+
+Metrics restricted to lines added/removed between two git refs. Intended for
+incremental audit scoping (e.g. sizing a PR before review).
+
+```
+aud diff-metrics <base> <head> [<glob>...]
+    --language=<lang>                           -- force language
+    --json                                      -- JSON output instead of TOON
+    --no-tests                                  -- exclude test-annotated subtrees
+```
+
+Positional globs filter the diff file list (same semantics as `metrics`). No
+positional globs = all changed files between `base` and `head`.
+
+### 3.1 Pipeline
+
+1. `git diff --name-status -M <base> <head> -- <globs>` — file statuses + paths
+   (rename detection via `-M`).
+2. `git diff -U0 -M <base> <head> -- <globs>` — unified=0 hunks. Parse
+   `+++ b/<path>` / `--- a/<path>` for file keying, and `@@ -a,b +c,d @@`
+   headers for added/removed line ranges.
+3. For modified/added/renamed files: `git show <head>:<path>` → tree-sitter →
+   compute restricted `nloc_added`, `complexity_added`, `changed_functions`.
+4. For modified/deleted/renamed files: `git show <base>:<path>` → tree-sitter →
+   compute restricted `nloc_removed`.
+
+All file reads go through `git show`; the working tree is untouched.
+
+### 3.2 Restricted metric semantics
+
+For each added line `L`, `L` contributes to `nloc_added` iff it survives all
+filters:
+
+- `L` is not blank (whitespace-only)
+- `L` is not inside a test subtree (only when `--no-tests`)
+- `L` is not inside a comment node
+- `L` is not a continuation line of a normalization node — i.e. `L` is inside
+  a `normalization_types` node AND `L > node.startRow + 1`. The start line of
+  a multi-line normalization node remains countable; continuations fold to 0.
+
+If `L` is inside a comment node (not blank, not test-excluded), it contributes
+to `comment_lines_added` instead, used for `comment_density`.
+
+`nloc_removed` uses the same filter applied to removed-line ranges against the
+base-side tree.
+
+### 3.3 Cognitive complexity on added code
+
+For each branching node in the head tree:
+
+- skip if inside a test subtree (only when `--no-tests`)
+- skip if `node.startRow + 1` is not an added line
+- otherwise contribute `1 + branching_ancestors` (identical to `metrics` §2.2,
+  ancestors include pre-existing ones)
+
+Non-branching added lines never contribute to complexity, even when added
+inside deep nesting. Rationale: the nesting was already there; no new control
+flow = no new cognitive load.
+
+`complexity_per_100 = (complexity_added * 100) / nloc_added` (zero-guarded).
+
+### 3.4 Changed functions
+
+For each callable node (per `CallableMapping`) in the head tree whose body
+overlaps ≥1 *surviving* added line (blank/comment/test lines do not count),
+emit its name. Pipes straight into `aud call-chains --root=<name>` for reach
+analysis.
+
+Deleted functions are naturally excluded — they do not appear in the head
+tree. Renames: a function renamed without body changes produces no surviving
+added lines inside it, so it is not listed.
+
+### 3.5 File status and totals
+
+| Status | Source | Contribution |
+| :--- | :--- | :--- |
+| `added` | new file | full `nloc_added` |
+| `modified` | existing file touched | `nloc_added` + `nloc_removed` |
+| `renamed` | `-M` detected rename | treated as modified if content changed; pure rename (R100) = zeros |
+| `deleted` | file removed | `nloc_removed` only, zero effort |
+
+Renamed files are displayed as `old_path -> new_path` in the `file` column.
+Totals (`nloc_added`, `hours`, `days`) sum over added/modified/renamed rows;
+deleted files and pure renames do not contribute.
+
+Files with an unsupported extension are omitted from the output entirely.
+
+### 3.6 Output
+
+**TOON:**
+```
+files[N]{file,status,nloc_added,nloc_removed,complexity_added,complexity_per_100,comment_density,estimated_hours,changed_functions}:
+  src/Vault.sol,modified,42,11,8,19,4,1.68,withdraw|_transfer
+  src/New.sol,added,120,0,24,20,7,4.80,deposit|withdraw|_init
+  src/old.sol -> src/Renamed.sol,renamed,3,1,0,0,0,0.12,foo
+  src/Gone.sol,deleted,0,64,0,0,0,0.00,
+totals:
+  nloc_added: 165
+  hours: 6.6
+  days: 1.10
+```
+
+`changed_functions` is a pipe-joined list in the TOON cell (JSON output emits
+a real array).
+
+---
+
+## 4. Future Commands
 
 The following may be added later:
 
 - **`aud diff <ref1> <ref2>`** — git diff with optional signature-level
-  summarization (function-level changes rather than line-level)
-- **`aud diff-metrics <ref1> <ref2>`** — metrics computed on the diff between
-  two git refs for incremental audit scoping
-
-These are deferred until their value over standard git tooling is validated.
+  summarization (function-level changes rather than line-level).

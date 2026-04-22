@@ -65,6 +65,16 @@ Calculates code metrics:
 
 The **estimator** skill uses this command to calculate how long it takes to perform a security audit.
 
+### 📈 `aud diff-metrics`
+
+Metrics restricted to lines changed between two git refs. Shells out to `git diff -U0 -M` to extract added/removed line ranges per file, then parses each changed file with tree-sitter and computes the same metrics as `aud metrics` — restricted to added lines for `nloc_added` and `complexity_added`, and to removed lines for `nloc_removed`.
+
+Complexity follows SPEC-CLI §2.2 semantics: a new branch node adds `1 + branching_ancestors` (including pre-existing ancestors). Non-branch added lines contribute zero complexity.
+
+Each row also emits `changed_functions` — the names of head-tree callables whose bodies overlap ≥1 *surviving* added line (blank/comment/test-only changes don't list the function). Feed these straight into `aud call-chains --root=<name>` for reach analysis.
+
+The **estimator** skill uses this command for incremental audit scoping (sizing a PR before review).
+
 ### 🔗 `aud gaps`
 
 Builds a symbol graph (containers, callables, variables, events, modifiers, edges) from source files and outputs unresolved **edge gaps** — references the static pass cannot resolve (unresolved callees, interface dispatch, external libraries). Gaps are prioritized by edge kind (high/medium/low) for agent triage.
